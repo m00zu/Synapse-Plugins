@@ -101,16 +101,18 @@ jobs:
 
       # Build Rust extensions and install into vendor/
       - name: Build vina_rust
-        run: |
-          cd rdkit_nodes/rust/vina_rust
-          maturin build --release
-          pip install target/wheels/*.whl --target=$GITHUB_WORKSPACE/rdkit_nodes/vendor/
+        working-directory: rdkit_nodes/rust/vina_rust
+        run: maturin build --release
+
+      - name: Install vina_rust into vendor
+        run: pip install rdkit_nodes/rust/vina_rust/target/wheels/*.whl --target=rdkit_nodes/vendor/
 
       - name: Build sdfrust
-        run: |
-          cd rdkit_nodes/rust/sdfrust/sdfrust-python
-          maturin build --release
-          pip install target/wheels/*.whl --target=$GITHUB_WORKSPACE/rdkit_nodes/vendor/
+        working-directory: rdkit_nodes/rust/sdfrust/sdfrust-python
+        run: maturin build --release
+
+      - name: Install sdfrust into vendor
+        run: pip install rdkit_nodes/rust/sdfrust/sdfrust-python/target/wheels/*.whl --target=rdkit_nodes/vendor/
 
       # Download platform-specific pip wheels and extract into vendor/
       - name: Download and extract RDKit
