@@ -105,14 +105,16 @@ jobs:
         run: maturin build --release
 
       - name: Install vina_rust into vendor
-        run: pip install rdkit_nodes/rust/vina_rust/target/wheels/*.whl --target=rdkit_nodes/vendor/
+        shell: bash
+        run: pip install $(find rdkit_nodes/rust/vina_rust/target/wheels -name '*.whl') --target=rdkit_nodes/vendor/
 
       - name: Build sdfrust
         working-directory: rdkit_nodes/rust/sdfrust/sdfrust-python
         run: maturin build --release
 
       - name: Install sdfrust into vendor
-        run: pip install rdkit_nodes/rust/sdfrust/sdfrust-python/target/wheels/*.whl --target=rdkit_nodes/vendor/
+        shell: bash
+        run: pip install $(find rdkit_nodes/rust/sdfrust/sdfrust-python/target/wheels -name '*.whl') --target=rdkit_nodes/vendor/
 
       # Download platform-specific pip wheels and extract into vendor/
       - name: Download and extract RDKit
