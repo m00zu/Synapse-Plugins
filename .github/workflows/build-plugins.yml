@@ -104,13 +104,13 @@ jobs:
         run: |
           cd rdkit_nodes/rust/vina_rust
           maturin build --release
-          pip install target/wheels/*.whl --target=../../vendor/
+          pip install target/wheels/*.whl --target=$GITHUB_WORKSPACE/rdkit_nodes/vendor/
 
       - name: Build sdfrust
         run: |
           cd rdkit_nodes/rust/sdfrust/sdfrust-python
           maturin build --release
-          pip install target/wheels/*.whl --target=../../vendor/
+          pip install target/wheels/*.whl --target=$GITHUB_WORKSPACE/rdkit_nodes/vendor/
 
       # Download platform-specific pip wheels and extract into vendor/
       - name: Download and extract RDKit
