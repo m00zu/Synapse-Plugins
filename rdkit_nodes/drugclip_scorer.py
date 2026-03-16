@@ -355,6 +355,22 @@ class DrugCLIPModel:
     """
 
     DEFAULT_DIR = Path(__file__).parent / "data" / "drugclip"
+    MODELS_URL = "https://github.com/Ezra-Nemo/Synapse-Plugins/releases/download/v0.1.0/drugclip_models.zip"
+
+    @classmethod
+    def _ensure_models(cls):
+        """Download DrugCLIP models if not present locally."""
+        if cls.DEFAULT_DIR.exists() and (cls.DEFAULT_DIR / "drugclip_mol.onnx").exists():
+            return
+        import requests, zipfile, io
+        print(f"DrugCLIP models not found. Downloading from {cls.MODELS_URL}...")
+        resp = requests.get(cls.MODELS_URL, stream=True, allow_redirects=True)
+        resp.raise_for_status()
+        data = io.BytesIO(resp.content)
+        cls.DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(data) as zf:
+            zf.extractall(cls.DEFAULT_DIR.parent)
+        print(f"DrugCLIP models extracted to {cls.DEFAULT_DIR}")
 
     def __init__(
         self,
@@ -363,6 +379,7 @@ class DrugCLIPModel:
         logit_scale_path: Optional[str] = None,
         num_threads: int = 4,
     ):
+        self._ensure_models()
         import onnxruntime as ort
 
         d = self.DEFAULT_DIR

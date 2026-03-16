@@ -20,6 +20,7 @@ jobs:
 
       - name: Package pure Python plugins
         run: |
+          mkdir -p dist
           python package_plugin.py image_analysis --slim -o dist/
           python package_plugin.py statistical_analysis --slim -o dist/
           python package_plugin.py figure_plotting --slim -o dist/
@@ -61,7 +62,7 @@ jobs:
           pip download tokenizers --dest sam2_nodes/vendor/ --no-deps
 
       - name: Package SAM2 plugin
-        run: python package_plugin.py sam2_nodes -o dist/
+        run: mkdir -p dist && python package_plugin.py sam2_nodes -o dist/
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -118,7 +119,7 @@ jobs:
         run: pip download onnxruntime --dest rdkit_nodes/vendor/ --no-deps
 
       - name: Package RDKit plugin
-        run: python package_plugin.py rdkit_nodes -o dist/
+        run: mkdir -p dist && python package_plugin.py rdkit_nodes -o dist/
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
