@@ -114,7 +114,7 @@ jobs:
 
       - name: Install sdfrust into vendor
         shell: bash
-        run: pip install $(find rdkit_nodes/rust/sdfrust/sdfrust-python/target/wheels -name '*.whl') --target=rdkit_nodes/vendor/
+        run: pip install $(find rdkit_nodes/rust/sdfrust/target/wheels -name '*.whl') --target=rdkit_nodes/vendor/
 
       # Download platform-specific pip wheels and extract into vendor/
       - name: Download and extract RDKit
