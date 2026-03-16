@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+**/target/
+.DS_Store
+.mypy_cache/
+.pytest_cache/
+
+# Vendor dirs and model weights — built/downloaded by CI or on first use
+**/vendor/
+**/models/
+**/data/*.onnx
+**/data/*.onnx.data
+**/data/*.npy
+**/data/gnina_models/
+**/data/drugclip/
+
+# Build artifacts
+*.so
+*.pyd
+*.dll
+*.whl

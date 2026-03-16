@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; }
+  #viewer { width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="viewer"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Scene setup ──────────────────────────────────────────────────────────
+
+const container = document.getElementById('viewer');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(
+    50, container.clientWidth / container.clientHeight, 0.1, 10000);
+camera.position.set(0, 0, 300);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambientLight);
+
+const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight1.position.set(1, 1, 1);
+scene.add(dirLight1);
+
+const dirLight2 = new THREE.DirectionalLight(0x8888ff, 0.3);
+dirLight2.position.set(-1, -0.5, -1);
+scene.add(dirLight2);
+
+// Track mesh objects for cleanup
+let meshObjects = [];
+
+// ── Resize ───────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+});
+
+// ── Animate ──────────────────────────────────────────────────────────────
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+}
+animate();
+
+// ── Public API (called from Python) ──────────────────────────────────────
+
+window.clearScene = function() {
+    for (const obj of meshObjects) {
+        scene.remove(obj);
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) obj.material.dispose();
+    }
+    meshObjects = [];
+};
+
+window.loadMeshes = function(meshDataArray) {
+    clearScene();
+
+    // Compute combined bounding box for centering
+    let allPositions = [];
+
+    for (const md of meshDataArray) {
+        // Decode base64 → typed arrays
+        const vertBuf = Uint8Array.from(atob(md.vertices), c => c.charCodeAt(0));
+        const faceBuf = Uint8Array.from(atob(md.faces), c => c.charCodeAt(0));
+        const vertices = new Float32Array(vertBuf.buffer);
+        const indices  = new Int32Array(faceBuf.buffer);
+
+        // Build BufferGeometry
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position',
+            new THREE.Float32BufferAttribute(vertices, 3));
+
+        // Convert Int32 indices to Uint32 for Three.js
+        const idx = new Uint32Array(indices.length);
+        for (let i = 0; i < indices.length; i++) idx[i] = indices[i];
+        geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+
+        geometry.computeVertexNormals();
+
+        const color = new THREE.Color(md.color[0], md.color[1], md.color[2]);
+        const material = new THREE.MeshPhongMaterial({
+            color: color,
+            opacity: md.opacity !== undefined ? md.opacity : 0.85,
+            transparent: md.opacity < 1.0,
+            wireframe: md.wireframe || false,
+            side: THREE.DoubleSide,
+            shininess: 40,
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+        meshObjects.push(mesh);
+
+        // Collect positions for bounding
+        allPositions.push(vertices);
+    }
+
+    // Center camera on meshes
+    if (allPositions.length > 0) {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (const verts of allPositions) {
+            for (let i = 0; i < verts.length; i += 3) {
+                minX = Math.min(minX, verts[i]);
+                maxX = Math.max(maxX, verts[i]);
+                minY = Math.min(minY, verts[i+1]);
+                maxY = Math.max(maxY, verts[i+1]);
+                minZ = Math.min(minZ, verts[i+2]);
+                maxZ = Math.max(maxZ, verts[i+2]);
+            }
+        }
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const cz = (minZ + maxZ) / 2;
+        const size = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
+
+        controls.target.set(cx, cy, cz);
+        camera.position.set(cx, cy, cz + size * 1.8);
+        camera.lookAt(cx, cy, cz);
+        controls.update();
+    }
+};
+</script>
+</body>
+</html>
