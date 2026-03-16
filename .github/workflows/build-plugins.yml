@@ -65,6 +65,7 @@ jobs:
           pip download tokenizers --dest sam2_nodes/vendor/ --no-deps
 
       - name: Package SAM2 plugin
+        shell: bash
         run: mkdir -p dist && python package_plugin.py sam2_nodes -o dist/
 
       - name: Upload release assets
@@ -118,14 +119,16 @@ jobs:
 
       # Download platform-specific pip wheels and extract into vendor/
       - name: Download and extract RDKit
+        shell: bash
         run: |
-          pip download rdkit --no-deps -d /tmp/rdkit_wheels/
-          python rdkit_nodes/setup_vendor.py /tmp/rdkit_wheels/rdkit-*.whl
+          pip download rdkit --no-deps -d rdkit_wheels/
+          python rdkit_nodes/setup_vendor.py $(find rdkit_wheels -name '*.whl')
 
       - name: Download onnxruntime
         run: pip download onnxruntime --dest rdkit_nodes/vendor/ --no-deps
 
       - name: Package RDKit plugin
+        shell: bash
         run: mkdir -p dist && python package_plugin.py rdkit_nodes -o dist/
 
       - name: Upload release assets
