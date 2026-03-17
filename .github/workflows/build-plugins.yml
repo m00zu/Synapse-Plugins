@@ -1,0 +1,161 @@
+name: Build Plugin Packages
+
+on:
+  push:
+    tags: ['plugins-v*']
+  workflow_dispatch:
+    inputs:
+      build_pure_python:
+        description: 'Build pure Python plugins'
+        type: boolean
+        default: true
+      build_sam2:
+        description: 'Build SAM2 plugin'
+        type: boolean
+        default: false
+      build_rdkit:
+        description: 'Build rdkit plugin'
+        type: boolean
+        default: false
+      tag:
+        description: 'Release tag (e.g. plugins-v0.1.1)'
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Pure Python plugins (cross-platform, build once) ────────────────────
+  pure-python:
+    if: github.event_name == 'push' || inputs.build_pure_python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install packaging tools
+        run: pip install zstandard
+
+      - name: Package pure Python plugins
+        run: |
+          mkdir -p dist
+          python package_plugin.py image_analysis --slim -o dist/
+          python package_plugin.py statistical_analysis --slim -o dist/
+          python package_plugin.py figure_plotting --slim -o dist/
+          python package_plugin.py filopodia_nodes --slim -o dist/
+          python package_plugin.py volume_nodes --slim -o dist/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/*.synpkg
+
+  # ── SAM2 plugin (platform-specific pip wheels) ──────────────────────────
+  sam2:
+    if: github.event_name == 'push' || inputs.build_sam2
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            python: '3.14'
+          - os: windows-latest
+            python: '3.13'
+          - os: ubuntu-latest
+            python: '3.14'
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install packaging tools
+        run: pip install zstandard
+
+      - name: Download platform-specific wheels
+        run: |
+          pip download onnxruntime --dest sam2_nodes/vendor/ --no-deps
+          pip download tokenizers --dest sam2_nodes/vendor/ --no-deps
+
+      - name: Package SAM2 plugin
+        shell: bash
+        run: mkdir -p dist && python package_plugin.py sam2_nodes -o dist/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/*.synpkg
+
+  # ── RDKit / Cheminformatics plugin (Rust + pip wheels) ──────────────────
+  rdkit:
+    if: github.event_name == 'push' || inputs.build_rdkit
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            python: '3.14'
+          - os: windows-latest
+            python: '3.13'
+          - os: ubuntu-latest
+            python: '3.14'
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build tools
+        run: pip install maturin zstandard
+
+      # Build Rust extensions and install into vendor/
+      - name: Build vina_rust
+        working-directory: rdkit_nodes/rust/vina_rust
+        run: maturin build --release
+
+      - name: Install vina_rust into vendor
+        shell: bash
+        run: pip install $(find rdkit_nodes/rust/vina_rust/target/wheels -name '*.whl') --target=rdkit_nodes/vendor/
+
+      - name: Build sdfrust
+        working-directory: rdkit_nodes/rust/sdfrust/sdfrust-python
+        run: maturin build --release
+
+      - name: Install sdfrust into vendor
+        shell: bash
+        run: pip install $(find rdkit_nodes/rust/sdfrust/target/wheels -name '*.whl') --target=rdkit_nodes/vendor/
+
+      # Download platform-specific pip wheels and extract into vendor/
+      - name: Download and extract RDKit
+        shell: bash
+        run: |
+          pip download rdkit --no-deps -d rdkit_wheels/
+          python rdkit_nodes/setup_vendor.py $(find rdkit_wheels -name '*.whl')
+
+      - name: Download onnxruntime
+        run: pip download onnxruntime --dest rdkit_nodes/vendor/ --no-deps
+
+      - name: Package RDKit plugin
+        shell: bash
+        run: mkdir -p dist && python package_plugin.py rdkit_nodes -o dist/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/*.synpkg

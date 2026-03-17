@@ -1,0 +1,27 @@
+[package]
+name = "sdfrust-python"
+version = "0.6.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Hosein Fooladi"]
+description = "Python bindings for sdfrust - a fast SDF, MOL2, and XYZ parser"
+license = "MIT"
+repository = "https://github.com/hfooladi/sdfrust"
+publish = false
+
+[lib]
+name = "_sdfrust"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"] }
+sdfrust = { path = ".." }
+numpy = { version = "0.24", optional = true }
+rayon = { version = "1.8", optional = true }
+
+[features]
+default = ["numpy", "rayon"]
+numpy = ["dep:numpy"]
+rayon = ["dep:rayon"]
+geometry = ["sdfrust/geometry"]
+gzip = ["sdfrust/gzip"]
