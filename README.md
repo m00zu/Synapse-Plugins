@@ -17,8 +17,8 @@ Pure Python plugins (image_analysis, statistical_analysis, etc.) are cross-platf
 | figure_plotting | stable | Scatter, box, violin, heatmap, volcano, regression plots |
 | filopodia_nodes | stable | Cell protrusion detection and measurement |
 | volume_nodes | experimental | 3D volume rendering and analysis |
-| sam2_nodes | stable | SAM2 segmentation, Cellpose, video tracking (ONNX) |
-| rdkit_nodes | beta | RDKit chemistry, AutoDock Vina docking (Rust + ONNX) |
+| sam2_nodes | experimental | SAM2 segmentation, Cellpose, video tracking (ONNX) |
+| rdkit_nodes | experimental | RDKit chemistry, Rust rewrite of AutoDock VINA, QVina2 and smina, with support of gnina rescoring with ONNX |
 
 Pure Python plugins (image_analysis, statistical_analysis, figure_plotting, filopodia_nodes, volume_nodes) are cross-platform. SAM2 and rdkit plugins have platform-specific builds — download the one matching your OS from Releases.
 

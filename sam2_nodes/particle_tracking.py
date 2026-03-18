@@ -68,10 +68,12 @@ def _get_image(node, port_name: str = 'image') -> Optional[np.ndarray]:
     cp = port.connected_ports()[0]
     data = cp.node().output_values.get(cp.name())
     if isinstance(data, ImageData) and data.payload is not None:
-        img = data.payload
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        return np.asarray(img, dtype=np.uint8)
+        arr = data.payload
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        if arr.dtype != np.uint8:
+            arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+        return np.ascontiguousarray(arr)
     return None
 
 
@@ -549,8 +551,7 @@ class TrajectoryPlotNode(BaseImageProcessNode):
         vis = _draw_trajectories(rgb, df, tail, lw, showid, cby)
         self.set_progress(90)
 
-        pil = Image.fromarray(vis, mode='RGB')
-        self.output_values['image'] = ImageData(payload=pil)
+        self.output_values['image'] = ImageData(payload=vis)
         # self._update_preview(pil)
         self.set_progress(100)
         self.mark_clean()
@@ -758,16 +759,15 @@ class MSDAnalysisNode(BaseImageProcessNode):
         self.mark_clean()
         return True, None
 
-    def _make_msd_plot(self, msd_df: pd.DataFrame) -> Image.Image:
-        """Render MSD vs lag time log-log plot."""
+    def _make_msd_plot(self, msd_df: pd.DataFrame) -> np.ndarray:
+        """Render MSD vs lag time log-log plot. Returns uint8 RGB numpy array."""
         try:
             import matplotlib
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
         except ImportError:
             # Return blank image if matplotlib unavailable
-            img = Image.new('RGB', (400, 300), (30, 30, 30))
-            return img
+            return np.full((300, 400, 3), 30, dtype=np.uint8)
 
         fig, ax = plt.subplots(figsize=(5, 4), dpi=100)
         ax.set_facecolor('#1a1a2e')
@@ -809,4 +809,5 @@ class MSDAnalysisNode(BaseImageProcessNode):
         fig.savefig(buf, format='png', facecolor=fig.get_facecolor())
         plt.close(fig)
         buf.seek(0)
-        return Image.open(buf).copy()
+        pil_img = Image.open(buf).convert('RGB')
+        return np.asarray(pil_img, dtype=np.uint8).copy()

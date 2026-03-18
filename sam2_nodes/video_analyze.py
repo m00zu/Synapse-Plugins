@@ -1882,8 +1882,7 @@ class SAM2VideoAnalyzeNode(BaseImageProcessNode):
                 color = np.array(_obj_color(obj_id), dtype=np.float32)
                 vis[mask_bool] = vis[mask_bool] * 0.5 + color * 0.5
             vis = np.clip(vis, 0, 255).astype(np.uint8)
-            self.output_values['overlay'] = ImageData(
-                payload=Image.fromarray(vis, mode='RGB'))
+            self.output_values['overlay'] = ImageData(payload=vis)
 
         # Build trajectory graph
         if w._result_df is not None and not w._result_df.empty:
@@ -1892,7 +1891,8 @@ class SAM2VideoAnalyzeNode(BaseImageProcessNode):
             if bg is not None:
                 img_sz = (bg.shape[1], bg.shape[0])
             traj_img = _render_trajectory(w._result_df, bg, img_sz)
-            self.output_values['trajectory'] = ImageData(payload=traj_img)
+            traj_arr = np.asarray(traj_img.convert('RGB'), dtype=np.uint8)
+            self.output_values['trajectory'] = ImageData(payload=traj_arr)
 
         self.set_progress(100)
         self.mark_clean()

@@ -170,10 +170,12 @@ class SAM2SegmentNode(BaseImageProcessNode):
         if not isinstance(up_data, ImageData):
             return False, "Input must be ImageData"
 
-        pil = up_data.payload
-        if pil.mode != 'RGB':
-            pil = pil.convert('RGB')
-        rgb_arr = np.asarray(pil, dtype=np.uint8)
+        arr = up_data.payload
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        if arr.dtype != np.uint8:
+            arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+        rgb_arr = np.ascontiguousarray(arr)
 
         # ── ensure model is loaded (heavy, runs on worker thread) ────
         variant = self.get_property('model_variant') or 'tiny'
@@ -222,8 +224,7 @@ class SAM2SegmentNode(BaseImageProcessNode):
 
         # ── union mask (any object) ──────────────────────────────────
         union = (label_arr > 0).astype(np.uint8) * 255
-        mask_pil = Image.fromarray(union, mode='L')
-        self.output_values['mask'] = MaskData(payload=mask_pil)
+        self.output_values['mask'] = MaskData(payload=union)
 
         # ── label visualization (colored regions on black) ────────────
         label_rgb = np.zeros((h, w, 3), dtype=np.uint8)
@@ -233,7 +234,8 @@ class SAM2SegmentNode(BaseImageProcessNode):
                 continue
             label_rgb[m] = _obj_color(obj_id)
         label_pil = Image.fromarray(label_rgb, mode='RGB')
-        self.output_values['label_image'] = LabelData(payload=label_arr, image=label_pil)
+        self.output_values['label_image'] = LabelData(payload=label_arr,
+                                                       image=label_pil)
 
         # ── colored overlay (blended on original image) ───────────────
         vis = rgb_arr.astype(np.float32).copy()
@@ -244,4 +246,4 @@ class SAM2SegmentNode(BaseImageProcessNode):
             color = np.array(_obj_color(obj_id), dtype=np.float32)
             vis[m] = vis[m] * 0.5 + color * 0.5
         vis = np.clip(vis, 0, 255).astype(np.uint8)
-        self.output_values['overlay'] = ImageData(payload=Image.fromarray(vis, mode='RGB'))
+        self.output_values['overlay'] = ImageData(payload=vis)

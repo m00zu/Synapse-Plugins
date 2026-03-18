@@ -41,9 +41,78 @@ from scipy.ndimage import (
     median_filter,
 )
 
+from PySide6 import QtWidgets, QtCore
 from data_models import ImageData, MaskData, TableData
 from nodes.base import BaseExecutionNode, PORT_COLORS
-from nodes.base import BaseImageProcessNode, _arr_to_pil
+from nodes.base import BaseImageProcessNode
+from NodeGraphQt.widgets.node_widgets import NodeBaseWidget
+
+
+class _ThresholdSliderWidget(NodeBaseWidget):
+    """Compact slider + spinbox for threshold, adapts range to bit depth."""
+
+    def __init__(self, parent=None, name='threshold', label='Threshold',
+                 value=6, max_val=255):
+        super().__init__(parent, name, label)
+        self._max_val = max_val
+
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._slider.setRange(0, max_val)
+        self._slider.setValue(value)
+        self._slider.setMinimumWidth(100)
+        layout.addWidget(self._slider)
+
+        self._spin = QtWidgets.QSpinBox()
+        self._spin.setRange(0, max_val)
+        self._spin.setValue(value)
+        self._spin.setFixedWidth(65)
+        self._spin.setStyleSheet(
+            "QSpinBox { background: #222; color: #eee; border: 1px solid #444;"
+            " padding: 2px; border-radius: 2px; }")
+        layout.addWidget(self._spin)
+
+        self._slider.valueChanged.connect(self._on_slider)
+        self._spin.valueChanged.connect(self._on_spin)
+
+        self.set_custom_widget(container)
+
+    def _on_slider(self, val):
+        self._spin.blockSignals(True)
+        self._spin.setValue(val)
+        self._spin.blockSignals(False)
+        self.value_changed.emit(self.get_name(), val)
+
+    def _on_spin(self, val):
+        self._slider.blockSignals(True)
+        self._slider.setValue(val)
+        self._slider.blockSignals(False)
+        self.value_changed.emit(self.get_name(), val)
+
+    def set_range(self, max_val):
+        """Update range when bit depth changes."""
+        self._max_val = max_val
+        self._slider.setRange(0, max_val)
+        self._spin.setRange(0, max_val)
+
+    def get_value(self):
+        return self._spin.value()
+
+    def set_value(self, value):
+        self._slider.blockSignals(True)
+        self._spin.blockSignals(True)
+        try:
+            v = int(value)
+        except (ValueError, TypeError):
+            v = 0
+        self._slider.setValue(v)
+        self._spin.setValue(v)
+        self._slider.blockSignals(False)
+        self._spin.blockSignals(False)
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +145,16 @@ def _read_port(node, port_name: str):
 
 def _mask_to_bool(mask_data: MaskData) -> np.ndarray:
     """MaskData → boolean numpy array (True = foreground)."""
-    return np.array(mask_data.payload.convert('L')) > 127
+    arr = mask_data.payload
+    if arr.ndim == 3:
+        arr = arr[..., :3].mean(axis=2)
+    return arr > (0.5 if arr.dtype in (np.float32, np.float64) else 127)
 
 
 def _bool_to_mask(arr: np.ndarray) -> MaskData:
     """Boolean numpy array → MaskData (white = foreground)."""
     u8 = arr.astype(np.uint8) * 255
-    return MaskData(payload=_arr_to_pil(u8, 'L'))
+    return MaskData(payload=u8)
 
 
 def _skeleton_branch_stats(skel_binary: np.ndarray) -> list[dict]:
@@ -177,7 +249,11 @@ class CellEdgeMaskNode(BaseImageProcessNode):
         super().__init__()
         self.add_input('image', color=PORT_COLORS['image'])
         self.add_output('mask', color=PORT_COLORS['mask'])
-        self._add_int_spinbox('threshold',      'Threshold (0–255)',    value=6,  min_val=0,  max_val=255)
+        import NodeGraphQt
+        H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
+        self._thresh_slider = _ThresholdSliderWidget(
+            self.view, name='threshold', label='Threshold', value=6, max_val=255)
+        self.add_custom_widget(self._thresh_slider, widget_type=H, tab='Properties')
         self._add_int_spinbox('n_open',         'Open Iterations',      value=5,  min_val=0,  max_val=100)
         self._add_int_spinbox('n_erode_dilate', 'Extra Erode+Dilate',   value=0,  min_val=0,  max_val=80)
         self.add_checkbox('fill_holes', '', text='Fill Interior Holes', state=True)
@@ -191,10 +267,19 @@ class CellEdgeMaskNode(BaseImageProcessNode):
             self.mark_error()
             return False, 'No image connected'
 
-        gray = np.array(data.payload.convert('L'))
+        arr = data.payload
+        gray = arr if arr.ndim == 2 else arr[..., :3].mean(axis=2)
+        gray = gray.astype(np.float64)
+        bit_depth = getattr(data, 'bit_depth', 8) or 8
+        max_val = float((1 << bit_depth) - 1)
+        self._thresh_slider.set_range(int(max_val))
         self.set_progress(10)
 
-        binary = gray >= int(self.get_property('threshold'))
+        # Convert threshold from bit-depth scale to [0,1]
+        thresh_raw = float(self.get_property('threshold'))
+        thresh = thresh_raw / max_val
+
+        binary = gray >= thresh
         self.set_progress(25)
 
         if bool(self.get_property('fill_holes')):
@@ -216,10 +301,9 @@ class CellEdgeMaskNode(BaseImageProcessNode):
         mask_data = _bool_to_mask(binary)
         self.output_values['mask'] = mask_data
 
-        # Preview: original image at full brightness inside mask,
-        # dimmed to 15 % outside so the cell boundary is immediately visible.
-        preview_arr = np.where(binary, gray, (gray * 0.15).astype(np.uint8)).astype(np.uint8)
-        self.set_display(_arr_to_pil(preview_arr, 'L'))
+        # Preview: full brightness inside mask, dimmed outside
+        preview_arr = np.where(binary, gray, gray * 0.15).astype(np.float32)
+        self.set_display(preview_arr)
         self.set_progress(100)
         self.mark_clean()
         return True, None
@@ -261,7 +345,11 @@ class FilopodiaDetectNode(BaseImageProcessNode):
         self.add_input('image',     color=PORT_COLORS['image'])
         self.add_input('cell_mask', color=PORT_COLORS['mask'])
         self.add_output('mask', color=PORT_COLORS['mask'])
-        self._add_int_spinbox('threshold',           'Threshold (0–255)',       value=25, min_val=0,   max_val=255)
+        import NodeGraphQt
+        H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
+        self._thresh_slider = _ThresholdSliderWidget(
+            self.view, name='threshold', label='Threshold', value=25, max_val=255)
+        self.add_custom_widget(self._thresh_slider, widget_type=H, tab='Properties')
         self._add_int_spinbox('n_distance_from_edge','Distance from Edge (px)', value=1,  min_val=0,   max_val=200)
         self.add_checkbox('use_convolve', '', text='Sharpen (5×5 kernel)', state=True)
         self.add_checkbox('use_clahe',    '', text='CLAHE pre-enhance',    state=False)
@@ -275,14 +363,18 @@ class FilopodiaDetectNode(BaseImageProcessNode):
             self.mark_error()
             return False, 'No image connected'
 
-        gray = np.array(data.payload.convert('L')).astype(np.float64)
+        arr = data.payload
+        gray = arr if arr.ndim == 2 else arr[..., :3].mean(axis=2)
+        gray = gray.astype(np.float64)
+        bit_depth = getattr(data, 'bit_depth', 8) or 8
+        max_val = float((1 << bit_depth) - 1)
+        self._thresh_slider.set_range(int(max_val))
         self.set_progress(10)
 
         if bool(self.get_property('use_clahe')):
             from skimage.exposure import equalize_adapthist
-            gray_u8 = np.clip(gray, 0, 255).astype(np.uint8)
-            # clip_limit=0.03 matches FiloQuant's slope=3 / 256 bins default
-            gray = equalize_adapthist(gray_u8, clip_limit=0.03) * 255.0
+            # equalize_adapthist expects [0,1] float — data already in that range
+            gray = equalize_adapthist(gray, clip_limit=0.03).astype(np.float64)
         self.set_progress(25)
 
         if bool(self.get_property('use_convolve')):
@@ -294,7 +386,11 @@ class FilopodiaDetectNode(BaseImageProcessNode):
         gray = median_filter(gray, size=3)
         self.set_progress(55)
 
-        binary = gray >= int(self.get_property('threshold'))
+        # Convert threshold from bit-depth scale to [0,1]
+        bit_depth = getattr(data, 'bit_depth', 8) or 8
+        thresh_raw = float(self.get_property('threshold'))
+        max_val = float((1 << bit_depth) - 1)
+        binary = gray >= (thresh_raw / max_val)
         self.set_progress(65)
 
         # Discard tiny blobs (FiloQuant uses size >= 8 px in Analyze Particles)
@@ -483,4 +579,4 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
         rgb[skeleton, 1] = 0
         rgb[skeleton, 2] = 255
 
-        return _arr_to_pil(rgb, 'RGB')
+        return rgb

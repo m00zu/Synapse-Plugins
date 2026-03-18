@@ -477,10 +477,12 @@ class SAM2TrackNode(BaseImageProcessNode):
         if not isinstance(up_data, ImageData):
             return False, "Input must be ImageData"
 
-        pil = up_data.payload
-        if pil.mode != 'RGB':
-            pil = pil.convert('RGB')
-        rgb_arr = np.asarray(pil, dtype=np.uint8)
+        arr = up_data.payload
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        if arr.dtype != np.uint8:
+            arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+        rgb_arr = np.ascontiguousarray(arr)
 
         self.set_progress(10)
 
@@ -598,8 +600,7 @@ class SAM2TrackNode(BaseImageProcessNode):
             label_arr[mask > 0] = obj_id
 
         union = (label_arr > 0).astype(np.uint8) * 255
-        mask_pil = Image.fromarray(union, mode='L')
-        self.output_values['mask'] = MaskData(payload=mask_pil)
+        self.output_values['mask'] = MaskData(payload=union)
 
         label_rgb = np.zeros((h, w, 3), dtype=np.uint8)
         for obj_id in sorted(all_masks.keys()):
@@ -618,4 +619,4 @@ class SAM2TrackNode(BaseImageProcessNode):
             color = np.array(_obj_color(obj_id), dtype=np.float32)
             vis[m] = vis[m] * 0.5 + color * 0.5
         vis = np.clip(vis, 0, 255).astype(np.uint8)
-        self.output_values['overlay'] = ImageData(payload=Image.fromarray(vis, mode='RGB'))
+        self.output_values['overlay'] = ImageData(payload=vis)

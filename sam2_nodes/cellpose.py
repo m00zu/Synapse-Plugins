@@ -396,9 +396,13 @@ class _CellposeSegmentWidget(NodeBaseWidget):
             self._preview_label.setText("No image")
             self._preview_label.setPixmap(QtGui.QPixmap())
 
-    def _show_image_preview(self, pil_img: Image.Image):
+    def _show_image_preview(self, pil_img):
         """Display image preview in canvas with aspect-ratio-aware scaling."""
-        pil_img = pil_img.copy()
+        if isinstance(pil_img, np.ndarray):
+            pil_img = Image.fromarray(pil_img if pil_img.dtype == np.uint8
+                                      else (np.clip(pil_img, 0, 1) * 255).astype(np.uint8))
+        else:
+            pil_img = pil_img.copy()
         max_width, max_height = 560, 560
         pil_img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
 
@@ -499,12 +503,19 @@ class _CellposeSegmentWidget(NodeBaseWidget):
             colors[lbl] = (np.array(cmap(i % 20)[:3]) * 255).astype(np.uint8)
         return unique_labels, colors
 
-    def _create_label_and_overlay(self, orig_image: Image.Image, masks: np.ndarray):
+    def _create_label_and_overlay(self, orig_image, masks: np.ndarray):
         """Create both label image (colors on black) and overlay (blended on original).
 
-        Returns (label_pil, overlay_pil).
+        Returns (label_pil, overlay_arr) where overlay_arr is uint8 numpy RGB.
         """
-        orig_arr = np.array(orig_image.convert('RGB'))
+        if isinstance(orig_image, Image.Image):
+            orig_arr = np.array(orig_image.convert('RGB'))
+        else:
+            orig_arr = orig_image
+            if orig_arr.ndim == 2:
+                orig_arr = np.stack([orig_arr] * 3, axis=-1)
+            if orig_arr.dtype != np.uint8:
+                orig_arr = (np.clip(orig_arr, 0, 1) * 255).astype(np.uint8)
         h, w = masks.shape
 
         if orig_arr.shape[:2] != (h, w):
@@ -524,7 +535,7 @@ class _CellposeSegmentWidget(NodeBaseWidget):
             overlay[m] = overlay[m] * 0.5 + c * 0.5
 
         overlay = np.clip(overlay, 0, 255).astype(np.uint8)
-        return Image.fromarray(label_rgb, mode='RGB'), Image.fromarray(overlay)
+        return Image.fromarray(label_rgb, mode='RGB'), overlay
 
     def _on_progress(self, msg: str):
         self._status_label.setText(msg)
@@ -553,8 +564,7 @@ class _CellposeSegmentWidget(NodeBaseWidget):
         if self.node:
             masks = self._result_masks
             mask_arr = (masks > 0).astype(np.uint8) * 255
-            self.node.output_values['mask'] = MaskData(
-                payload=Image.fromarray(mask_arr, mode='L'))
+            self.node.output_values['mask'] = MaskData(payload=mask_arr)
             self.node.output_values['label_image'] = LabelData(
                 payload=masks.astype(np.int32),
                 image=self._result_label_img)
@@ -567,9 +577,13 @@ class _CellposeSegmentWidget(NodeBaseWidget):
                     if hasattr(dn, 'mark_dirty'):
                         dn.mark_dirty()
 
-    def _show_overlay_preview(self, pil_img: Image.Image):
+    def _show_overlay_preview(self, pil_img):
         """Display segmentation overlay preview with aspect-ratio-aware scaling."""
-        pil_img = pil_img.copy()
+        if isinstance(pil_img, np.ndarray):
+            pil_img = Image.fromarray(pil_img if pil_img.dtype == np.uint8
+                                      else (np.clip(pil_img, 0, 1) * 255).astype(np.uint8))
+        else:
+            pil_img = pil_img.copy()
         max_width, max_height = 560, 560
         pil_img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
 
@@ -671,8 +685,7 @@ class CellposeSegmentNode(BaseImageProcessNode):
         # Populate outputs from cached results (set by _on_done)
         if w._result_masks is not None:
             mask_arr = (w._result_masks > 0).astype(np.uint8) * 255
-            mask_img = Image.fromarray(mask_arr, mode='L')
-            self.output_values['mask'] = MaskData(payload=mask_img)
+            self.output_values['mask'] = MaskData(payload=mask_arr)
 
             label_arr = w._result_masks.astype(np.int32)
             self.output_values['label_image'] = LabelData(
