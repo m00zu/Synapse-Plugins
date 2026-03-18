@@ -540,9 +540,9 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
         self.output_values['table'] = TableData(payload=df)
         self.set_progress(90)
 
-        # Build colour composite visualization
+        # Build colour composite visualization (synthetic, always 8-bit)
         vis = self._make_visualization(cell_arr, isolated, skeleton)
-        self.output_values['visualization'] = ImageData(payload=vis)
+        self.output_values['visualization'] = ImageData(payload=vis, bit_depth=8)
         self.set_display(vis)
         self.set_progress(100)
         self.mark_clean()
@@ -554,29 +554,26 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
         cell_arr:  np.ndarray,   # boolean — cell body
         filo_arr:  np.ndarray,   # boolean — isolated filopodia regions
         skeleton:  np.ndarray,   # boolean — thinned filopodia skeleton
-    ) -> Image.Image:
+    ) -> np.ndarray:
         """
-        Colour composite on a dark background:
+        Colour composite on a dark background (float32 [0, 1]):
           • Dark green  — cell body
           • Cyan        — isolated filopodia mask (before skeletonization)
           • Magenta     — skeleton (1-pixel centerlines)
         """
         H, W = cell_arr.shape
-        rgb = np.zeros((H, W, 3), dtype=np.uint8)
+        rgb = np.zeros((H, W, 3), dtype=np.float32)
 
         # Cell body: dark green fill so the context is visible but not distracting
-        rgb[cell_arr, 0] = 0
-        rgb[cell_arr, 1] = 60
-        rgb[cell_arr, 2] = 60
+        rgb[cell_arr, 1] = 60 / 255.0
+        rgb[cell_arr, 2] = 60 / 255.0
 
         # Filopodia mask: dim cyan
-        rgb[filo_arr, 0] = 0
-        rgb[filo_arr, 1] = 100
-        rgb[filo_arr, 2] = 100
+        rgb[filo_arr, 1] = 100 / 255.0
+        rgb[filo_arr, 2] = 100 / 255.0
 
         # Skeleton: bright magenta on top of everything
-        rgb[skeleton, 0] = 255
-        rgb[skeleton, 1] = 0
-        rgb[skeleton, 2] = 255
+        rgb[skeleton, 0] = 1.0
+        rgb[skeleton, 2] = 1.0
 
         return rgb

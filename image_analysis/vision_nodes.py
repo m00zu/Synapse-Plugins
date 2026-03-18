@@ -96,6 +96,36 @@ def _to_rgb(arr: np.ndarray) -> np.ndarray:
     return rgb
 
 
+def _stamp_overlay(original: np.ndarray, draw_fn) -> np.ndarray:
+    """Draw annotations on a transparent RGBA overlay, then composite
+    only the drawn pixels onto the original float32 image.
+
+    *original* — float32 [0,1] array (H,W) or (H,W,3).
+    *draw_fn*  — callable(draw, w, h) that draws on a PIL ImageDraw
+                 handle (RGBA overlay, size w×h).
+    Returns float32 [0,1] array with annotations stamped on.
+    """
+    from PIL import Image as _PIL, ImageDraw
+    h, w = original.shape[:2]
+    result = original.copy()
+    if result.ndim == 2:
+        result = np.stack([result] * 3, axis=-1)
+
+    ov = _PIL.new('RGBA', (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(ov)
+    draw_fn(draw, w, h)
+
+    ov_arr = np.array(ov)
+    alpha = ov_arr[:, :, 3:4].astype(np.float32) / 255.0
+    mask = alpha > 0
+    if mask.any():
+        ov_rgb = ov_arr[:, :, :3].astype(np.float32) / 255.0
+        alpha3 = np.broadcast_to(alpha, result.shape)
+        mask3 = np.broadcast_to(mask, result.shape)
+        result = np.where(mask3, (1 - alpha3) * result + alpha3 * ov_rgb, result)
+    return result
+
+
 # ===========================================================================
 # 1 — WhiteTopHatNode
 # ===========================================================================
@@ -549,15 +579,12 @@ class BlobDetectNode(BaseImageProcessNode):
         df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=['y', 'x', 'radius_px'])
         self.output_values['table'] = TableData(payload=df)
 
-        # Draw overlay using PIL for ellipse drawing, then convert back to numpy
-        overlay_rgb = _to_rgb(arr)
-        pil_tmp = Image.fromarray(overlay_rgb, 'RGB')
-        draw    = ImageDraw.Draw(pil_tmp)
-        for r in rows:
-            cx, cy, rad = r['x'], r['y'], r['radius_px']
-            draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
-                         outline=(255, 60, 60), width=2)
-        overlay_arr = np.array(pil_tmp)
+        def _draw(draw, w, h):
+            for r in rows:
+                cx, cy, rad = r['x'], r['y'], r['radius_px']
+                draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
+                             outline=(255, 60, 60, 255), width=2)
+        overlay_arr = _stamp_overlay(arr, _draw)
 
         self._make_image_output(overlay_arr, 'overlay')
         self.set_display(overlay_arr)
@@ -1814,12 +1841,11 @@ class HoughCirclesNode(BaseImageProcessNode):
                            'radius': rad.astype(float)})
         self.output_values['table'] = TableData(payload=df)
 
-        rgb = _arr_to_rgb(arr)
-        pil_tmp = Image.fromarray(rgb, 'RGB')
-        draw = ImageDraw.Draw(pil_tmp)
-        for x, y, r in zip(cx, cy, rad):
-            draw.ellipse([x - r, y - r, x + r, y + r], outline=(0, 220, 0), width=2)
-        overlay_arr = np.array(pil_tmp)
+        _cx, _cy, _rad = cx, cy, rad
+        def _draw(draw, w, h):
+            for x, y, r in zip(_cx, _cy, _rad):
+                draw.ellipse([x - r, y - r, x + r, y + r], outline=(0, 220, 0, 255), width=2)
+        overlay_arr = _stamp_overlay(arr, _draw)
         self._make_image_output(overlay_arr, 'overlay')
         self.set_display(overlay_arr)
         self.set_progress(100)
@@ -1889,28 +1915,24 @@ class HoughLinesNode(BaseImageProcessNode):
         self.set_progress(75)
 
         rows = []
-        rgb  = _arr_to_rgb(arr)
-        pil_tmp = Image.fromarray(rgb, 'RGB')
-        draw = ImageDraw.Draw(pil_tmp)
-
         for angle, rho in zip(angles, dists):
             cos_a, sin_a = np.cos(angle), np.sin(angle)
             if abs(sin_a) > 1e-6:
-                # compute y at x=0 and x=W-1
                 y0 = int(round((rho - 0     * cos_a) / sin_a))
                 y1 = int(round((rho - (W-1) * cos_a) / sin_a))
                 x0, x1 = 0, W - 1
             else:
-                # nearly vertical line — compute x at y=0 and y=H-1
                 x0 = int(round((rho - 0     * sin_a) / cos_a))
                 x1 = int(round((rho - (H-1) * sin_a) / cos_a))
                 y0, y1 = 0, H - 1
-
             rows.append({'theta': round(float(angle), 5), 'rho': round(float(rho), 2),
                          'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1})
-            draw.line([(x0, y0), (x1, y1)], fill=(220, 0, 0), width=2)
 
-        overlay_arr = np.array(pil_tmp)
+        def _draw(draw, w, h):
+            for r in rows:
+                draw.line([(r['x0'], r['y0']), (r['x1'], r['y1'])],
+                          fill=(220, 0, 0, 255), width=2)
+        overlay_arr = _stamp_overlay(arr, _draw)
         df = pd.DataFrame(rows) if rows else pd.DataFrame(
             columns=['theta', 'rho', 'x0', 'y0', 'x1', 'y1'])
         self.output_values['table']   = TableData(payload=df)
@@ -1983,10 +2005,6 @@ class HoughEllipseNode(BaseImageProcessNode):
         top     = result[result['accumulator'] >= cutoff][-n_peaks:][::-1]
 
         rows = []
-        rgb  = _arr_to_rgb(arr)
-        pil_tmp = Image.fromarray(rgb, 'RGB')
-        draw = ImageDraw.Draw(pil_tmp)
-
         for row in top:
             yc, xc  = float(row['yc']), float(row['xc'])
             a, b    = float(row['a']), float(row['b'])
@@ -1994,16 +2012,20 @@ class HoughEllipseNode(BaseImageProcessNode):
             rows.append({'cx': round(xc, 2), 'cy': round(yc, 2),
                          'a': round(a, 2), 'b': round(b, 2),
                          'orientation': round(orient, 4)})
-            # Draw approximated rotated ellipse
-            t   = np.linspace(0, 2 * np.pi, 180)
-            cos_o, sin_o = np.cos(orient), np.sin(orient)
-            xs  = xc + a * np.cos(t) * cos_o - b * np.sin(t) * sin_o
-            ys  = yc + a * np.cos(t) * sin_o + b * np.sin(t) * cos_o
-            pts = list(zip(xs.tolist(), ys.tolist()))
-            if len(pts) >= 2:
-                draw.line(pts + [pts[0]], fill=(0, 220, 220), width=2)
 
-        overlay_arr = np.array(pil_tmp)
+        def _draw(draw, w, h):
+            for r in rows:
+                xc, yc = r['cx'], r['cy']
+                a, b = r['a'], r['b']
+                orient = r['orientation']
+                t = np.linspace(0, 2 * np.pi, 180)
+                cos_o, sin_o = np.cos(orient), np.sin(orient)
+                xs = xc + a * np.cos(t) * cos_o - b * np.sin(t) * sin_o
+                ys = yc + a * np.cos(t) * sin_o + b * np.sin(t) * cos_o
+                pts = list(zip(xs.tolist(), ys.tolist()))
+                if len(pts) >= 2:
+                    draw.line(pts + [pts[0]], fill=(0, 220, 220, 255), width=2)
+        overlay_arr = _stamp_overlay(arr, _draw)
         df = pd.DataFrame(rows) if rows else pd.DataFrame(
             columns=['cx', 'cy', 'a', 'b', 'orientation'])
         self.output_values['table']   = TableData(payload=df)

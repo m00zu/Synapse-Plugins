@@ -2682,30 +2682,13 @@ class ZoomNode(BaseImageProcessNode):
         new_H  = max(1, round(H_in * factor))
 
         self.set_progress(50)
-        # Use PIL for high-quality resampling
-        pil_in = data.image
-        try:
-            resampler = Image.Resampling.LANCZOS
-        except AttributeError:
-            resampler = Image.LANCZOS
-        resized_pil = pil_in.resize((new_W, new_H), resampler)
-        resized_arr = np.asarray(resized_pil)
-        # Preserve dtype
-        if resized_arr.dtype != arr_in.dtype:
-            resized_arr = resized_arr.astype(arr_in.dtype)
+        from skimage.transform import resize as _sk_resize
+        resized_arr = _sk_resize(arr_in, (new_H, new_W),
+                                 order=3, preserve_range=True,
+                                 anti_aliasing=True).astype(arr_in.dtype)
 
-        out = out_cls(payload=resized_arr)
-        self.output_values['image'] = out
-
-        # Overlay dimensions on preview so the resize effect is visible even
-        # though the thumbnail always scales to fit the widget.
-        from PIL import ImageDraw
-        preview = resized_pil.convert('RGB').copy()
-        draw    = ImageDraw.Draw(preview)
-        label   = f'{new_W} × {new_H} px'
-        draw.text((3, 3), label, fill=(0,   0,   0))
-        draw.text((2, 2), label, fill=(255, 255,   0))
-        self.set_display(np.array(preview))
+        self._make_image_output(resized_arr)
+        self.set_display(resized_arr)
         self.set_progress(100)
         return True, None
 
@@ -2775,23 +2758,17 @@ class ResizeNode(BaseImageProcessNode):
                 'bicubic':  Image.BICUBIC,
             }
 
-        resampler = _resamplers.get(self.get_property('resample'), list(_resamplers.values())[0])
+        _order_map = {'lanczos': 3, 'bicubic': 3, 'bilinear': 1, 'nearest': 0}
+        order = _order_map.get(self.get_property('resample'), 3)
         self.set_progress(50)
 
-        pil_in = data.image
-        resized_pil = pil_in.resize((W, H), resampler)
-        resized_arr = np.asarray(resized_pil)
-        if resized_arr.dtype != arr_in.dtype:
-            resized_arr = resized_arr.astype(arr_in.dtype)
-        self.output_values['image'] = out_cls(payload=resized_arr)
+        from skimage.transform import resize as _sk_resize
+        resized_arr = _sk_resize(arr_in, (H, W),
+                                 order=order, preserve_range=True,
+                                 anti_aliasing=(order > 0)).astype(arr_in.dtype)
 
-        from PIL import ImageDraw
-        preview = resized_pil.convert('RGB').copy()
-        draw    = ImageDraw.Draw(preview)
-        label   = f'{W} × {H} px'
-        draw.text((3, 3), label, fill=(0, 0, 0))
-        draw.text((2, 2), label, fill=(255, 255, 0))
-        self.set_display(np.array(preview))
+        self._make_image_output(resized_arr)
+        self.set_display(resized_arr)
         self.set_progress(100)
         return True, None
 
@@ -2841,28 +2818,12 @@ class RotateNode(BaseImageProcessNode):
         arr_in = data.payload
         angle = float(self.get_property('angle'))
 
-        # Use PIL for rotation with expand
-        pil_in = data.image
-        mode = pil_in.mode
-        if mode == 'RGB':
-            fill = (0, 0, 0)
-        elif mode == 'RGBA':
-            fill = (0, 0, 0, 0)
-        else:
-            fill = 0
-
         self.set_progress(50)
-        try:
-            resampler = Image.Resampling.BICUBIC
-        except AttributeError:
-            resampler = Image.BICUBIC
+        from scipy.ndimage import rotate as _nd_rotate
+        rotated_arr = _nd_rotate(arr_in, angle, reshape=True, order=3,
+                                 mode='constant', cval=0.0).astype(arr_in.dtype)
 
-        rotated_pil = pil_in.rotate(angle, resample=resampler, expand=True, fillcolor=fill)
-        rotated_arr = np.asarray(rotated_pil)
-        if rotated_arr.dtype != arr_in.dtype:
-            rotated_arr = rotated_arr.astype(arr_in.dtype)
-        out = out_cls(payload=rotated_arr)
-        self.output_values['image'] = out
+        self._make_image_output(rotated_arr)
         self.set_display(rotated_arr)
         self.set_progress(100)
         return True, None

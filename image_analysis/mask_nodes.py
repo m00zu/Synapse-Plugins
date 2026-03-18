@@ -512,17 +512,17 @@ class SkeletonAnalysisNode(BaseImageProcessNode):
         label_rgb = pal[labeled % len(pal)]
 
         skel_u8 = skel.astype(np.uint8)
-        # Junction visualisation: black bg, skeleton=grey, junctions=red
-        junc_rgb = np.zeros((*skel.shape, 3), dtype=np.uint8)
-        junc_rgb[skel]          = (200, 200, 200)
-        junc_rgb[junction_mask] = (255, 80, 80)
+        # Junction visualisation: black bg, skeleton=grey, junctions=red (synthetic, 8-bit)
+        junc_rgb = np.zeros((*skel.shape, 3), dtype=np.float32)
+        junc_rgb[skel]          = (200 / 255.0, 200 / 255.0, 200 / 255.0)
+        junc_rgb[junction_mask] = (1.0, 80 / 255.0, 80 / 255.0)
 
         skel_arr   = skel_u8 * 255
         jmask_arr  = junction_mask_out.astype(np.uint8) * 255
 
         self.output_values['skeleton']       = SkeletonData(payload=skel_arr)
         self.output_values['stats']          = TableData(payload=pd.DataFrame(rows))
-        self._make_image_output(junc_rgb, 'junction_image')
+        self.output_values['junction_image'] = ImageData(payload=junc_rgb, bit_depth=8)
         self.output_values['junction_mask']  = MaskData(payload=jmask_arr)
         self.output_values['label_image']    = LabelData(payload=labeled.astype(np.int32), image=label_rgb)
         self.set_display(label_rgb)
@@ -580,11 +580,11 @@ class MedialAxisNode(BaseImageProcessNode):
         if d_max > 0:
             normed = skel_dist / d_max          # 0.0–1.0 on skeleton, 0 on background
             rgba = cm.plasma(normed)            # H×W×4 float [0,1]
-            rgb  = (rgba[..., :3] * 255).astype(np.uint8)
+            rgb  = rgba[..., :3].astype(np.float32)
             rgb[~skel] = 0                      # ensure background is pure black
         else:
-            rgb = np.zeros((*skel.shape, 3), dtype=np.uint8)
-        self._make_image_output(rgb, 'distance')
+            rgb = np.zeros((*skel.shape, 3), dtype=np.float32)
+        self.output_values['distance'] = ImageData(payload=rgb, bit_depth=8)
 
         self.set_progress(100)
         return True, None

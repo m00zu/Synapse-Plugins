@@ -3742,46 +3742,72 @@ class DrawShapeNode(BaseExecutionNode):
 
         self.set_progress(40)
 
-        # Convert to PIL for drawing operations, then back to numpy at the end
-        from PIL import Image as _PIL
-        out_rgb = _ensure_display_rgb(arr_in)
-        out = _PIL.fromarray(out_rgb, 'RGB')
+        # Work on the original float32 image; draw annotations on a
+        # separate RGBA overlay in PIL, then composite only drawn pixels
+        # back so untouched pixels keep full bit-depth precision.
+        from PIL import Image as _PIL, ImageDraw
+        h_img, w_img = arr_in.shape[:2]
+        result = arr_in.copy()  # float32 [0,1] — preserved
 
-        # ── label_image overlay (alpha-composite, no per-mask loop) ───────
-        opacity = self._label_opacity_value  # read Python-level cache (thread-safe)
+        # Build a uint8 RGB canvas for PIL drawing (display quality only)
+        canvas_rgb = _ensure_display_rgb(arr_in)
+        canvas = _PIL.fromarray(canvas_rgb, 'RGB')
+
+        # ── label_image overlay (alpha-composite on float) ────────────────
+        opacity = self._label_opacity_value
         if _label_overlay_pil is not None:
-            alpha = int(opacity * 255 / 100)
-            lbl_rgb = _label_overlay_pil.convert('RGB')
-            if lbl_rgb.size != out.size:
-                lbl_rgb = lbl_rgb.resize(out.size, _PIL.NEAREST)
-            # Only paint over non-black pixels (background label == 0 → black)
-            lbl_arr = np.array(lbl_rgb)
-            fg_mask = lbl_arr.any(axis=2)          # True where label != 0
-            overlay = np.zeros((*lbl_arr.shape[:2], 4), dtype=np.uint8)
-            overlay[fg_mask, :3] = lbl_arr[fg_mask]
-            overlay[fg_mask, 3]  = alpha
-            ov_pil = _PIL.fromarray(overlay, 'RGBA')
-            out = _PIL.alpha_composite(out.convert('RGBA'), ov_pil).convert('RGB')
+            alpha_f = opacity / 100.0
+            if isinstance(_label_overlay_pil, np.ndarray):
+                lbl_arr_raw = _label_overlay_pil
+                if lbl_arr_raw.dtype in (np.float32, np.float64):
+                    lbl_f = np.clip(lbl_arr_raw, 0, 1)
+                else:
+                    lbl_f = lbl_arr_raw.astype(np.float32) / 255.0
+                if lbl_f.ndim == 2:
+                    lbl_f = np.stack([lbl_f]*3, axis=-1)
+                else:
+                    lbl_f = lbl_f[:, :, :3]
+            else:
+                lbl_rgb = _label_overlay_pil.convert('RGB')
+                if lbl_rgb.size != (w_img, h_img):
+                    lbl_rgb = lbl_rgb.resize((w_img, h_img), _PIL.NEAREST)
+                lbl_f = np.array(lbl_rgb).astype(np.float32) / 255.0
+            # Blend only where label != background (non-black)
+            fg_mask = lbl_f.any(axis=2)
+            if result.ndim == 2:
+                result = np.stack([result]*3, axis=-1)
+            result[fg_mask] = (1 - alpha_f) * result[fg_mask] + alpha_f * lbl_f[fg_mask]
+            # Also update the PIL canvas for drawing overlays on top
+            canvas_rgb = _ensure_display_rgb(result)
+            canvas = _PIL.fromarray(canvas_rgb, 'RGB')
 
         # ── update widget (skip entirely when No Preview is checked) ─────
         no_preview = self._no_preview
         if not no_preview:
             self._draw_widget.set_mask_count(len(mask_arrays))
             if _label_overlay_pil is not None and (img_port is None or not img_port.connected_ports()):
-                display = _label_overlay_pil.convert('RGB')
-                self._draw_widget.load_image(np.array(display))
+                if isinstance(_label_overlay_pil, np.ndarray):
+                    disp = _label_overlay_pil
+                    if disp.dtype in (np.float32, np.float64):
+                        disp = np.clip(disp * 255, 0, 255).astype(np.uint8)
+                    if disp.ndim == 2:
+                        disp = np.stack([disp]*3, axis=-1)
+                    self._draw_widget.load_image(disp[:, :, :3])
+                else:
+                    display = _label_overlay_pil.convert('RGB')
+                    self._draw_widget.load_image(np.array(display))
             else:
                 self._draw_widget.load_image(arr_in)
             if draw_shapes:
                 self._draw_widget.load_shapes_data(draw_shapes)
 
-        # ── draw mask outlines (per-mask style) ───────────────────────────
+        # ── draw mask outlines on a transparent RGBA overlay ──────────────
         auto_fill = self._auto_fill
         contour_data_for_scene: list[list[list[tuple[float, float]]]] = []
         contour_styles_for_scene: list[dict] = []
+        overlay = _PIL.new('RGBA', (w_img, h_img), (0, 0, 0, 0))
+        ov_draw = ImageDraw.Draw(overlay)
         if mask_arrays:
-            from PIL import ImageDraw
-            draw = ImageDraw.Draw(out)
             palette = NodeMultiShapeWidget._MASK_PALETTE
             for i, mask_bool in enumerate(mask_arrays):
                 mid = f'mask_{i}'
@@ -3796,30 +3822,30 @@ class DrawShapeNode(BaseExecutionNode):
                 scene_style = ms if not auto_fill else {**ms, 'fill_mode': True}
                 contour_styles_for_scene.append(scene_style)
                 if fill_mode and mask_bool.any():
-                    # Fill: paint all foreground pixels with semi-transparent color
                     c_full = ms.get('line_color', [0, 220, 220, 255])
-                    alpha = int(c_full[3]) if len(c_full) > 3 else 180
-                    fill_color = (mask_color[0], mask_color[1], mask_color[2], alpha)
-                    img_h, img_w = mask_bool.shape
-                    ov_arr = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                    ov_arr[mask_bool] = fill_color
-                    overlay = _PIL.fromarray(ov_arr, 'RGBA')
-                    out = _PIL.alpha_composite(out.convert('RGBA'), overlay).convert('RGB')
-                    draw = ImageDraw.Draw(out)  # refresh draw handle after composite
+                    alpha_val = int(c_full[3]) if len(c_full) > 3 else 180
+                    fill_color = (mask_color[0], mask_color[1], mask_color[2], alpha_val)
+                    fill_arr = np.zeros((h_img, w_img, 4), dtype=np.uint8)
+                    fill_arr[mask_bool] = fill_color
+                    fill_ov = _PIL.fromarray(fill_arr, 'RGBA')
+                    overlay = _PIL.alpha_composite(overlay, fill_ov)
+                    ov_draw = ImageDraw.Draw(overlay)
                 else:
                     for pts in paths:
                         _draw_styled_polyline(
-                            draw, pts,
+                            ov_draw, pts,
                             color=mask_color, width=mask_width,
                             style=mask_style, closed=False)
-        # Update mask contours in the interactive scene (skip in No Preview mode)
         if not no_preview:
             self._draw_widget.set_mask_contours(contour_data_for_scene,
                                                 contour_styles_for_scene)
 
         self.set_progress(60)
 
-        # ── draw all shapes ────────────────────────────────────────────────
+        # ── draw all shapes on the same RGBA overlay ──────────────────────
+        # Shapes use helper functions that expect a PIL RGB image input,
+        # so we composite onto the canvas, then diff to find drawn pixels.
+        canvas_before = canvas.copy()
         for sd in draw_shapes:
             c = sd.get('line_color', [0, 220, 220, 255])
             color = (int(c[0]), int(c[1]), int(c[2]))
@@ -3827,10 +3853,10 @@ class DrawShapeNode(BaseExecutionNode):
             ls = str(sd.get('line_style', 'solid'))
 
             if sd.get('shape') == 'text':
-                out = _draw_text_overlay(out, sd)
+                canvas = _draw_text_overlay(canvas, sd)
             elif sd.get('shape') == 'curve':
-                out = _draw_curve_overlay(
-                    out, sd,
+                canvas = _draw_curve_overlay(
+                    canvas, sd,
                     line_color=color, line_width=lw, line_style=ls,
                     label_text=str(sd.get('label_text', '')),
                     label_x_offset=float(sd.get('label_x_offset', 8.0)),
@@ -3838,8 +3864,8 @@ class DrawShapeNode(BaseExecutionNode):
                     label_font_size=float(sd.get('label_font_size', 12.0)),
                 )
             else:
-                out = _draw_shape_overlay(
-                    out, sd,
+                canvas = _draw_shape_overlay(
+                    canvas, sd,
                     line_color=color, line_width=lw, line_style=ls,
                     label_text=str(sd.get('label_text', '')),
                     label_x_offset=float(sd.get('label_x_offset', 8.0)),
@@ -3847,9 +3873,29 @@ class DrawShapeNode(BaseExecutionNode):
                     label_font_size=float(sd.get('label_font_size', 12.0)),
                 )
 
-        # Convert PIL result back to numpy for output
-        out_arr = np.array(out) if not isinstance(out, np.ndarray) else out
-        self._make_image_output(out_arr)
+        # ── composite annotations onto float32 result ─────────────────────
+        # 1. Mask overlay (RGBA → blend onto float)
+        ov_arr = np.array(overlay)
+        ov_alpha = ov_arr[:, :, 3:4].astype(np.float32) / 255.0
+        ov_rgb = ov_arr[:, :, :3].astype(np.float32) / 255.0
+        drawn_mask = ov_alpha > 0
+        if result.ndim == 2:
+            result = np.stack([result]*3, axis=-1)
+        if drawn_mask.any():
+            alpha3 = np.broadcast_to(ov_alpha, result.shape)
+            result = np.where(np.broadcast_to(drawn_mask, result.shape),
+                              (1 - alpha3) * result + alpha3 * ov_rgb,
+                              result)
+
+        # 2. Shape drawings (diff canvas_before vs canvas → stamp changed pixels)
+        before_arr = np.array(canvas_before)
+        after_arr = np.array(canvas) if not isinstance(canvas, np.ndarray) else canvas
+        shape_diff = (before_arr != after_arr).any(axis=2)
+        if shape_diff.any():
+            shape_rgb_f = after_arr.astype(np.float32) / 255.0
+            result[shape_diff] = shape_rgb_f[shape_diff]
+
+        self._make_image_output(result)
         self.set_progress(100)
         return True, None
 
@@ -4498,12 +4544,13 @@ class ScaleBarNode(BaseImageProcessNode):
 
         self.set_progress(40)
 
-        img = img_data.image.copy().convert('RGBA')
-        overlay = _PIL.new('RGBA', img.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        w, h = img.size
+        arr = img_data.payload.copy()  # float32 [0, 1]
+        h, w = arr.shape[:2]
 
-        # Font
+        # Normalize bar color to [0, 1]
+        bar_color_f = tuple(c / 255.0 for c in bar_color[:3])
+
+        # Font — render text label as a small PIL mask, then stamp onto float array
         try:
             font = ImageFont.truetype("Arial", fsize)
         except (OSError, IOError):
@@ -4521,6 +4568,8 @@ class ScaleBarNode(BaseImageProcessNode):
             label = f"{bar_um * 1000:.0f} nm"
 
         if show_lbl:
+            tmp = _PIL.new('L', (w, h), 0)
+            draw = ImageDraw.Draw(tmp)
             bbox = draw.textbbox((0, 0), label, font=font)
             lbl_w, lbl_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         else:
@@ -4534,19 +4583,40 @@ class ScaleBarNode(BaseImageProcessNode):
 
         self.set_progress(60)
 
+        # Draw text label as a mask, then blend into float array
         if show_lbl:
-            draw.text((x0 + (bar_px - lbl_w) // 2, y0), label, fill=bar_color, font=font)
+            txt_x = x0 + (bar_px - lbl_w) // 2
+            txt_y = y0
+            mask_img = _PIL.new('L', (w, h), 0)
+            mask_draw = ImageDraw.Draw(mask_img)
+            mask_draw.text((txt_x, txt_y), label, fill=255, font=font)
+            mask = np.array(mask_img).astype(np.float32) / 255.0
             bar_y = y0 + lbl_h + text_gap
         else:
+            mask = None
             bar_y = y0
 
-        draw.rectangle([x0, bar_y, x0 + bar_px, bar_y + bar_h], fill=bar_color)
+        # Stamp text onto image
+        if mask is not None:
+            if arr.ndim == 2:
+                arr = np.where(mask > 0, mask * bar_color_f[0], arr)
+            else:
+                for c in range(min(3, arr.shape[2])):
+                    arr[:, :, c] = np.where(mask > 0, mask * bar_color_f[c], arr[:, :, c])
 
-        result_pil = _PIL.alpha_composite(img, overlay).convert('RGB')
-        result_arr = np.array(result_pil)
+        # Draw bar rectangle directly on float array
+        by0 = max(0, bar_y)
+        by1 = min(h, bar_y + bar_h)
+        bx0 = max(0, x0)
+        bx1 = min(w, x0 + bar_px)
+        if arr.ndim == 2:
+            arr[by0:by1, bx0:bx1] = bar_color_f[0]
+        else:
+            for c in range(min(3, arr.shape[2])):
+                arr[by0:by1, bx0:bx1, c] = bar_color_f[c]
 
         self.set_progress(90)
-        self._make_image_output(result_arr)
-        self.set_display(result_arr)
+        self._make_image_output(arr)
+        self.set_display(arr)
         self.set_progress(100)
         return True, None
