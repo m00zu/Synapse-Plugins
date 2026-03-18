@@ -1,0 +1,30 @@
+{
+    "image_analysis": {
+        "name": "Image Analysis",
+        "description": "Filters, thresholding, morphology, segmentation, measurements, ROI (~70 nodes)"
+    },
+    "statistical_analysis": {
+        "name": "Statistical Analysis",
+        "description": "t-tests, ANOVA, regression, survival analysis, PCA (13 nodes)"
+    },
+    "figure_plotting": {
+        "name": "Figure Plotting",
+        "description": "Scatter, box, violin, heatmap, volcano, regression plots (16 nodes)"
+    },
+    "sam2_nodes": {
+        "name": "SAM2 Segmentation",
+        "description": "Interactive click-to-segment with Meta SAM2 (ONNX, no PyTorch)"
+    },
+    "rdkit_nodes": {
+        "name": "Cheminformatics",
+        "description": "RDKit molecule editing, docking, protein prep (fully vendored)"
+    },
+    "volume_nodes": {
+        "name": "3D Volume",
+        "description": "Volume rendering and analysis (5 nodes)"
+    },
+    "filopodia_nodes": {
+        "name": "Filopodia Analysis",
+        "description": "Cell protrusion detection and measurement (3 nodes)"
+    }
+}
