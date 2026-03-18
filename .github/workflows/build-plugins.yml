@@ -60,13 +60,8 @@ jobs:
     if: github.event_name == 'push' || inputs.build_sam2
     strategy:
       matrix:
-        include:
-          - os: macos-14
-            python: '3.14'
-          - os: windows-latest
-            python: '3.13'
-          - os: ubuntu-latest
-            python: '3.14'
+        os: [macos-14, windows-latest, ubuntu-latest]
+        python: ['3.13', '3.14']
 
     runs-on: ${{ matrix.os }}
 
@@ -100,13 +95,8 @@ jobs:
     if: github.event_name == 'push' || inputs.build_rdkit
     strategy:
       matrix:
-        include:
-          - os: macos-14
-            python: '3.14'
-          - os: windows-latest
-            python: '3.13'
-          - os: ubuntu-latest
-            python: '3.14'
+        os: [macos-14, windows-latest, ubuntu-latest]
+        python: ['3.13', '3.14']
 
     runs-on: ${{ matrix.os }}
 
