@@ -3611,8 +3611,8 @@ class _MiniChannelBC(QtWidgets.QWidget):
         self._sld_min.setRange(0, 255)
         self._spn_min = QtWidgets.QSpinBox()
         self._spn_min.setRange(0, 255)
-        self._spn_min.setFixedWidth(40)
-        self._spn_min.setStyleSheet('font-size: 7px;')
+        self._spn_min.setFixedWidth(52)
+        self._spn_min.setStyleSheet('font-size: 7px; color: #ccc;')
 
         self._sld_max = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self._sld_max.setRange(0, 255)
@@ -3620,8 +3620,8 @@ class _MiniChannelBC(QtWidgets.QWidget):
         self._spn_max = QtWidgets.QSpinBox()
         self._spn_max.setRange(0, 255)
         self._spn_max.setValue(255)
-        self._spn_max.setFixedWidth(40)
-        self._spn_max.setStyleSheet('font-size: 7px;')
+        self._spn_max.setFixedWidth(52)
+        self._spn_max.setStyleSheet('font-size: 7px; color: #ccc;')
 
         self._sld_brightness = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self._sld_brightness.setRange(-1000, 1000)
@@ -3629,8 +3629,8 @@ class _MiniChannelBC(QtWidgets.QWidget):
         self._spn_brightness.setRange(-100.0, 100.0)
         self._spn_brightness.setDecimals(1)
         self._spn_brightness.setSingleStep(0.5)
-        self._spn_brightness.setFixedWidth(40)
-        self._spn_brightness.setStyleSheet('font-size: 7px;')
+        self._spn_brightness.setFixedWidth(52)
+        self._spn_brightness.setStyleSheet('font-size: 7px; color: #ccc;')
 
         self._sld_contrast = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self._sld_contrast.setRange(-1000, 1000)
@@ -3638,8 +3638,8 @@ class _MiniChannelBC(QtWidgets.QWidget):
         self._spn_contrast.setRange(-100.0, 100.0)
         self._spn_contrast.setDecimals(1)
         self._spn_contrast.setSingleStep(0.5)
-        self._spn_contrast.setFixedWidth(40)
-        self._spn_contrast.setStyleSheet('font-size: 7px;')
+        self._spn_contrast.setFixedWidth(52)
+        self._spn_contrast.setStyleSheet('font-size: 7px; color: #ccc;')
 
         for row, (lbl_text, sld, spn) in enumerate([
             ('Min', self._sld_min, self._spn_min),
@@ -3964,12 +3964,31 @@ class MultiChannelBCNode(BaseImageProcessNode):
 
         self.create_preview_widgets()
         self._cached_channels: list[np.ndarray | None] = [None] * 4
+        self._cached_channels_small: list[np.ndarray | None] = [None] * 4
         self._cached_bit_depth = 8
 
+        # Debounce timer: fast preview first, full-res build after settling
+        self._bc_debounce = QtCore.QTimer()
+        self._bc_debounce.setSingleShot(True)
+        self._bc_debounce.setInterval(120)
+        self._bc_debounce.timeout.connect(self._on_debounce_fire)
+
+    # Max pixels for the downsampled preview used during slider drag
+    _PREVIEW_MAX_PX = 512 * 512
+
     def _on_channel_changed(self, ch_idx, min_val, max_val):
-        """Live update when user drags a handle."""
+        """Live update when user drags a handle — debounced."""
         if self._cached_channels[ch_idx] is None:
             return
+        # Instant preview on downsampled data
+        preview = self._build_composite(use_small=True)
+        if preview is not None:
+            self.set_display(preview)
+        # Restart debounce for full-res build + downstream cascade
+        self._bc_debounce.start()
+
+    def _on_debounce_fire(self):
+        """Debounce expired — build full-res outputs and cascade."""
         result = self._build_outputs()
         if result:
             self.set_display(self.output_values.get('composite', result).payload)
@@ -4017,6 +4036,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
             return False, "No channels connected"
 
         self._cached_channels = channels
+        self._cached_channels_small = self._downsample_channels(channels)
         self.set_progress(20)
 
         # ── Update histograms (thread-safe) ──────────────────────────
@@ -4037,6 +4057,67 @@ class MultiChannelBCNode(BaseImageProcessNode):
         self._build_outputs(initial_max=float(max_possible))
         self.set_progress(100)
         return True, None
+
+    def _downsample_channels(self, channels):
+        """Pre-compute downsampled copies for fast preview during drag."""
+        small: list[np.ndarray | None] = [None] * 4
+        for i, ch in enumerate(channels):
+            if ch is None:
+                continue
+            h, w = ch.shape[:2]
+            total = h * w
+            if total <= self._PREVIEW_MAX_PX:
+                small[i] = ch  # already small enough, reuse
+            else:
+                factor = max(2, int(np.sqrt(total / self._PREVIEW_MAX_PX) + 0.5))
+                small[i] = ch[::factor, ::factor]
+        return small
+
+    def _build_composite(self, use_small=False):
+        """Build only the composite preview array (no output_values update)."""
+        channels = self._cached_channels_small if use_small else self._cached_channels
+        bd = self._cached_bit_depth
+        max_possible = float((1 << bd) - 1)
+        n_active = sum(1 for c in channels if c is not None)
+
+        h, w = 0, 0
+        for c in channels:
+            if c is not None:
+                h, w = c.shape[:2]
+                break
+        if h == 0:
+            return None
+
+        composite = np.zeros((h, w, 3), dtype=np.float32)
+        single_adjusted = None
+        single_gray = False
+
+        for i in range(4):
+            if channels[i] is None:
+                continue
+            panel = self._mc_widget.panel(i)
+            min_v, max_v = panel.get_range()
+            color = panel.get_color()
+
+            lo = min_v / max_possible
+            hi = max_v / max_possible
+            width = hi - lo
+            if width <= 0:
+                width = 1.0 / max_possible
+            adjusted = np.clip((channels[i] - lo) / width, 0.0, 1.0)
+            target = np.array(color, dtype=np.float32) / 255.0
+
+            for c in range(3):
+                composite[:, :, c] += adjusted * target[c]
+
+            if n_active == 1:
+                single_adjusted = adjusted
+                single_gray = panel.is_grayscale()
+
+        composite = np.clip(composite, 0.0, 1.0)
+        if n_active == 1 and single_adjusted is not None and single_gray:
+            return single_adjusted
+        return composite
 
     def _build_outputs(self, initial_max=None):
         """Apply per-channel B&C and build composite.

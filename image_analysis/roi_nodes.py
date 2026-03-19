@@ -3913,7 +3913,7 @@ class DrawShapeNode(BaseExecutionNode):
                             ov_draw, pts,
                             color=mask_color, width=mask_width,
                             style=mask_style, closed=False)
-        if not no_preview and not no_reload:
+        if not no_preview:
             self._draw_widget.set_mask_contours(contour_data_for_scene,
                                                 contour_styles_for_scene)
 
@@ -4724,4 +4724,222 @@ class ScaleBarNode(BaseImageProcessNode):
         self._make_image_output(arr)
         self.set_display(arr)
         self.set_progress(100)
+        return True, None
+
+
+# ===========================================================================
+# Mask Overlay — lightweight contour/fill overlay on an image
+# ===========================================================================
+
+class MaskOverlayNode(BaseImageProcessNode):
+    """
+    Draw a mask contour (or fill) on an image.
+
+    A lightweight alternative to Draw Shape for simple mask visualization.
+    Connect an image and a mask, and the mask boundary is drawn as a colored
+    contour on the output image. Optionally fill the masked region with a
+    semi-transparent color.
+
+    Controls:
+    - Line width, style (solid/dashed/dotted), and color
+    - Fill toggle with adjustable opacity
+
+    Keywords: mask, contour, outline, overlay, boundary, fill, 遮罩, 輪廓, 疊加
+    """
+    __identifier__ = 'nodes.image_process.Visualize'
+    NODE_NAME      = 'Mask Overlay'
+    PORT_SPEC      = {'inputs': ['image', 'mask'], 'outputs': ['image']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_input('mask', color=PORT_COLORS['mask'])
+        self.add_output('image', color=PORT_COLORS['image'], multi_output=True)
+
+        import NodeGraphQt
+        H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
+
+        # Row 1: Color + Line Width + Style
+        row1 = QtWidgets.QWidget()
+        lay1 = QtWidgets.QHBoxLayout(row1)
+        lay1.setContentsMargins(0, 0, 0, 0)
+        lay1.setSpacing(4)
+
+        _LS = 'color:#ccc; font-size:9px;'
+
+        lbl_c = QtWidgets.QLabel('Color:')
+        lbl_c.setStyleSheet(_LS)
+        self._color_btn = QtWidgets.QPushButton()
+        self._color_btn.setFixedSize(28, 32)
+        self._line_color = QtGui.QColor(255, 255, 255)
+        self._update_color_swatch()
+        self._color_btn.clicked.connect(self._pick_color)
+        self.create_property('line_color', [255, 255, 255, 255])
+
+        lbl_w = QtWidgets.QLabel('Width:')
+        lbl_w.setStyleSheet(_LS)
+        self._width_spin = QtWidgets.QDoubleSpinBox()
+        self._width_spin.setRange(0.5, 20.0)
+        self._width_spin.setValue(2.0)
+        self._width_spin.setSingleStep(0.5)
+        self._width_spin.setDecimals(1)
+        self._width_spin.setFixedWidth(48)
+        self.create_property('line_width', 2.0)
+        self._width_spin.valueChanged.connect(
+            lambda v: self.set_property('line_width', v))
+
+        lbl_s = QtWidgets.QLabel('Style:')
+        lbl_s.setStyleSheet(_LS)
+        self._style_combo = QtWidgets.QComboBox()
+        self._style_combo.addItems(['solid', 'dashed', 'dotted', 'dashdot'])
+        self._style_combo.setFixedWidth(72)
+        self.create_property('line_style', 'solid')
+        self._style_combo.currentTextChanged.connect(
+            lambda v: self.set_property('line_style', v))
+
+        lay1.addWidget(lbl_c)
+        lay1.addWidget(self._color_btn)
+        lay1.addSpacing(6)
+        lay1.addWidget(lbl_w)
+        lay1.addWidget(self._width_spin)
+        lay1.addSpacing(6)
+        lay1.addWidget(lbl_s)
+        lay1.addWidget(self._style_combo)
+        lay1.addStretch()
+
+        class _RowWidget(NodeBaseWidget):
+            def __init__(self, parent, name, widget):
+                super().__init__(parent, name, '')
+                self.set_custom_widget(widget)
+            def get_value(self): return None
+            def set_value(self, v): pass
+
+        self.add_custom_widget(_RowWidget(self.view, '_overlay_row1', row1),
+                               widget_type=H, tab='Properties')
+
+        # Row 2: Fill toggle + Opacity
+        row2 = QtWidgets.QWidget()
+        lay2 = QtWidgets.QHBoxLayout(row2)
+        lay2.setContentsMargins(0, 0, 0, 0)
+        lay2.setSpacing(4)
+
+        lbl_f = QtWidgets.QLabel('Fill:')
+        lbl_f.setStyleSheet(_LS)
+        self._fill_cb = QtWidgets.QCheckBox()
+        self.create_property('fill_mode', 'Off')
+        self._fill_cb.toggled.connect(
+            lambda v: self.set_property('fill_mode', 'On' if v else 'Off'))
+
+        lbl_a = QtWidgets.QLabel('Opacity:')
+        lbl_a.setStyleSheet(_LS)
+        self._opacity_spin = QtWidgets.QSpinBox()
+        self._opacity_spin.setRange(0, 255)
+        self._opacity_spin.setValue(80)
+        self._opacity_spin.setFixedWidth(50)
+        self.create_property('fill_opacity', 80)
+        self._opacity_spin.valueChanged.connect(
+            lambda v: self.set_property('fill_opacity', v))
+
+        lay2.addWidget(lbl_f)
+        lay2.addWidget(self._fill_cb)
+        lay2.addSpacing(6)
+        lay2.addWidget(lbl_a)
+        lay2.addWidget(self._opacity_spin)
+        lay2.addStretch()
+
+        self.add_custom_widget(_RowWidget(self.view, '_overlay_row2', row2),
+                               widget_type=H, tab='Properties')
+
+        self.create_preview_widgets()
+
+    def _update_color_swatch(self):
+        c = self._line_color
+        self._color_btn.setStyleSheet(
+            f'background-color: rgb({c.red()},{c.green()},{c.blue()});'
+            f'border: 2px solid #555; border-radius: 3px;')
+
+    def _pick_color(self):
+        c = QtWidgets.QColorDialog.getColor(
+            self._line_color, QtWidgets.QApplication.activeWindow(), "Line Color")
+        if c.isValid():
+            self._line_color = c
+            self._update_color_swatch()
+            self.set_property('line_color', [c.red(), c.green(), c.blue(), c.alpha()])
+
+    def evaluate(self):
+        self.reset_progress()
+        from PIL import Image as _PIL, ImageDraw
+
+        # Read image
+        data = self._get_input_image_data()
+        if data is None:
+            return False, "No image connected"
+        arr = data.payload.copy()
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        h, w = arr.shape[:2]
+
+        # Read mask
+        mask_port = self.inputs().get('mask')
+        if not mask_port or not mask_port.connected_ports():
+            # No mask — pass through image
+            self._make_image_output(arr)
+            self.set_display(arr)
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+
+        cp = mask_port.connected_ports()[0]
+        mdata = cp.node().output_values.get(cp.name())
+        if not isinstance(mdata, MaskData):
+            return False, "Mask input must be MaskData"
+        mask_bool = mdata.payload.astype(bool) if mdata.payload.dtype != bool else mdata.payload
+
+        self.set_progress(30)
+
+        # Read style properties
+        lw = max(1, int(self.get_property('line_width')))
+        ls = str(self.get_property('line_style') or 'solid')
+        color_raw = self.get_property('line_color') or [0, 220, 220, 255]
+        color = (int(color_raw[0]), int(color_raw[1]), int(color_raw[2]))
+        color_f = tuple(c / 255.0 for c in color)
+        fill_on = str(self.get_property('fill_mode')) == 'On'
+        fill_alpha = int(self.get_property('fill_opacity') or 80)
+
+        self.set_progress(50)
+
+        # Fill: blend directly on float array
+        if fill_on and mask_bool.any():
+            alpha_f = fill_alpha / 255.0
+            for c in range(3):
+                arr[:, :, c] = np.where(mask_bool,
+                    (1 - alpha_f) * arr[:, :, c] + alpha_f * color_f[c],
+                    arr[:, :, c])
+
+        self.set_progress(70)
+
+        # Contour: draw on RGBA overlay, stamp onto float
+        paths = _mask_to_outline_paths(mask_bool)
+        if paths:
+            ov = _PIL.new('RGBA', (w, h), (0, 0, 0, 0))
+            ov_draw = ImageDraw.Draw(ov)
+            for pts in paths:
+                _draw_styled_polyline(ov_draw, pts,
+                                      color=color, width=lw,
+                                      style=ls, closed=False)
+            ov_arr = np.array(ov)
+            ov_alpha = ov_arr[:, :, 3:4].astype(np.float32) / 255.0
+            ov_rgb = ov_arr[:, :, :3].astype(np.float32) / 255.0
+            mask_drawn = ov_alpha > 0
+            if mask_drawn.any():
+                alpha3 = np.broadcast_to(ov_alpha, arr.shape)
+                mask3 = np.broadcast_to(mask_drawn, arr.shape)
+                arr = np.where(mask3,
+                    (1 - alpha3) * arr + alpha3 * ov_rgb, arr)
+
+        self.set_progress(90)
+        self._make_image_output(arr)
+        self.set_display(arr)
+        self.set_progress(100)
+        self.mark_clean()
         return True, None
