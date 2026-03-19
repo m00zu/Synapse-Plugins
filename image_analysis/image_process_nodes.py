@@ -3965,7 +3965,8 @@ class MultiChannelBCNode(BaseImageProcessNode):
         self.create_preview_widgets()
         self._cached_channels: list[np.ndarray | None] = [None] * 4
         self._cached_channels_small: list[np.ndarray | None] = [None] * 4
-        self._cached_bit_depth = 8
+        self._cached_bit_depths: list[int] = [8, 8, 8, 8]
+        self._cached_scale_ums: list[float | None] = [None, None, None, None]
 
         # Debounce timer: fast preview first, full-res build after settling
         self._bc_debounce = QtCore.QTimer()
@@ -4011,12 +4012,17 @@ class MultiChannelBCNode(BaseImageProcessNode):
             data = cp.node().output_values.get(cp.name())
             if isinstance(data, ImageData):
                 arr = data.payload
-                self._cached_bit_depth = getattr(data, 'bit_depth', 8) or 8
+                bd = getattr(data, 'bit_depth', 8) or 8
+                sc = getattr(data, 'scale_um', None)
                 if arr.ndim == 3:
                     for i in range(min(4, arr.shape[2])):
                         channels[i] = arr[:, :, i]
+                        self._cached_bit_depths[i] = bd
+                        self._cached_scale_ums[i] = sc
                 elif arr.ndim == 2:
                     channels[0] = arr
+                    self._cached_bit_depths[0] = bd
+                    self._cached_scale_ums[0] = sc
 
         # Individual channel inputs (override multi-channel)
         for i, port_name in enumerate(['ch1', 'ch2', 'ch3', 'ch4']):
@@ -4029,7 +4035,8 @@ class MultiChannelBCNode(BaseImageProcessNode):
                     if arr.ndim == 3:
                         arr = arr.mean(axis=2)
                     channels[i] = arr.astype(np.float32)
-                    self._cached_bit_depth = getattr(data, 'bit_depth', 8) or 8
+                    self._cached_bit_depths[i] = getattr(data, 'bit_depth', 8) or 8
+                    self._cached_scale_ums[i] = getattr(data, 'scale_um', None)
 
         n_active = sum(1 for c in channels if c is not None)
         if n_active == 0:
@@ -4040,10 +4047,9 @@ class MultiChannelBCNode(BaseImageProcessNode):
         self.set_progress(20)
 
         # ── Update histograms (thread-safe) ──────────────────────────
-        max_possible = (1 << self._cached_bit_depth) - 1
-
         for i in range(4):
             if channels[i] is not None:
+                max_possible = (1 << self._cached_bit_depths[i]) - 1
                 flat_scaled = channels[i].ravel() * max_possible
                 self._mc_widget.set_histogram_threadsafe(i, flat_scaled, full_range=max_possible)
                 self._mc_widget.set_channel_enabled_threadsafe(i, True)
@@ -4054,7 +4060,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
 
         # On first evaluate, widget ranges may not have updated yet (queued signals),
         # so force full-range output (no B&C clipping)
-        self._build_outputs(initial_max=float(max_possible))
+        self._build_outputs(first_eval=True)
         self.set_progress(100)
         return True, None
 
@@ -4076,8 +4082,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
     def _build_composite(self, use_small=False):
         """Build only the composite preview array (no output_values update)."""
         channels = self._cached_channels_small if use_small else self._cached_channels
-        bd = self._cached_bit_depth
-        max_possible = float((1 << bd) - 1)
+        bds = self._cached_bit_depths
         n_active = sum(1 for c in channels if c is not None)
 
         h, w = 0, 0
@@ -4095,6 +4100,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
         for i in range(4):
             if channels[i] is None:
                 continue
+            max_possible = float((1 << bds[i]) - 1)
             panel = self._mc_widget.panel(i)
             min_v, max_v = panel.get_range()
             color = panel.get_color()
@@ -4119,16 +4125,15 @@ class MultiChannelBCNode(BaseImageProcessNode):
             return single_adjusted
         return composite
 
-    def _build_outputs(self, initial_max=None):
+    def _build_outputs(self, first_eval=False):
         """Apply per-channel B&C and build composite.
 
         Args:
-            initial_max: if set, use (0, initial_max) as default range when
-                         the widget hasn't been updated yet (first evaluate).
+            first_eval: if True, use full range per channel when the widget
+                        hasn't been updated yet (first evaluate).
         """
         channels = self._cached_channels
-        bd = self._cached_bit_depth
-        max_possible = float((1 << bd) - 1)
+        bds = self._cached_bit_depths
         n_active = sum(1 for c in channels if c is not None)
 
         # Find image dimensions from first available channel
@@ -4145,11 +4150,13 @@ class MultiChannelBCNode(BaseImageProcessNode):
         for i in range(4):
             if channels[i] is None:
                 continue
+            bd = bds[i]
+            max_possible = float((1 << bd) - 1)
             panel = self._mc_widget.panel(i)
             min_v, max_v = panel.get_range()
             # On first load, widget may still have old 0-255 range
-            if initial_max is not None and max_v <= 255 and initial_max > 255:
-                min_v, max_v = 0.0, initial_max
+            if first_eval and max_v <= 255 and max_possible > 255:
+                min_v, max_v = 0.0, max_possible
             color = panel.get_color()
 
             # Apply B&C: linear stretch [min_v, max_v] → [0, 1]
@@ -4165,31 +4172,36 @@ class MultiChannelBCNode(BaseImageProcessNode):
 
             # Output individual channel: grayscale or colorized
             port_name = f'ch{i + 1}'
+            sc = self._cached_scale_ums[i]
             if panel.is_grayscale():
                 self.output_values[port_name] = ImageData(
-                    payload=adjusted, bit_depth=bd)
+                    payload=adjusted, bit_depth=bd, scale_um=sc)
             else:
                 ch_rgb = np.stack([adjusted * target[c] for c in range(3)], axis=-1)
                 ch_rgb = np.clip(ch_rgb, 0.0, 1.0)
                 self.output_values[port_name] = ImageData(
-                    payload=ch_rgb, bit_depth=bd)
+                    payload=ch_rgb, bit_depth=bd, scale_um=sc)
 
             # Add to composite
             for c in range(3):
                 composite[:, :, c] += adjusted * target[c]
 
         composite = np.clip(composite, 0.0, 1.0)
+        active_idx = [i for i in range(4) if channels[i] is not None]
+        composite_bd = max(bds[i] for i in active_idx)
+        composite_sc = next((self._cached_scale_ums[i] for i in active_idx
+                             if self._cached_scale_ums[i] is not None), None)
 
         # For single channel, output grayscale composite
         if n_active == 1:
-            for i in range(4):
-                if channels[i] is not None:
-                    self.output_values['composite'] = ImageData(
-                        payload=self.output_values[f'ch{i+1}'].payload, bit_depth=bd)
-                    break
+            i = active_idx[0]
+            self.output_values['composite'] = ImageData(
+                payload=self.output_values[f'ch{i+1}'].payload,
+                bit_depth=bds[i], scale_um=self._cached_scale_ums[i])
         else:
             self.output_values['composite'] = ImageData(
-                payload=composite, bit_depth=8)
+                payload=composite, bit_depth=composite_bd,
+                scale_um=composite_sc)
 
         self.set_display(composite if n_active > 1 else
                          self.output_values['composite'].payload)
@@ -4271,7 +4283,9 @@ class MergeImageNode(BaseImageProcessNode):
 
         result = np.clip(result, 0.0, 1.0)
 
-        self._make_image_output(result)
+        out = self._make_image_output(result)
+        out.bit_depth = bit_depth
+        out.scale_um = scale_um
         self.set_display(result)
         self.set_progress(100)
         self.mark_clean()
