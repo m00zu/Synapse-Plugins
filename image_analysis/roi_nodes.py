@@ -4551,12 +4551,20 @@ class ScaleBarNode(BaseImageProcessNode):
         bar_color_f = tuple(c / 255.0 for c in bar_color[:3])
 
         # Font — render text label as a small PIL mask, then stamp onto float array
-        try:
-            font = ImageFont.truetype("Arial", fsize)
-        except (OSError, IOError):
+        font = None
+        for font_name in ("Arial", "arial.ttf",
+                          "C:/Windows/Fonts/arial.ttf",
+                          "/System/Library/Fonts/Helvetica.ttc",
+                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
             try:
-                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", fsize)
+                font = ImageFont.truetype(font_name, fsize)
+                break
             except (OSError, IOError):
+                continue
+        if font is None:
+            try:
+                font = ImageFont.load_default(size=fsize)
+            except TypeError:
                 font = ImageFont.load_default()
 
         # Label text
