@@ -281,13 +281,28 @@ def _draw_shape_overlay(
     pts = _roi_dict_to_outline_points(roi_data)
     if pts:
         closed = shape in ('ellipse', 'rectangle', 'polygon')
-        _draw_styled_polyline(
-            draw, pts,
-            color=line_color,
-            width=max(1, int(line_width)),
-            style=str(line_style or 'solid').lower(),
-            closed=closed,
-        )
+        fill_mode = bool(roi_data.get('fill_mode', False))
+
+        if fill_mode and closed and len(pts) >= 3:
+            # Fill with user-controlled opacity
+            alpha = int(roi_data.get('fill_opacity', 180))
+            fill_rgba = (line_color[0], line_color[1], line_color[2], alpha)
+            # Draw filled polygon on RGBA overlay
+            img_w, img_h = out.size
+            ov = _PIL.new('RGBA', (img_w, img_h), (0, 0, 0, 0))
+            ov_draw = ImageDraw.Draw(ov)
+            int_pts = [(int(round(x)), int(round(y))) for x, y in pts]
+            ov_draw.polygon(int_pts, fill=fill_rgba, outline=line_color,
+                            width=max(1, int(line_width)))
+            out = _PIL.alpha_composite(out.convert('RGBA'), ov).convert('RGB')
+        else:
+            _draw_styled_polyline(
+                draw, pts,
+                color=line_color,
+                width=max(1, int(line_width)),
+                style=str(line_style or 'solid').lower(),
+                closed=closed,
+            )
     return out
 
 
@@ -1349,7 +1364,7 @@ class MultiShapeGraphicsView(QGraphicsView):
         return {}
 
     def set_shape_geometry(self, shape_id: str, x: float, y: float,
-                           w: float, h: float):
+                           w: float, h: float, *, notify: bool = True):
         """Reposition / resize a shape on the canvas."""
         item = self._shape_items.get(shape_id)
         if item is None:
@@ -1415,8 +1430,9 @@ class MultiShapeGraphicsView(QGraphicsView):
         elif isinstance(item, QGraphicsSimpleTextItem):
             item.setPos(x, y)
         self._update_overlays(shape_id)
-        self.shape_committed.emit(shape_id)
-        self.shapes_changed.emit()
+        if notify:
+            self.shape_committed.emit(shape_id)
+            self.shapes_changed.emit()
 
     def _apply_style(self, shape_id: str):
         item = self._shape_items.get(shape_id)
@@ -2894,9 +2910,19 @@ class NodeMultiShapeWidget(NodeBaseWidget):
         self._fill_btn = QtWidgets.QPushButton('Fill')
         self._fill_btn.setCheckable(True)
         self._fill_btn.setFixedHeight(22)
-        self._fill_btn.setToolTip('Fill mask (only applies to mask inputs)')
+        self._fill_btn.setToolTip('Fill shape with semi-transparent color')
         self._fill_btn.toggled.connect(self._on_style_control_changed)
         style_row.addWidget(self._fill_btn)
+
+        self._fill_opacity_spin = QtWidgets.QSpinBox()
+        self._fill_opacity_spin.setRange(0, 255)
+        self._fill_opacity_spin.setValue(180)
+        self._fill_opacity_spin.setSuffix('α')
+        self._fill_opacity_spin.setFixedWidth(60)
+        self._fill_opacity_spin.setFixedHeight(22)
+        self._fill_opacity_spin.setToolTip('Fill opacity (0 = transparent, 255 = solid)')
+        self._fill_opacity_spin.valueChanged.connect(self._on_style_control_changed)
+        style_row.addWidget(self._fill_opacity_spin)
 
         self._fill_all_btn = QtWidgets.QPushButton('Fill All')
         self._fill_all_btn.setFixedHeight(22)
@@ -2931,9 +2957,9 @@ class NodeMultiShapeWidget(NodeBaseWidget):
 
         style_row.addSpacing(10)
 
-        style_row.addWidget(QtWidgets.QLabel('Label:'))
+        # Hidden label edit — kept for backward compat with saved workflows
         self._label_edit = QtWidgets.QLineEdit()
-        self._label_edit.setPlaceholderText('label')
+        self._label_edit.hide()
         self._label_edit.setFixedWidth(90)
         style_row.addWidget(self._label_edit)
         style_row.addStretch()
@@ -2946,7 +2972,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
             ('Y:', '_geo_y_spin', -9999, 9999, 1, 1.0, 72),
             ('W:', '_geo_w_spin', 1, 9999, 1, 1.0, 72),
             ('H:', '_geo_h_spin', 1, 9999, 1, 1.0, 72),
-            ('Size:', '_geo_sz_spin', 4, 120, 1, 1.0, 58),
+            ('Font:', '_geo_sz_spin', 4, 120, 1, 1.0, 58),
         ):
             geo_row.addWidget(QtWidgets.QLabel(lbl))
             spin = QtWidgets.QDoubleSpinBox()
@@ -2976,6 +3002,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
         self._mask_contour_styles: dict[str, dict] = {}
         self._mask_count = 0
         self._update_color_btn()
+        self._active_shape_id = None  # last selected shape, survives focus changes
 
         # ── connections ────────────────────────────────────────────────────
         self._shape_group.idClicked.connect(self._on_shape_btn)
@@ -3035,6 +3062,8 @@ class NodeMultiShapeWidget(NodeBaseWidget):
 
     def _on_canvas_selection(self, shape_id: str):
         """Canvas click selected a shape — sync list + style controls."""
+        if shape_id:
+            self._active_shape_id = shape_id
         self._sync_list_to_canvas(shape_id)
         if shape_id:
             self._load_style_for_shape(shape_id)
@@ -3138,6 +3167,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
     def _on_list_selection(self, current, _previous):
         if current is not None:
             sid = current.data(Qt.ItemDataRole.UserRole)
+            self._active_shape_id = sid
             if self._is_mask_contour(sid):
                 # Mask contour: deselect canvas, show bbox, load mask style
                 self._view.select_shape(None)
@@ -3187,8 +3217,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
         self._update_color_btn()
         self._label_edit.setText(str(st.get('label_text', '')))
         self._fill_btn.setChecked(bool(st.get('fill_mode', False)))
-        # Fill button only meaningful for mask contours
-        self._fill_btn.setEnabled(self._is_mask_contour(shape_id))
+        self._fill_opacity_spin.setValue(int(st.get('fill_opacity', 180)))
         self._load_geometry_for_shape(shape_id)
         self._updating_controls = False
 
@@ -3232,28 +3261,21 @@ class NodeMultiShapeWidget(NodeBaseWidget):
     def _on_geometry_changed(self, *_args):
         if self._updating_controls:
             return
-        sid = self._view.selected_id()
+        sid = self._active_shape_id
         if not sid or self._is_mask_contour(sid):
             return
         x = self._geo_x_spin.value()
         y = self._geo_y_spin.value()
         w = self._geo_w_spin.value()
         h = self._geo_h_spin.value()
-        self._view.set_shape_geometry(sid, x, y, w, h)
+        self._view.set_shape_geometry(sid, x, y, w, h, notify=False)
         self._rebuild_shape_list()
-        self._emit_shapes()
+        self._emit_shapes_no_reload()
 
     def _on_style_control_changed(self, *_args):
         if self._updating_controls:
             return
-        sid = self._view.selected_id()
-        # Check if a mask contour is selected in the list instead
-        if not sid:
-            cur = self._shape_list.currentItem()
-            if cur:
-                list_sid = cur.data(Qt.ItemDataRole.UserRole)
-                if self._is_mask_contour(list_sid):
-                    sid = list_sid
+        sid = self._active_shape_id
         if sid and self._is_mask_contour(sid):
             # Update mask contour style
             self._mask_contour_styles[sid] = {
@@ -3265,11 +3287,11 @@ class NodeMultiShapeWidget(NodeBaseWidget):
                                self._line_color.alpha()],
                 'label_text': self._label_edit.text(),
                 'fill_mode':  self._fill_btn.isChecked(),
+                'fill_opacity': self._fill_opacity_spin.value(),
             }
-            self._rebuild_shape_list()
-            self._emit_shapes()
+            self._emit_shapes_no_reload()
         elif sid:
-            # apply to selected canvas shape
+            # apply to selected canvas shape (immediate visual update)
             self._view.update_shape_style(sid, 'line_width',
                                           self._width_spin.value())
             self._view.update_shape_style(sid, 'line_style',
@@ -3281,8 +3303,11 @@ class NodeMultiShapeWidget(NodeBaseWidget):
                                           self._label_edit.text())
             self._view.update_shape_style(sid, 'label_font_size',
                                           self._geo_sz_spin.value())
-            self._rebuild_shape_list()
-            self._emit_shapes()
+            self._view.update_shape_style(sid, 'fill_mode',
+                                          self._fill_btn.isChecked())
+            self._view.update_shape_style(sid, 'fill_opacity',
+                                          self._fill_opacity_spin.value())
+            self._emit_shapes_no_reload()
         else:
             # no selection → update defaults for next new shape
             self._view.set_defaults(
@@ -3408,10 +3433,34 @@ class NodeMultiShapeWidget(NodeBaseWidget):
 
     # ── emit to node ───────────────────────────────────────────────────────
 
+    def _debounce_fire(self):
+        """Called after debounce timer expires.
+        Persist shape data and mark node dirty — output updates on next
+        Run Graph. Avoids running evaluate() which causes focus/selection loss."""
+        data = self._view.get_all_shapes_data()
+        data.extend(self.get_mask_contour_styles())
+        # Directly update the node model without triggering shapes_changed signal
+        # (which would call evaluate and steal focus)
+        node = self.parent()
+        while node and not hasattr(node, 'model'):
+            node = node.parent() if hasattr(node, 'parent') else None
+        if hasattr(self, '_owner_node') and self._owner_node is not None:
+            self._owner_node.model.set_property('shapes_data', json.dumps(data))
+            self._owner_node.mark_dirty()
+
     def _emit_shapes(self):
         data = self._view.get_all_shapes_data()
         data.extend(self.get_mask_contour_styles())
         self.shapes_changed.emit(data)
+
+    def _emit_shapes_no_reload(self):
+        """Emit shapes for output re-evaluation without reloading the widget.
+        Used during spinbox adjustments to prevent focus loss."""
+        data = self._view.get_all_shapes_data()
+        data.extend(self.get_mask_contour_styles())
+        self._no_reload = True
+        self.shapes_changed.emit(data)
+        self._no_reload = False
 
     # ── view sizing ────────────────────────────────────────────────────────
 
@@ -3584,11 +3633,32 @@ def _draw_curve_overlay(image, shape_data: dict, *,
 
 class DrawShapeNode(BaseExecutionNode):
     """
-    Draws multiple editable shapes over an input image and outputs the annotated result.
+    Draw shapes, text, and annotations on an image.
 
-    Each shape has independent colour, width, and style. Optionally accepts a mask input and draws the mask outline as well.
+    Shapes: rectangle, ellipse, polygon, arrow, bezier curve, and free text.
+    Each shape has its own color, line width, line style (solid/dashed/dotted),
+    and optional fill with adjustable opacity. Shapes can be moved, resized,
+    and edited interactively on the canvas.
 
-    Keywords: annotate, draw shape, arrow label, mask outline, dashed line, text, multi-shape, square, circle
+    Inputs:
+    - **image** — background image (optional)
+    - **mask** (multi-input) — binary masks shown as colored contours
+    - **label_image** — segmentation labels shown as colored overlay
+
+    Controls:
+    - Line width, style, and color per shape
+    - Fill toggle + opacity for closed shapes (rectangle, ellipse, polygon)
+    - Auto Fill — fill all mask contours at once
+    - Fill All — apply fill to every mask input
+    - Label overlay opacity — transparency of segmentation label colors
+    - Geometry spinboxes (X, Y, W, H) for precise positioning
+    - Font size for texts
+    - No Preview — skip interactive canvas rendering for speed
+
+    Hold Shift while drawing to constrain to square/circle.
+
+    Keywords: annotate, draw, shape, rectangle, ellipse, polygon, arrow, text,
+    curve, mask outline, fill, overlay, 標註, 繪圖, 形狀
     """
     __identifier__ = 'nodes.image_process.Visualize'
     NODE_NAME      = 'Draw Shape'
@@ -3612,6 +3682,7 @@ class DrawShapeNode(BaseExecutionNode):
         self.create_property('no_preview', False)
 
         self._draw_widget = NodeMultiShapeWidget(self.view)
+        self._draw_widget._owner_node = self  # back-reference for debounce
         self._draw_widget.shapes_changed.connect(self._on_shapes_changed)
         self.add_custom_widget(self._draw_widget)
         self._last_img_id: int | None = None
@@ -3651,6 +3722,8 @@ class DrawShapeNode(BaseExecutionNode):
         # a group-box stylesheet reset + full re-layout that can disrupt
         # the embedded QGraphicsView's viewport transform.
         self.model.set_property('shapes_data', json.dumps(shapes))
+        # Save focused widget before evaluate (draw_node steals focus)
+        focused = QtWidgets.QApplication.focusWidget()
         success, _ = self.evaluate()
         if success:
             self.mark_clean()
@@ -3662,6 +3735,9 @@ class DrawShapeNode(BaseExecutionNode):
                 dn = in_port.node()
                 if hasattr(dn, 'mark_dirty'):
                     dn.mark_dirty()
+        # Restore focus after all UI updates are done
+        if focused is not None and focused.isVisible():
+            QtCore.QTimer.singleShot(0, focused.setFocus)
 
     def evaluate(self):
         self.reset_progress()
@@ -3781,9 +3857,10 @@ class DrawShapeNode(BaseExecutionNode):
             canvas_rgb = _ensure_display_rgb(result)
             canvas = _PIL.fromarray(canvas_rgb, 'RGB')
 
-        # ── update widget (skip entirely when No Preview is checked) ─────
+        # ── update widget (skip when No Preview or when adjusting controls) ─
         no_preview = self._no_preview
-        if not no_preview:
+        no_reload = getattr(self._draw_widget, '_no_reload', False)
+        if not no_preview and not no_reload:
             self._draw_widget.set_mask_count(len(mask_arrays))
             if _label_overlay_pil is not None and (img_port is None or not img_port.connected_ports()):
                 if isinstance(_label_overlay_pil, np.ndarray):
@@ -3836,7 +3913,7 @@ class DrawShapeNode(BaseExecutionNode):
                             ov_draw, pts,
                             color=mask_color, width=mask_width,
                             style=mask_style, closed=False)
-        if not no_preview:
+        if not no_preview and not no_reload:
             self._draw_widget.set_mask_contours(contour_data_for_scene,
                                                 contour_styles_for_scene)
 
@@ -4121,7 +4198,7 @@ class MaskEditorWidget(NodeBaseWidget):
         self._op_combo = QtWidgets.QComboBox()
         self._op_combo.addItems(['Union', 'Subtract', 'Intersect', 'XOR', 'Replace'])
         self._op_combo.setFixedHeight(24)
-        self._op_combo.setFixedWidth(80)
+        self._op_combo.setMinimumWidth(55)
         tb.addWidget(self._op_combo)
         tb.addStretch()
         root.addLayout(tb)
@@ -4137,7 +4214,7 @@ class MaskEditorWidget(NodeBaseWidget):
         for label, slot in [('Undo', '_undo'), ('Reset', '_reset'), ('Clear', '_clear')]:
             btn = QtWidgets.QPushButton(label)
             btn.setFixedHeight(22)
-            btn.setFixedWidth(52)
+            btn.setMinimumWidth(55)
             btn.clicked.connect(getattr(self, slot))
             bb.addWidget(btn)
         bb.addStretch()
@@ -4176,21 +4253,37 @@ class MaskEditorWidget(NodeBaseWidget):
             self._apply_set_input(mask_arr, bg_pil)
 
     def _apply_set_input(self, mask_arr, bg_pil):
-        changed = (
+        mask_changed = (
             mask_arr is not None and (
                 self._input_mask is None
                 or mask_arr.shape != self._input_mask.shape
                 or not np.array_equal(mask_arr, self._input_mask)
             )
         )
-        if changed:
-            self._input_mask = mask_arr.astype(bool)
-            self._edit_mask = self._input_mask.copy()
-            self._history.clear()
+        # Also detect background image change (new image connected)
+        bg_changed = False
+        if bg_pil is not None:
+            if self._bg_pil is None:
+                bg_changed = True
+            elif isinstance(bg_pil, np.ndarray) and isinstance(self._bg_pil, np.ndarray):
+                bg_changed = bg_pil.shape != self._bg_pil.shape
+            else:
+                bg_changed = True
+
+        if mask_changed or bg_changed:
             if mask_arr is not None:
+                self._input_mask = mask_arr.astype(bool)
+                self._edit_mask = self._input_mask.copy()
                 self._img_h, self._img_w = mask_arr.shape[:2]
+            elif bg_pil is not None:
+                # New image but no mask — reset to blank
+                h = bg_pil.shape[0] if isinstance(bg_pil, np.ndarray) else 512
+                w = bg_pil.shape[1] if isinstance(bg_pil, np.ndarray) else 512
+                self._input_mask = np.zeros((h, w), dtype=bool)
+                self._edit_mask = self._input_mask.copy()
+                self._img_h, self._img_w = h, w
+            self._history.clear()
         elif mask_arr is None and self._edit_mask is None:
-            # No mask yet — nothing to show
             return
         self._bg_pil = bg_pil
         self._render()
@@ -4369,12 +4462,16 @@ class MaskEditorNode(BaseExecutionNode):
         self._editor.set_input(mask_arr, bg_arr)
         self.set_progress(50)
 
-        # ── output current editor state ──────────────────────────────────
+        # ── output ───────────────────────────────────────────────────────
+        # Use get_mask() if the widget already has state (main thread / re-run),
+        # otherwise fall back to the input mask (first evaluate from background thread
+        # where the queued signal hasn't been processed yet).
         result = self._editor.get_mask()
-        if result is not None:
-            self.output_values['mask'] = MaskData(payload=(result.astype(np.uint8) * 255))
-        else:
-            self.output_values['mask'] = MaskData(payload=np.zeros((1, 1), dtype=np.uint8))
+        if result is None or result.size <= 1:
+            result = mask_arr
+        self.output_values['mask'] = MaskData(
+            payload=(result.astype(np.uint8) * 255) if result is not None
+            else np.zeros((1, 1), dtype=np.uint8))
 
         self.set_progress(100)
         return True, None

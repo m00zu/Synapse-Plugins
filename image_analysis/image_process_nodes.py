@@ -3274,6 +3274,7 @@ class _OIRChannelColorWidget(NodeBaseWidget):
         for i in range(4):
             cb = QtWidgets.QCheckBox("Gray")
             cb.setStyleSheet("color: #999; font-size: 9px;")
+            cb.setChecked(True)
             cb.toggled.connect(
                 lambda _v: self.value_changed.emit(self.get_name(), self.get_value()))
             gray_row.addWidget(cb)
@@ -3328,7 +3329,7 @@ class OIRReaderNode(BaseImageProcessNode):
 
     _UI_PROPS = frozenset({
         'color', 'pos', 'selected', 'name', 'progress', 'image_view',
-        'show_preview', 'live_preview',
+        'show_preview', 'live_preview', 'channel_colors',
     })
 
     def __init__(self):
@@ -3355,6 +3356,18 @@ class OIRReaderNode(BaseImageProcessNode):
 
         self.create_preview_widgets()
         self.output_values = {}
+
+    def set_property(self, name, value, push_undo=True):
+        super().set_property(name, value, push_undo)
+        # channel_colors is in _UI_PROPS (won't auto-dirty), but user color
+        # changes should trigger re-evaluation when live_preview is on
+        if name == 'channel_colors' and self.get_property('live_preview'):
+            self.mark_dirty()
+            success, err = self.evaluate()
+            if success:
+                self.mark_clean()
+            else:
+                self.mark_error()
 
     def evaluate(self):
         self.reset_progress()
@@ -3504,6 +3517,681 @@ class OIRReaderNode(BaseImageProcessNode):
             payload=composite, bit_depth=8, scale_um=scale)
 
         self.set_display(composite)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+
+# ===========================================================================
+# Multi-Channel Brightness & Contrast
+# ===========================================================================
+
+class _MiniChannelBC(QtWidgets.QWidget):
+    """Compact B&C controls for a single channel: mini histogram + min/max + B/C sliders."""
+    params_changed = QtCore.Signal(int, float, float)  # channel_idx, min_val, max_val
+
+    def __init__(self, ch_idx: int, default_color=(255, 255, 255), parent=None):
+        super().__init__(parent)
+        self._ch_idx = ch_idx
+        self._full_range = 255.0
+        self._updating = False
+        self._color = default_color
+        self._hist_counts = None
+        self._hist_edges = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(4)
+
+        # ── Header: color button + Auto/Reset ────────────────────────
+        header = QtWidgets.QHBoxLayout()
+        header.setSpacing(4)
+        header.setContentsMargins(0, 0, 0, 0)
+        self._color_btn = _ColorButton(str(ch_idx + 1), default_color)
+        self._color_btn.color_changed.connect(self._on_color_changed)
+        self._color_btn.setMaximumWidth(32)
+        self._color_btn.setMaximumHeight(18)
+        header.addWidget(self._color_btn)
+        header.addStretch()
+        btn_auto = QtWidgets.QPushButton('Auto')
+        btn_auto.setToolTip('Auto stretch (0.5%–99.5%)')
+        btn_auto.setFixedSize(32, 16)
+        btn_auto.setStyleSheet('font-size: 7px; padding: 0px;')
+        btn_auto.clicked.connect(self._auto)
+        btn_reset = QtWidgets.QPushButton('Reset')
+        btn_reset.setToolTip('Reset to full range')
+        btn_reset.setFixedSize(32, 16)
+        btn_reset.setStyleSheet('font-size: 7px; padding: 0px;')
+        btn_reset.clicked.connect(self._reset)
+        self._gray_cb = QtWidgets.QCheckBox('Gray')
+        self._gray_cb.setToolTip('Output grayscale (unchecked = colorized RGB)')
+        self._gray_cb.setStyleSheet('font-size: 8px; color: #ccc;')
+        self._gray_cb.toggled.connect(lambda _: self.params_changed.emit(
+            self._ch_idx, *self.get_range()))
+        header.addWidget(btn_auto)
+        header.addWidget(btn_reset)
+        header.addWidget(self._gray_cb)
+        layout.addLayout(header)
+
+        # ── Mini histogram (pyqtgraph) ──────────────────────────────
+        self._plot = pg.PlotWidget(background='#1a1a1a')
+        self._plot.setFixedHeight(36)
+        self._plot.setMaximumWidth(250)
+        self._plot.hideAxis('left')
+        self._plot.hideAxis('bottom')
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.setMenuEnabled(False)
+        self._plot.getViewBox().setDefaultPadding(0)
+
+        r, g, b = default_color
+        self._hist_curve = self._plot.plot(
+            pen=pg.mkPen(r, g, b, 180, width=1),
+            fillLevel=0,
+            brush=pg.mkBrush(r, g, b, 60),
+            stepMode='center',
+        )
+        self._line_min = pg.InfiniteLine(pos=0, angle=90, movable=True,
+                                         pen=pg.mkPen('#e74c3c', width=1.5))
+        self._line_max = pg.InfiniteLine(pos=255, angle=90, movable=True,
+                                         pen=pg.mkPen('#3498db', width=1.5))
+        self._plot.addItem(self._line_min)
+        self._plot.addItem(self._line_max)
+        self._line_min.sigPositionChanged.connect(self._on_line_moved)
+        self._line_max.sigPositionChanged.connect(self._on_line_moved)
+        layout.addWidget(self._plot)
+
+        # ── Min/Max + Brightness/Contrast sliders (compact grid) ────
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(1)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setColumnStretch(1, 1)
+
+        _SS = 'color: #aaa; font-size: 7px;'
+        self._sld_min = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._sld_min.setRange(0, 255)
+        self._spn_min = QtWidgets.QSpinBox()
+        self._spn_min.setRange(0, 255)
+        self._spn_min.setFixedWidth(40)
+        self._spn_min.setStyleSheet('font-size: 7px;')
+
+        self._sld_max = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._sld_max.setRange(0, 255)
+        self._sld_max.setValue(255)
+        self._spn_max = QtWidgets.QSpinBox()
+        self._spn_max.setRange(0, 255)
+        self._spn_max.setValue(255)
+        self._spn_max.setFixedWidth(40)
+        self._spn_max.setStyleSheet('font-size: 7px;')
+
+        self._sld_brightness = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._sld_brightness.setRange(-1000, 1000)
+        self._spn_brightness = QtWidgets.QDoubleSpinBox()
+        self._spn_brightness.setRange(-100.0, 100.0)
+        self._spn_brightness.setDecimals(1)
+        self._spn_brightness.setSingleStep(0.5)
+        self._spn_brightness.setFixedWidth(40)
+        self._spn_brightness.setStyleSheet('font-size: 7px;')
+
+        self._sld_contrast = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._sld_contrast.setRange(-1000, 1000)
+        self._spn_contrast = QtWidgets.QDoubleSpinBox()
+        self._spn_contrast.setRange(-100.0, 100.0)
+        self._spn_contrast.setDecimals(1)
+        self._spn_contrast.setSingleStep(0.5)
+        self._spn_contrast.setFixedWidth(40)
+        self._spn_contrast.setStyleSheet('font-size: 7px;')
+
+        for row, (lbl_text, sld, spn) in enumerate([
+            ('Min', self._sld_min, self._spn_min),
+            ('Max', self._sld_max, self._spn_max),
+            ('B',   self._sld_brightness, self._spn_brightness),
+            ('C',   self._sld_contrast, self._spn_contrast),
+        ]):
+            lbl = QtWidgets.QLabel(lbl_text)
+            lbl.setStyleSheet(_SS)
+            lbl.setFixedWidth(16)
+            grid.addWidget(lbl, row, 0)
+            grid.addWidget(sld, row, 1)
+            grid.addWidget(spn, row, 2)
+        layout.addLayout(grid)
+
+        # ── Wire signals ────────────────────────────────────────────
+        self._sld_min.valueChanged.connect(lambda v: self._on_minmax_slider(v, 'min'))
+        self._spn_min.valueChanged.connect(lambda v: self._on_minmax_spinbox(v, 'min'))
+        self._sld_max.valueChanged.connect(lambda v: self._on_minmax_slider(v, 'max'))
+        self._spn_max.valueChanged.connect(lambda v: self._on_minmax_spinbox(v, 'max'))
+        self._sld_brightness.valueChanged.connect(lambda v: self._on_bc_slider(v / 10.0, 'b'))
+        self._spn_brightness.valueChanged.connect(lambda v: self._on_bc_spinbox(v, 'b'))
+        self._sld_contrast.valueChanged.connect(lambda v: self._on_bc_slider(v / 10.0, 'c'))
+        self._spn_contrast.valueChanged.connect(lambda v: self._on_bc_spinbox(v, 'c'))
+
+    # ── Public API ───────────────────────────────────────────────────
+
+    def set_histogram(self, arr_flat, full_range=255):
+        old_full = self._full_range
+        self._full_range = float(full_range)
+        num_bins = min(256, int(full_range) + 1)
+        counts, edges = np.histogram(arr_flat, bins=num_bins, range=(0, float(full_range)))
+        self._hist_counts = counts
+        self._hist_edges = edges
+        self._hist_curve.setData(x=edges, y=np.log1p(counts.astype(float)))
+        self._plot.setXRange(0, full_range, padding=0)
+        irange = int(full_range)
+        for w in (self._sld_min, self._sld_max):
+            w.setRange(0, irange)
+        for w in (self._spn_min, self._spn_max):
+            w.setRange(0, irange)
+        # Reset max handle to full range when bit depth changes
+        _, cur_max = self.get_range()
+        if cur_max <= old_full or cur_max <= 255:
+            self._set_minmax(0, float(irange))
+
+    def set_range(self, min_val, max_val):
+        self._set_minmax(min_val, max_val)
+
+    def get_range(self):
+        return float(self._line_min.value()), float(self._line_max.value())
+
+    def get_color(self):
+        return self._color_btn.get_color()
+
+    def is_grayscale(self):
+        return self._gray_cb.isChecked()
+
+    def set_grayscale(self, val):
+        self._gray_cb.blockSignals(True)
+        self._gray_cb.setChecked(bool(val))
+        self._gray_cb.blockSignals(False)
+
+    def set_color(self, rgb):
+        self._color_btn.set_color(rgb)
+        self._on_color_changed()
+
+    # ── Internals ────────────────────────────────────────────────────
+
+    def _on_color_changed(self):
+        c = self._color_btn.get_color()
+        self._color = tuple(c)
+        r, g, b = c
+        self._hist_curve.setPen(pg.mkPen(r, g, b, 180, width=1))
+        self._hist_curve.setBrush(pg.mkBrush(r, g, b, 60))
+        # Emit so the node re-composites
+        mn, mx = self.get_range()
+        self.params_changed.emit(self._ch_idx, mn, mx)
+
+    def _set_minmax(self, min_v, max_v):
+        self._updating = True
+        try:
+            self._line_min.setValue(min_v)
+            self._line_max.setValue(max_v)
+            self._sld_min.setValue(int(round(min_v)))
+            self._sld_max.setValue(int(round(max_v)))
+            self._spn_min.setValue(int(round(min_v)))
+            self._spn_max.setValue(int(round(max_v)))
+            self._refresh_bc_controls(min_v, max_v)
+        finally:
+            self._updating = False
+
+    def _refresh_bc_controls(self, min_v, max_v):
+        full = self._full_range
+        center = (min_v + max_v) / 2.0
+        width = max_v - min_v
+        brightness = (center - full / 2.0) / (full / 2.0) * 100.0 if full > 0 else 0
+        contrast = (1.0 - width / full) * 100.0 if full > 0 else 0
+        self._sld_brightness.setValue(int(round(brightness * 10)))
+        self._spn_brightness.setValue(brightness)
+        self._sld_contrast.setValue(int(round(contrast * 10)))
+        self._spn_contrast.setValue(contrast)
+
+    def _on_line_moved(self):
+        if self._updating:
+            return
+        min_v = float(self._line_min.value())
+        max_v = float(self._line_max.value())
+        if min_v >= max_v:
+            return
+        self._set_minmax(min_v, max_v)
+        self.params_changed.emit(self._ch_idx, min_v, max_v)
+
+    def _on_minmax_slider(self, int_val, which):
+        if self._updating:
+            return
+        val = float(int_val)
+        min_v = val if which == 'min' else float(self._line_min.value())
+        max_v = val if which == 'max' else float(self._line_max.value())
+        if min_v >= max_v:
+            return
+        self._set_minmax(min_v, max_v)
+        self.params_changed.emit(self._ch_idx, min_v, max_v)
+
+    def _on_minmax_spinbox(self, spn_val, which):
+        if self._updating:
+            return
+        val = float(spn_val)
+        min_v = val if which == 'min' else float(self._line_min.value())
+        max_v = val if which == 'max' else float(self._line_max.value())
+        if min_v >= max_v:
+            return
+        self._set_minmax(min_v, max_v)
+        self.params_changed.emit(self._ch_idx, min_v, max_v)
+
+    def _on_bc_slider(self, float_val, which):
+        if self._updating:
+            return
+        self._updating = True
+        try:
+            if which == 'b':
+                self._spn_brightness.setValue(float_val)
+            else:
+                self._spn_contrast.setValue(float_val)
+        finally:
+            self._updating = False
+        self._apply_bc_spinboxes()
+
+    def _on_bc_spinbox(self, float_val, which):
+        if self._updating:
+            return
+        self._updating = True
+        try:
+            if which == 'b':
+                self._sld_brightness.setValue(int(round(float_val * 10)))
+            else:
+                self._sld_contrast.setValue(int(round(float_val * 10)))
+        finally:
+            self._updating = False
+        self._apply_bc_spinboxes()
+
+    def _apply_bc_spinboxes(self):
+        brightness = self._spn_brightness.value()
+        contrast = self._spn_contrast.value()
+        full = self._full_range
+        new_width = max(1.0, (1.0 - contrast / 100.0) * full)
+        center = full / 2.0 + (brightness / 100.0) * (full / 2.0)
+        new_min = max(0.0, min(center - new_width / 2.0, full - 1.0))
+        new_max = max(1.0, min(center + new_width / 2.0, full))
+        if new_min >= new_max:
+            return
+        self._set_minmax(new_min, new_max)
+        self.params_changed.emit(self._ch_idx, new_min, new_max)
+
+    def _auto(self):
+        if self._hist_counts is None:
+            return
+        cumsum = np.cumsum(self._hist_counts)
+        total = float(cumsum[-1])
+        edges = self._hist_edges
+        lo_idx = int(np.clip(np.searchsorted(cumsum, total * 0.005), 0, len(edges) - 2))
+        hi_idx = int(np.clip(np.searchsorted(cumsum, total * 0.995), 0, len(edges) - 2))
+        new_min = float(edges[lo_idx])
+        new_max = float(edges[hi_idx + 1])
+        if new_min >= new_max:
+            new_min, new_max = 0.0, self._full_range
+        self._set_minmax(new_min, new_max)
+        self.params_changed.emit(self._ch_idx, new_min, new_max)
+
+    def _reset(self):
+        self._set_minmax(0.0, self._full_range)
+        self.params_changed.emit(self._ch_idx, 0.0, self._full_range)
+
+
+def _rgb_to_hex(rgb):
+    return f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
+
+
+class _NodeMultiChannelBCWidget(NodeBaseWidget):
+    """Container widget embedding 4 _MiniChannelBC panels in a 2x2 grid."""
+    _set_data_sig = QtCore.Signal(int, object, float)  # panel_idx, arr_flat, full_range
+    _enable_sig = QtCore.Signal(int, bool)              # panel_idx, enabled
+
+    def __init__(self, parent=None):
+        super().__init__(parent, name='mc_bc_widget', label='')
+        container = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+
+        defaults = [
+            (255, 0, 0),      # Ch1: Red
+            (0, 255, 0),      # Ch2: Green
+            (0, 0, 255),      # Ch3: Blue
+            (255, 0, 255),    # Ch4: Magenta
+        ]
+        self._panels: list[_MiniChannelBC] = []
+        for i, color in enumerate(defaults):
+            panel = _MiniChannelBC(i, default_color=color)
+            panel.setEnabled(False)
+            panel.setStyleSheet('QWidget { opacity: 0.3; }')
+            grid.addWidget(panel, i // 2, i % 2)
+            self._panels.append(panel)
+
+        self.set_custom_widget(container)
+        self._set_data_sig.connect(self._set_histogram_main,
+                                   QtCore.Qt.ConnectionType.QueuedConnection)
+        self._enable_sig.connect(self._set_enabled_main,
+                                 QtCore.Qt.ConnectionType.QueuedConnection)
+
+    def panel(self, idx) -> _MiniChannelBC:
+        return self._panels[idx]
+
+    def set_channel_enabled_threadsafe(self, panel_idx: int, enabled: bool):
+        if threading.current_thread() is threading.main_thread():
+            self._set_enabled_main(panel_idx, enabled)
+        else:
+            self._enable_sig.emit(panel_idx, enabled)
+
+    def set_histogram_threadsafe(self, panel_idx, arr_flat, full_range=255):
+        if threading.current_thread() is threading.main_thread():
+            self._set_histogram_main(panel_idx, arr_flat, full_range)
+        else:
+            self._set_data_sig.emit(panel_idx, arr_flat, float(full_range))
+
+    def _set_enabled_main(self, panel_idx, enabled):
+        if 0 <= panel_idx < len(self._panels):
+            p = self._panels[panel_idx]
+            p.setEnabled(enabled)
+            # Dim inactive panels
+            p.setStyleSheet('' if enabled else 'QWidget { color: #555; }')
+            if not enabled:
+                # Clear histogram for inactive channel
+                p._hist_curve.setData(x=[], y=[])
+
+    def _set_histogram_main(self, panel_idx, arr_flat, full_range):
+        if 0 <= panel_idx < len(self._panels):
+            self._panels[panel_idx].set_histogram(arr_flat, full_range)
+
+    def get_value(self):
+        return {
+            'ranges': [p.get_range() for p in self._panels],
+            'colors': [p.get_color() for p in self._panels],
+            'grayscale': [p.is_grayscale() for p in self._panels],
+        }
+
+    def set_value(self, value):
+        if not isinstance(value, dict):
+            return
+        ranges = value.get('ranges', [])
+        colors = value.get('colors', [])
+        grays = value.get('grayscale', [])
+        for i, (mn, mx) in enumerate(ranges[:4]):
+            self._panels[i].set_range(float(mn), float(mx))
+        for i, c in enumerate(colors[:4]):
+            if isinstance(c, (list, tuple)) and len(c) >= 3:
+                self._panels[i].set_color(c)
+        for i, g in enumerate(grays[:4]):
+            self._panels[i].set_grayscale(g)
+
+
+class MultiChannelBCNode(BaseImageProcessNode):
+    """
+    Per-channel brightness & contrast with live composite preview.
+
+    Connect 1–4 grayscale channels (or a single multi-channel image) and adjust
+    each channel's display window independently. Each channel has its own
+    histogram with draggable min/max lines, brightness/contrast sliders, and
+    a color button. The composite output blends all channels additively.
+
+    Works as a single-channel B&C node when only one input is connected.
+
+    Keywords: brightness, contrast, multi-channel, composite, merge, colorize, 亮度, 對比, 多通道, 合成
+    """
+    __identifier__ = 'nodes.image_process.Exposure'
+    NODE_NAME      = 'Multi-Channel B&C'
+    PORT_SPEC      = {
+        'inputs': ['image', 'image', 'image', 'image', 'image'],
+        'outputs': ['image', 'image', 'image', 'image', 'image'],
+    }
+
+    _UI_PROPS = BaseImageProcessNode._UI_PROPS | frozenset({'mc_bc_widget'})
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_input('ch1', color=PORT_COLORS['image'])
+        self.add_input('ch2', color=PORT_COLORS['image'])
+        self.add_input('ch3', color=PORT_COLORS['image'])
+        self.add_input('ch4', color=PORT_COLORS['image'])
+
+        self.add_output('ch1', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('ch2', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('ch3', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('ch4', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('composite', color=PORT_COLORS['image'], multi_output=True)
+
+        self._mc_widget = _NodeMultiChannelBCWidget(self.view)
+        self.add_custom_widget(self._mc_widget)
+        for i in range(4):
+            self._mc_widget.panel(i).params_changed.connect(self._on_channel_changed)
+
+        self.create_preview_widgets()
+        self._cached_channels: list[np.ndarray | None] = [None] * 4
+        self._cached_bit_depth = 8
+
+    def _on_channel_changed(self, ch_idx, min_val, max_val):
+        """Live update when user drags a handle."""
+        if self._cached_channels[ch_idx] is None:
+            return
+        result = self._build_outputs()
+        if result:
+            self.set_display(self.output_values.get('composite', result).payload)
+            for out_port in self.outputs().values():
+                for in_port in out_port.connected_ports():
+                    dn = in_port.node()
+                    if hasattr(dn, 'mark_dirty'):
+                        dn.mark_dirty()
+
+    def evaluate(self):
+        self.reset_progress()
+
+        # ── Collect channels ─────────────────────────────────────────
+        channels: list[np.ndarray | None] = [None] * 4
+
+        # Single multi-channel image input
+        img_port = self.inputs().get('image')
+        if img_port and img_port.connected_ports():
+            cp = img_port.connected_ports()[0]
+            data = cp.node().output_values.get(cp.name())
+            if isinstance(data, ImageData):
+                arr = data.payload
+                self._cached_bit_depth = getattr(data, 'bit_depth', 8) or 8
+                if arr.ndim == 3:
+                    for i in range(min(4, arr.shape[2])):
+                        channels[i] = arr[:, :, i]
+                elif arr.ndim == 2:
+                    channels[0] = arr
+
+        # Individual channel inputs (override multi-channel)
+        for i, port_name in enumerate(['ch1', 'ch2', 'ch3', 'ch4']):
+            port = self.inputs().get(port_name)
+            if port and port.connected_ports():
+                cp = port.connected_ports()[0]
+                data = cp.node().output_values.get(cp.name())
+                if isinstance(data, ImageData):
+                    arr = data.payload
+                    if arr.ndim == 3:
+                        arr = arr.mean(axis=2)
+                    channels[i] = arr.astype(np.float32)
+                    self._cached_bit_depth = getattr(data, 'bit_depth', 8) or 8
+
+        n_active = sum(1 for c in channels if c is not None)
+        if n_active == 0:
+            return False, "No channels connected"
+
+        self._cached_channels = channels
+        self.set_progress(20)
+
+        # ── Update histograms (thread-safe) ──────────────────────────
+        max_possible = (1 << self._cached_bit_depth) - 1
+
+        for i in range(4):
+            if channels[i] is not None:
+                flat_scaled = channels[i].ravel() * max_possible
+                self._mc_widget.set_histogram_threadsafe(i, flat_scaled, full_range=max_possible)
+                self._mc_widget.set_channel_enabled_threadsafe(i, True)
+            else:
+                self._mc_widget.set_channel_enabled_threadsafe(i, False)
+
+        self.set_progress(50)
+
+        # On first evaluate, widget ranges may not have updated yet (queued signals),
+        # so force full-range output (no B&C clipping)
+        self._build_outputs(initial_max=float(max_possible))
+        self.set_progress(100)
+        return True, None
+
+    def _build_outputs(self, initial_max=None):
+        """Apply per-channel B&C and build composite.
+
+        Args:
+            initial_max: if set, use (0, initial_max) as default range when
+                         the widget hasn't been updated yet (first evaluate).
+        """
+        channels = self._cached_channels
+        bd = self._cached_bit_depth
+        max_possible = float((1 << bd) - 1)
+        n_active = sum(1 for c in channels if c is not None)
+
+        # Find image dimensions from first available channel
+        h, w = 0, 0
+        for c in channels:
+            if c is not None:
+                h, w = c.shape[:2]
+                break
+        if h == 0:
+            return False
+
+        composite = np.zeros((h, w, 3), dtype=np.float32)
+
+        for i in range(4):
+            if channels[i] is None:
+                continue
+            panel = self._mc_widget.panel(i)
+            min_v, max_v = panel.get_range()
+            # On first load, widget may still have old 0-255 range
+            if initial_max is not None and max_v <= 255 and initial_max > 255:
+                min_v, max_v = 0.0, initial_max
+            color = panel.get_color()
+
+            # Apply B&C: linear stretch [min_v, max_v] → [0, 1]
+            lo = min_v / max_possible
+            hi = max_v / max_possible
+            width = hi - lo
+            if width <= 0:
+                width = 1.0 / max_possible
+            adjusted = np.clip((channels[i] - lo) / width, 0.0, 1.0).astype(np.float32)
+
+            # Color target for composite
+            target = np.array(color, dtype=np.float32) / 255.0
+
+            # Output individual channel: grayscale or colorized
+            port_name = f'ch{i + 1}'
+            if panel.is_grayscale():
+                self.output_values[port_name] = ImageData(
+                    payload=adjusted, bit_depth=bd)
+            else:
+                ch_rgb = np.stack([adjusted * target[c] for c in range(3)], axis=-1)
+                ch_rgb = np.clip(ch_rgb, 0.0, 1.0)
+                self.output_values[port_name] = ImageData(
+                    payload=ch_rgb, bit_depth=bd)
+
+            # Add to composite
+            for c in range(3):
+                composite[:, :, c] += adjusted * target[c]
+
+        composite = np.clip(composite, 0.0, 1.0)
+
+        # For single channel, output grayscale composite
+        if n_active == 1:
+            for i in range(4):
+                if channels[i] is not None:
+                    self.output_values['composite'] = ImageData(
+                        payload=self.output_values[f'ch{i+1}'].payload, bit_depth=bd)
+                    break
+        else:
+            self.output_values['composite'] = ImageData(
+                payload=composite, bit_depth=8)
+
+        self.set_display(composite if n_active > 1 else
+                         self.output_values['composite'].payload)
+        self.mark_clean()
+        return True
+
+
+# ===========================================================================
+# Merge Image Node — additive blend of multiple images
+# ===========================================================================
+
+class MergeImageNode(BaseImageProcessNode):
+    """
+    Additively blend multiple images into one output.
+
+    Connect any number of images to the input port. The node sums all
+    input pixel values and clips to [0, 1]. Useful for combining
+    individually color-adjusted channels into a single composite
+    (e.g. merge ch1 + ch2 + ch4, skipping DAPI).
+
+    Works with both grayscale and RGB inputs. Grayscale inputs are
+    broadcast across all 3 RGB channels.
+
+    Keywords: merge, add, blend, combine, composite, sum, overlay, 合成, 合併, 疊加
+    """
+    __identifier__ = 'nodes.image_process.color'
+    NODE_NAME      = 'Merge Image'
+    PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', multi_input=True, color=PORT_COLORS['image'])
+        self.add_output('image', color=PORT_COLORS['image'], multi_output=True)
+        self.create_preview_widgets()
+
+    def evaluate(self):
+        self.reset_progress()
+
+        port = self.inputs().get('image')
+        if not port or not port.connected_ports():
+            return False, "No images connected"
+
+        arrays = []
+        bit_depth = 8
+        scale_um = None
+        for cp in port.connected_ports():
+            data = cp.node().output_values.get(cp.name())
+            if isinstance(data, ImageData):
+                arrays.append(data.payload.astype(np.float32))
+                bit_depth = max(bit_depth, getattr(data, 'bit_depth', 8) or 8)
+                if scale_um is None:
+                    scale_um = getattr(data, 'scale_um', None)
+
+        if not arrays:
+            return False, "No valid ImageData inputs"
+
+        self.set_progress(30)
+
+        # Find max dimensions
+        max_h = max(a.shape[0] for a in arrays)
+        max_w = max(a.shape[1] for a in arrays)
+
+        # Determine if output should be RGB
+        any_rgb = any(a.ndim == 3 for a in arrays)
+
+        result = np.zeros((max_h, max_w, 3) if any_rgb else (max_h, max_w),
+                          dtype=np.float32)
+
+        self.set_progress(50)
+
+        for arr in arrays:
+            h, w = arr.shape[:2]
+            if any_rgb and arr.ndim == 2:
+                arr = np.stack([arr, arr, arr], axis=-1)
+            if any_rgb:
+                result[:h, :w, :] += arr[:, :, :3]
+            else:
+                result[:h, :w] += arr
+
+        result = np.clip(result, 0.0, 1.0)
+
+        self._make_image_output(result)
+        self.set_display(result)
         self.set_progress(100)
         self.mark_clean()
         return True, None
