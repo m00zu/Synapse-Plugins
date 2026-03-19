@@ -4217,6 +4217,31 @@ class MaskEditorWidget(NodeBaseWidget):
             btn.setMinimumWidth(55)
             btn.clicked.connect(getattr(self, slot))
             bb.addWidget(btn)
+
+        bb.addSpacing(8)
+        _LS = 'color:#ccc; font-size:9px;'
+        lbl_c = QtWidgets.QLabel('Color:')
+        lbl_c.setStyleSheet(_LS)
+        self._mask_color_btn = QtWidgets.QPushButton()
+        self._mask_color_btn.setFixedSize(24, 18)
+        self._mask_color = QtGui.QColor(*self._OVERLAY_COLOR)
+        self._update_mask_color_swatch()
+        self._mask_color_btn.clicked.connect(self._pick_mask_color)
+        bb.addWidget(lbl_c)
+        bb.addWidget(self._mask_color_btn)
+
+        bb.addSpacing(4)
+        lbl_o = QtWidgets.QLabel('Opacity:')
+        lbl_o.setStyleSheet(_LS)
+        self._mask_opacity_spin = QtWidgets.QSpinBox()
+        self._mask_opacity_spin.setRange(10, 100)
+        self._mask_opacity_spin.setValue(int(self._OVERLAY_ALPHA * 100))
+        self._mask_opacity_spin.setSuffix('%')
+        self._mask_opacity_spin.setFixedWidth(58)
+        self._mask_opacity_spin.valueChanged.connect(lambda _: self._render())
+        bb.addWidget(lbl_o)
+        bb.addWidget(self._mask_opacity_spin)
+
         bb.addStretch()
         self._info_lbl = QtWidgets.QLabel('No mask')
         self._info_lbl.setStyleSheet('color:#aaa; font-size:10px;')
@@ -4365,6 +4390,20 @@ class MaskEditorWidget(NodeBaseWidget):
 
     # ── rendering ────────────────────────────────────────────────────────────
 
+    def _update_mask_color_swatch(self):
+        c = self._mask_color
+        self._mask_color_btn.setStyleSheet(
+            f'background-color: rgb({c.red()},{c.green()},{c.blue()});'
+            f'border: 2px solid #555; border-radius: 3px;')
+
+    def _pick_mask_color(self):
+        c = QtWidgets.QColorDialog.getColor(
+            self._mask_color, QtWidgets.QApplication.activeWindow(), "Mask Color")
+        if c.isValid():
+            self._mask_color = c
+            self._update_mask_color_swatch()
+            self._render()
+
     def _render(self):
         if self._edit_mask is None:
             return
@@ -4379,11 +4418,13 @@ class MaskEditorWidget(NodeBaseWidget):
         else:
             bg = np.full((h, w, 3), 30, dtype=np.uint8)
 
-        # Teal overlay on mask pixels
+        # Color overlay on mask pixels
         result = bg.astype(np.float32)
         fg = self._edit_mask
-        r, g, b = self._OVERLAY_COLOR
-        a = self._OVERLAY_ALPHA
+        r = self._mask_color.red()
+        g = self._mask_color.green()
+        b = self._mask_color.blue()
+        a = self._mask_opacity_spin.value() / 100.0
         result[fg, 0] = result[fg, 0] * (1 - a) + r * a
         result[fg, 1] = result[fg, 1] * (1 - a) + g * a
         result[fg, 2] = result[fg, 2] * (1 - a) + b * a
