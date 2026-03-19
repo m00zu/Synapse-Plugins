@@ -3232,3 +3232,278 @@ class ChannelColorizeNode(BaseImageProcessNode):
         self.set_display(result)
         self.set_progress(100)
         return True, None
+
+
+# ===========================================================================
+# OIR Reader Node — reads OIR files and outputs individual channels
+# ===========================================================================
+
+class _OIRChannelColorWidget(NodeBaseWidget):
+    """4 channel color buttons with per-channel grayscale checkbox."""
+
+    def __init__(self, parent=None, name='channel_colors', label=''):
+        super().__init__(parent, name, label)
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        defaults = [
+            ('1', (255, 0, 0)),      # Ch1: Red
+            ('2', (0, 255, 0)),      # Ch2: Green
+            ('3', (0, 0, 255)),      # Ch3: Blue
+            ('4', (255, 0, 255)),    # Ch4: Magenta
+        ]
+
+        # Color buttons row
+        color_row = QtWidgets.QHBoxLayout()
+        color_row.setSpacing(3)
+        self._btns = []
+        for lbl, color in defaults:
+            btn = _ColorButton(lbl, color)
+            btn.color_changed.connect(
+                lambda: self.value_changed.emit(self.get_name(), self.get_value()))
+            color_row.addWidget(btn)
+            self._btns.append(btn)
+        layout.addLayout(color_row)
+
+        # Grayscale checkboxes row
+        gray_row = QtWidgets.QHBoxLayout()
+        gray_row.setSpacing(3)
+        self._gray_cbs = []
+        for i in range(4):
+            cb = QtWidgets.QCheckBox("Gray")
+            cb.setStyleSheet("color: #999; font-size: 9px;")
+            cb.toggled.connect(
+                lambda _v: self.value_changed.emit(self.get_name(), self.get_value()))
+            gray_row.addWidget(cb)
+            self._gray_cbs.append(cb)
+        layout.addLayout(gray_row)
+
+        self.set_custom_widget(container)
+
+    def get_value(self):
+        return {
+            'colors': [b.get_color() for b in self._btns],
+            'grayscale': [cb.isChecked() for cb in self._gray_cbs],
+        }
+
+    def set_value(self, value):
+        if isinstance(value, dict):
+            colors = value.get('colors', [])
+            grays = value.get('grayscale', [])
+            for i, v in enumerate(colors[:len(self._btns)]):
+                if isinstance(v, (list, tuple)) and len(v) >= 3:
+                    self._btns[i].set_color(v)
+            for i, v in enumerate(grays[:len(self._gray_cbs)]):
+                self._gray_cbs[i].blockSignals(True)
+                self._gray_cbs[i].setChecked(bool(v))
+                self._gray_cbs[i].blockSignals(False)
+        elif isinstance(value, list):
+            # Backward compat: old format was just a list of colors
+            for i, v in enumerate(value[:len(self._btns)]):
+                if isinstance(v, (list, tuple)) and len(v) >= 3:
+                    self._btns[i].set_color(v)
+
+
+class OIRReaderNode(BaseImageProcessNode):
+    """
+    Read Olympus OIR microscopy files and output each channel separately.
+
+    Outputs up to 4 individual grayscale channels and a colorized composite.
+    Each channel can be assigned a display color (or grayscale) using the
+    color buttons. Channels not present in the file output as black.
+
+    Supports both native OIR format and TIFF files saved with .oir extension.
+    Uses the Rust reader when available, with Python fallback.
+
+    Keywords: OIR, Olympus, confocal, microscopy, multi-channel, fluorescence, 顯微鏡, 共焦, 多通道, 螢光
+    """
+    __identifier__ = 'nodes.image_process.IO'
+    NODE_NAME      = 'OIR Reader'
+    PORT_SPEC      = {
+        'inputs': ['path'],
+        'outputs': ['image', 'image', 'image', 'image', 'image']
+    }
+
+    _UI_PROPS = frozenset({
+        'color', 'pos', 'selected', 'name', 'progress', 'image_view',
+        'show_preview', 'live_preview',
+    })
+
+    def __init__(self):
+        super().__init__()
+        from nodes.base import NodeFileSelector
+        import NodeGraphQt
+
+        self.add_input('path', color=PORT_COLORS.get('path', (149, 165, 166)))
+        self.add_output('ch1', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('ch2', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('ch3', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('ch4', color=PORT_COLORS['image'], multi_output=True)
+        self.add_output('composite', color=PORT_COLORS['image'], multi_output=True)
+
+        H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
+
+        file_w = NodeFileSelector(self.view, name='file_path', label='OIR File',
+                                  ext_filter='*.oir')
+        self.add_custom_widget(file_w, widget_type=H, tab='Properties')
+
+        color_w = _OIRChannelColorWidget(self.view, name='channel_colors',
+                                         label='Channel Colors')
+        self.add_custom_widget(color_w, widget_type=H, tab='Properties')
+
+        self.create_preview_widgets()
+        self.output_values = {}
+
+    def evaluate(self):
+        self.reset_progress()
+
+        # Get file path from input port or property
+        file_path = None
+        path_port = self.inputs().get('path')
+        if path_port and path_port.connected_ports():
+            cp = path_port.connected_ports()[0]
+            val = cp.node().output_values.get(cp.name())
+            if isinstance(val, str):
+                file_path = val
+            elif hasattr(val, 'payload'):
+                file_path = str(val.payload)
+        if not file_path:
+            file_path = self.get_property('file_path')
+        if not file_path:
+            return False, "No OIR file selected"
+
+        import os
+        if not os.path.isfile(file_path):
+            return False, f"File not found: {file_path}"
+
+        self.set_progress(10)
+
+        # Detect TIFF-disguised .oir files
+        with open(file_path, 'rb') as f:
+            magic = f.read(4)
+        is_tiff = magic[:2] in (b'MM', b'II')
+
+        try:
+            if is_tiff:
+                # Read as TIFF
+                import tifffile
+                arr = tifffile.imread(file_path)
+                # tifffile returns (C, H, W) or (H, W) or (H, W, C)
+                if arr.ndim == 2:
+                    channels = [arr]
+                elif arr.ndim == 3:
+                    if arr.shape[0] <= 6:  # likely (C, H, W)
+                        channels = [arr[i] for i in range(arr.shape[0])]
+                    else:  # likely (H, W, C)
+                        channels = [arr[:, :, i] for i in range(arr.shape[2])]
+                else:
+                    channels = [arr[0]] if arr.ndim > 3 else [arr]
+                bit_depth = 12 if arr.dtype == np.uint16 else 8
+                scale_um = None
+            else:
+                # Try Rust reader first, fall back to Python
+                rust_ok = False
+                try:
+                    import oir_reader_rs
+                    _name, img, _group, _isize = oir_reader_rs.read_oir_file(
+                        file_path, list(range(1, 5)))
+                    if img is not None:
+                        # Rust reader returns (H, W) or (H, W, C) uint16
+                        if img.ndim == 2:
+                            channels = [img]
+                        else:
+                            channels = [img[:, :, i] for i in range(img.shape[2])]
+                        try:
+                            from synapse.nodes.io_nodes import _extract_oir_scale
+                        except ImportError:
+                            from nodes.io_nodes import _extract_oir_scale
+                        scale_um = _extract_oir_scale(file_path)
+                        from synapse.nodes.io_nodes import _guess_bit_depth
+                        bit_depth = _guess_bit_depth(img)
+                        rust_ok = True
+                except (ImportError, Exception):
+                    pass
+
+                if not rust_ok:
+                    # Python fallback
+                    try:
+                        from synapse.nodes.io_nodes import _py_read_single_oir
+                    except ImportError:
+                        from nodes.io_nodes import _py_read_single_oir
+                    img, n_ch, scale_um, bit_depth = _py_read_single_oir(file_path)
+                    channels = [img[:, :, i] for i in range(img.shape[2])]
+
+        except Exception as e:
+            return False, f"Failed to read OIR: {e}"
+
+        self.set_progress(50)
+
+        # Normalize each channel to float32 [0, 1]
+        max_val = float((1 << bit_depth) - 1) if bit_depth > 8 else 255.0
+        norm_channels = []
+        for ch in channels:
+            if ch.dtype in (np.float32, np.float64):
+                norm_channels.append(ch.astype(np.float32))
+            else:
+                norm_channels.append(ch.astype(np.float32) / max_val)
+
+        # Pad to 4 channels with black
+        h, w = norm_channels[0].shape[:2]
+        while len(norm_channels) < 4:
+            norm_channels.append(np.zeros((h, w), dtype=np.float32))
+
+        self.set_progress(70)
+
+        # Read channel settings
+        ch_settings = self.get_property('channel_colors')
+        if isinstance(ch_settings, dict):
+            colors = ch_settings.get('colors', [[0,255,0],[255,0,0],[0,255,255],[255,0,255]])
+            grays = ch_settings.get('grayscale', [False, False, False, False])
+        elif isinstance(ch_settings, list):
+            colors = ch_settings
+            grays = [False, False, False, False]
+        else:
+            colors = [[255,0,0],[0,255,0],[0,0,255],[255,0,255]]
+            grays = [False, False, False, False]
+        while len(colors) < 4:
+            colors.append([255, 255, 255])
+        while len(grays) < 4:
+            grays.append(False)
+
+        # Output individual channels (grayscale or colorized)
+        scale = scale_um if not is_tiff else None
+        for i, port_name in enumerate(['ch1', 'ch2', 'ch3', 'ch4']):
+            ch = norm_channels[i]
+            if ch.ndim == 3:
+                ch = ch.mean(axis=2)
+            if grays[i]:
+                # Grayscale output
+                out_ch = ch
+            else:
+                # Colorized output
+                target = np.array(colors[i], dtype=np.float32) / 255.0
+                out_ch = np.stack([ch * target[c] for c in range(3)], axis=-1)
+                out_ch = np.clip(out_ch, 0.0, 1.0)
+            self.output_values[port_name] = ImageData(
+                payload=out_ch, bit_depth=bit_depth, scale_um=scale)
+
+        # Build colorized composite (always uses colors, ignores grayscale toggle)
+        composite = np.zeros((h, w, 3), dtype=np.float32)
+        for i in range(4):
+            ch = norm_channels[i]
+            if ch.ndim == 3:
+                ch = ch.mean(axis=2)
+            target = np.array(colors[i], dtype=np.float32) / 255.0
+            for c in range(3):
+                composite[:, :, c] += ch * target[c]
+        composite = np.clip(composite, 0.0, 1.0)
+
+        self.output_values['composite'] = ImageData(
+            payload=composite, bit_depth=8, scale_um=scale)
+
+        self.set_display(composite)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
