@@ -908,10 +908,11 @@ class PairwiseComparisonNode(BaseExecutionNode):
     - *T-test* — parametric, assumes normal distribution
     - *Mann-Whitney U* — non-parametric rank-based test
     - *Tukey HSD* — post-hoc test after ANOVA
+    - *Fisher's Z* — compare correlation coefficients between groups (target column = r values)
 
     **P-Adj Method** — multiple comparison correction (Bonferroni, Holm, BH).
 
-    Keywords: pairwise, t-test, welch, mann-whitney, tukey, 兩兩比較, 統計檢定, 分析, 顯著性, 比較
+    Keywords: pairwise, t-test, welch, mann-whitney, tukey, fisher, correlation, 兩兩比較, 統計檢定, 分析, 顯著性, 比較
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Pairwise Comparison'
@@ -922,7 +923,7 @@ class PairwiseComparisonNode(BaseExecutionNode):
         self.add_input('in', color=PORT_COLORS['table'])
         self.add_output('stats_table', color=PORT_COLORS['stat'])
 
-        methods = ["Student's T-test", "Welch's T-test", 'Mann-Whitney U', 'Tukey HSD', 'Dunn']
+        methods = ["Student's T-test", "Welch's T-test", 'Mann-Whitney U', 'Tukey HSD', 'Dunn', "Fisher's Z (corr.)"]
         self.add_combo_menu('method', 'Statistical Method', items=methods)
 
         p_adj_methods = ['none', 'bonferroni', 'sidak', 'holm-sidak', 'holm', 'simes-hochberg', 'hommel', 'fdr_bh', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky']
@@ -1093,6 +1094,59 @@ class PairwiseComparisonNode(BaseExecutionNode):
                     for r in results:
                         r['p-adj'] = r['p-value']
                         r['Significant'] = r['p-value'] < 0.05
+
+            elif 'Fisher' in method:
+                from scipy.stats import norm
+                raw_pvals = []
+                for g1, g2 in pairs:
+                    d1 = df_clean[df_clean[group_col] == g1][target_col].dropna().values
+                    d2 = df_clean[df_clean[group_col] == g2][target_col].dropna().values
+                    n1, n2 = len(d1), len(d2)
+                    if n1 < 4 or n2 < 4:
+                        raw_pvals.append(float('nan'))
+                        results.append({'group1': g1, 'group2': g2,
+                                        'r1': float('nan'), 'r2': float('nan'),
+                                        'n1': n1, 'n2': n2,
+                                        'z_diff': float('nan'), 'p-value': float('nan')})
+                        continue
+                    r1 = np.mean(d1)
+                    r2 = np.mean(d2)
+                    # Clamp r values to avoid arctanh(±1) = inf
+                    r1_c = np.clip(r1, -0.9999, 0.9999)
+                    r2_c = np.clip(r2, -0.9999, 0.9999)
+                    z1 = np.arctanh(r1_c)  # Fisher z-transform
+                    z2 = np.arctanh(r2_c)
+                    se = np.sqrt(1.0 / (n1 - 3) + 1.0 / (n2 - 3))
+                    z_diff = (z1 - z2) / se
+                    p = 2.0 * norm.sf(abs(z_diff))  # two-tailed
+                    raw_pvals.append(p)
+                    results.append({'group1': g1, 'group2': g2,
+                                    'r1': r1, 'r2': r2,
+                                    'n1': n1, 'n2': n2,
+                                    'z_diff': round(z_diff, 4), 'p-value': p})
+
+                if p_adj_method != 'none' and results:
+                    valid_mask = [not np.isnan(p) for p in raw_pvals]
+                    valid_pvals = [p for p, v in zip(raw_pvals, valid_mask) if v]
+                    if valid_pvals:
+                        reject, pvals_corrected, _, _ = multipletests(valid_pvals, method=p_adj_method)
+                        j = 0
+                        for i, r in enumerate(results):
+                            if valid_mask[i]:
+                                r['p-adj'] = pvals_corrected[j]
+                                r['Significant'] = reject[j]
+                                j += 1
+                            else:
+                                r['p-adj'] = float('nan')
+                                r['Significant'] = False
+                    else:
+                        for r in results:
+                            r['p-adj'] = float('nan')
+                            r['Significant'] = False
+                else:
+                    for r in results:
+                        r['p-adj'] = r['p-value']
+                        r['Significant'] = r['p-value'] < 0.05 if not np.isnan(r['p-value']) else False
 
             elif 'Dunn' in method:
                 try:

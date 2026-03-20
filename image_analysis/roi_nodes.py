@@ -4463,12 +4463,8 @@ class MaskEditorNode(BaseExecutionNode):
             self.output_values['mask'] = MaskData(payload=(result.astype(np.uint8) * 255))
         else:
             self.output_values['mask'] = MaskData(payload=np.zeros((1, 1), dtype=np.uint8))
-        self.mark_clean()
-        for out_port in self.outputs().values():
-            for in_port in out_port.connected_ports():
-                dn = in_port.node()
-                if hasattr(dn, 'mark_dirty'):
-                    dn.mark_dirty()
+        # Mark this node and all downstream dirty so Run Graph picks up edits
+        self.mark_dirty()
 
     def evaluate(self):
         self.reset_progress()
@@ -4500,16 +4496,33 @@ class MaskEditorNode(BaseExecutionNode):
             h, w = bg_arr.shape[:2]
             mask_arr = np.zeros((h, w), dtype=bool)
 
+        # Before calling set_input (which queues a signal to reset _edit_mask),
+        # check if the user has edited the mask and the input is the same.
+        # We compare against _input_mask which was set by the previous set_input.
+        prev_input = getattr(self._editor, '_input_mask', None)
+        edited = self._editor._edit_mask  # direct access, safe from bg thread (just a numpy read)
+        input_unchanged = (
+            prev_input is not None
+            and mask_arr.shape == prev_input.shape
+            and np.array_equal(mask_arr.astype(bool), prev_input)
+        )
+        has_edits = (
+            input_unchanged
+            and edited is not None
+            and not np.array_equal(edited, prev_input)
+        )
+
         self._editor.set_input(mask_arr, bg_arr)
         self.set_progress(50)
 
         # ── output ───────────────────────────────────────────────────────
-        # Always use the input mask as output. The widget's _edit_mask may
-        # be stale (queued signal not yet processed on background thread),
-        # or hold user edits from a previous run.
-        # User edits are pushed downstream via _on_mask_changed instead.
-        self.output_values['mask'] = MaskData(
-            payload=mask_arr.astype(np.uint8) * 255)
+        if has_edits:
+            # Input hasn't changed and user has edits — keep user's version
+            out_mask = edited.astype(np.uint8) * 255
+        else:
+            # New input or no edits — output the input mask
+            out_mask = mask_arr.astype(np.uint8) * 255
+        self.output_values['mask'] = MaskData(payload=out_mask)
 
         self.set_progress(100)
         return True, None
