@@ -118,6 +118,7 @@ class ErosionNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Erode Mask'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -157,6 +158,7 @@ class DilationNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Dilate Mask'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -196,6 +198,7 @@ class MorphOpenNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Morph Open'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -235,6 +238,7 @@ class MorphCloseNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Morph Close'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -272,6 +276,7 @@ class FillHolesNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Fill Holes'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -311,6 +316,7 @@ class SkeletonizeNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Skeletonize'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['skeleton']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -391,6 +397,7 @@ class SkeletonAnalysisNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Skeleton Analysis'
     PORT_SPEC      = {'inputs': ['skeleton'], 'outputs': ['skeleton', 'table', 'image', 'mask', 'label_image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -545,6 +552,7 @@ class MedialAxisNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Medial Axis'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['skeleton', 'image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -628,6 +636,7 @@ class ParticlePropsNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Particle Props'
     PORT_SPEC      = {'inputs': ['mask', 'label_image', 'image'], 'outputs': ['table', 'label_image']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {
         'table': [
             'label', 'area', 'equivalent_diameter',

@@ -95,17 +95,16 @@ def pack(
     plugin_name = os.path.basename(plugin_dir)
     parent_dir = os.path.dirname(plugin_dir)
 
-    # Build output filename
-    date = time.strftime('%Y%m%d')
+    # Build output filename (no date — same name on every build so releases replace cleanly)
     if slim:
-        tag = f'{plugin_name}-slim-{date}'
+        tag = f'{plugin_name}-slim'
     elif no_vendor:
-        tag = f'{plugin_name}-novendor-{date}'
+        tag = f'{plugin_name}-novendor'
     else:
         arch = platform.machine()
         osname = platform.system().lower()
         pyver = f'cp{sys.version_info.major}{sys.version_info.minor}'
-        tag = f'{plugin_name}-{osname}-{arch}-{pyver}-{date}'
+        tag = f'{plugin_name}-{osname}-{arch}-{pyver}'
 
     if output_dir is None:
         output_dir = parent_dir

@@ -4504,15 +4504,12 @@ class MaskEditorNode(BaseExecutionNode):
         self.set_progress(50)
 
         # ── output ───────────────────────────────────────────────────────
-        # Use get_mask() if the widget already has state (main thread / re-run),
-        # otherwise fall back to the input mask (first evaluate from background thread
-        # where the queued signal hasn't been processed yet).
-        result = self._editor.get_mask()
-        if result is None or result.size <= 1:
-            result = mask_arr
+        # Always use the input mask as output. The widget's _edit_mask may
+        # be stale (queued signal not yet processed on background thread),
+        # or hold user edits from a previous run.
+        # User edits are pushed downstream via _on_mask_changed instead.
         self.output_values['mask'] = MaskData(
-            payload=(result.astype(np.uint8) * 255) if result is not None
-            else np.zeros((1, 1), dtype=np.uint8))
+            payload=mask_arr.astype(np.uint8) * 255)
 
         self.set_progress(100)
         return True, None
@@ -4592,6 +4589,7 @@ class ScaleBarNode(BaseImageProcessNode):
         'color', 'pos', 'selected', 'name', 'progress', 'image_view',
         'show_preview', 'live_preview', 'bar_color',
     })
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -4790,6 +4788,7 @@ class MaskOverlayNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Visualize'
     NODE_NAME      = 'Mask Overlay'
     PORT_SPEC      = {'inputs': ['image', 'mask'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()

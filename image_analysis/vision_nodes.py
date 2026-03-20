@@ -146,6 +146,7 @@ class WhiteTopHatNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'White Top-Hat'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -215,6 +216,7 @@ class BlackTopHatNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Black Top-Hat'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -283,6 +285,7 @@ class BandpassFilterNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Bandpass Filter'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -363,6 +366,7 @@ class WatershedNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME      = 'Watershed'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['label_image', 'table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {
         'table': [
             'label', 'area', 'equivalent_diameter',
@@ -537,6 +541,7 @@ class BlobDetectNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Blob Detect'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['table', 'image']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {'table': ['y', 'x', 'radius_px']}
 
     def __init__(self):
@@ -612,6 +617,7 @@ class FrangiNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Frangi Tubeness'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -676,6 +682,7 @@ class ColocalizationNode(BaseExecutionNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Colocalization'
     PORT_SPEC      = {'inputs': ['image', 'image', 'mask'], 'outputs': ['table', 'figure']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {
         'table': ['Pearson_r', 'Pearson_p', 'Spearman_r', 'Spearman_p',
                   'Kendall_tau', 'Kendall_p', 'MOC', 'M1', 'M2', 'ICQ',
@@ -830,6 +837,7 @@ class GLCMTextureNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'GLCM Texture'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {
         'table': ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']
     }
@@ -909,6 +917,7 @@ class ImageStatsNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Image Stats'
     PORT_SPEC      = {'inputs': ['image', 'mask'], 'outputs': ['table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {
         'table': [
             'image_size_px', 'area_px', 'area_fraction',
@@ -1473,6 +1482,7 @@ class CannyEdgeNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Canny Edge'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -1522,6 +1532,7 @@ class SobelEdgeNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Sobel Edge'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -1563,6 +1574,7 @@ class PrewittEdgeNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Prewitt Edge'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -1606,6 +1618,7 @@ class LaplacianEdgeNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Laplacian Edge'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -1667,6 +1680,7 @@ class FindContoursNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Find Contours'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['mask', 'table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {'table': ['contour_id', 'x', 'y']}
 
     def __init__(self):
@@ -1798,6 +1812,7 @@ class HoughCirclesNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Hough Circles'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['image', 'table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {'table': ['cx', 'cy', 'radius']}
 
     def __init__(self):
@@ -1873,6 +1888,7 @@ class HoughLinesNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Hough Lines'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['image', 'table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {'table': ['theta', 'rho', 'x0', 'y0', 'x1', 'y1']}
 
     def __init__(self):
@@ -1963,6 +1979,7 @@ class HoughEllipseNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Hough Ellipse'
     PORT_SPEC      = {'inputs': ['mask'], 'outputs': ['image', 'table']}
+    _collection_aware = True
     OUTPUT_COLUMNS = {'table': ['cx', 'cy', 'a', 'b', 'orientation']}
 
     def __init__(self):
@@ -2053,6 +2070,7 @@ class ImageHistogramNode(BaseExecutionNode):
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Image Histogram'
     PORT_SPEC      = {'inputs': ['image', 'mask'], 'outputs': ['figure', 'table']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()

@@ -32,6 +32,7 @@ class BitDepthConvertNode(BaseExecutionNode):
     __identifier__ = 'nodes.image_process.Transform'
     NODE_NAME = 'Bit Depth Convert'
     PORT_SPEC = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -82,6 +83,7 @@ class SetScaleNode(BaseExecutionNode):
     __identifier__ = 'nodes.image_process.Visualize'
     NODE_NAME      = 'Set Scale'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -139,6 +141,7 @@ class SplitRGBNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.color'
     NODE_NAME = 'Split RGB'
     PORT_SPEC = {'inputs': ['image'], 'outputs': ['image', 'image', 'image']}
+    _collection_aware = True
 
     def __init__(self):
         super(SplitRGBNode, self).__init__()
@@ -192,6 +195,7 @@ class MergeRGBNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.color'
     NODE_NAME = 'Merge RGB'
     PORT_SPEC = {'inputs': ['image', 'image', 'image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super(MergeRGBNode, self).__init__()
@@ -248,6 +252,7 @@ class EqualizeAdapthistNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Exposure'
     NODE_NAME = 'Equalize Adapthist'
     PORT_SPEC = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super(EqualizeAdapthistNode, self).__init__()
@@ -321,6 +326,7 @@ class GaussianBlurNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME = 'Gaussian Blur'
     PORT_SPEC = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super(GaussianBlurNode, self).__init__()
@@ -374,6 +380,7 @@ class ThresholdLocalNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME = 'Threshold Local'
     PORT_SPEC = {'inputs': ['image'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super(ThresholdLocalNode, self).__init__()
@@ -433,7 +440,8 @@ class RemoveSmallObjectsNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME = 'Remove Small Obj'
     PORT_SPEC = {'inputs': ['mask'], 'outputs': ['mask']}
-    
+    _collection_aware = True
+
     def __init__(self):
         super(RemoveSmallObjectsNode, self).__init__()
         self.add_input('mask', color=PORT_COLORS['mask'])
@@ -483,6 +491,7 @@ class RemoveSmallHolesNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME = 'Remove Small Holes'
     PORT_SPEC = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super(RemoveSmallHolesNode, self).__init__()
@@ -536,6 +545,7 @@ class KeepMaxIntensityRegionNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME = 'Keep Max Intensity'
     PORT_SPEC = {'inputs': ['mask', 'image'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super(KeepMaxIntensityRegionNode, self).__init__()
@@ -618,6 +628,7 @@ class DistanceRingMaskNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.morphology'
     NODE_NAME = 'Distance Ring Mask'
     PORT_SPEC = {'inputs': ['mask'], 'outputs': ['mask']}
+    _collection_aware = True
 
     def __init__(self):
         super(DistanceRingMaskNode, self).__init__()
@@ -2159,6 +2170,7 @@ class GammaContrastNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Exposure'
     NODE_NAME      = 'Gamma Contrast'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -2216,6 +2228,7 @@ class RGBToGrayNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.color'
     NODE_NAME      = 'RGB to Gray'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     _METHODS = [
         'Luminosity (Rec.601)',
@@ -2305,6 +2318,7 @@ class ColorDeconvolutionNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.color'
     NODE_NAME      = 'Color Deconvolution'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image', 'image', 'image']}
+    _collection_aware = True
 
     # For 'skimage' kind, value is skimage.color "*_from_rgb" attribute name.
     # For 'cd2' kind, value is rgb_from_stain matrix (rows = stain OD vectors [R,G,B]).
@@ -2649,6 +2663,7 @@ class ZoomNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Transform'
     NODE_NAME      = 'Zoom'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -2712,6 +2727,7 @@ class ResizeNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Transform'
     NODE_NAME      = 'Resize'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -2790,6 +2806,7 @@ class RotateNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Transform'
     NODE_NAME      = 'Rotate'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -2849,6 +2866,7 @@ class MirrorNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Transform'
     NODE_NAME      = 'Mirror / Flip'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -2909,6 +2927,7 @@ class RollingBallNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Rolling Ball'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -2991,6 +3010,7 @@ class MultiOtsuNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Multi-Otsu Threshold'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['label_image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -3173,6 +3193,7 @@ class ChannelColorizeNode(BaseImageProcessNode):
         'color', 'pos', 'selected', 'name', 'progress', 'image_view',
         'show_preview', 'live_preview',
     })
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -3331,6 +3352,7 @@ class OIRReaderNode(BaseImageProcessNode):
         'color', 'pos', 'selected', 'name', 'progress', 'image_view',
         'show_preview', 'live_preview', 'channel_colors',
     })
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
@@ -4230,6 +4252,7 @@ class MergeImageNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.color'
     NODE_NAME      = 'Merge Image'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['image']}
+    _collection_aware = True
 
     def __init__(self):
         super().__init__()
