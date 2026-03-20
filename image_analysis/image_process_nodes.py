@@ -3536,7 +3536,7 @@ class OIRReaderNode(BaseImageProcessNode):
         composite = np.clip(composite, 0.0, 1.0)
 
         self.output_values['composite'] = ImageData(
-            payload=composite, bit_depth=8, scale_um=scale)
+            payload=composite, bit_depth=bit_depth, scale_um=scale)
 
         self.set_display(composite)
         self.set_progress(100)
