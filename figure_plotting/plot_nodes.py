@@ -1728,9 +1728,9 @@ class DoubleVarPlotNode(BaseExecutionNode):
 
         items = ['scatter', 'box', 'violin', 'pairplot']
         self.add_combo_menu('plot_type', 'Plot Type', items=items)
-        self.add_text_input('x_col', 'X Column')
-        self.add_text_input('y_col', 'Y Column')
-        self.add_text_input('hue', 'Hue Column (Optional)')
+        self._add_column_selector('x_col', 'X Column', text='', mode='single')
+        self._add_column_selector('y_col', 'Y Column', text='', mode='single')
+        self._add_column_selector('hue', 'Hue Column (Optional)', text='', mode='single')
 
     def evaluate(self):
         self.reset_progress()
@@ -1760,6 +1760,8 @@ class DoubleVarPlotNode(BaseExecutionNode):
         if not isinstance(df, pd.DataFrame):
             self.mark_error()
             return False, "Input must be a pandas DataFrame"
+
+        self._refresh_column_selectors(df, 'x_col', 'y_col', 'hue')
 
         try:
             self.set_progress(10)
@@ -1839,6 +1841,74 @@ class PlotToolboxMixin:
         layout.addWidget(edit)
         self.toolbox.add_widget_to_page(page, container)
         self._toolbox_widgets[name] = edit
+
+    def _tb_column_selector(self, name, label, page, default=''):
+        """Text input + dropdown button for column selection inside toolbox."""
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setSpacing(2)
+        lbl = QtWidgets.QLabel(label)
+        lbl.setStyleSheet("color: #aaa; font-size: 8pt; font-weight: bold;")
+        current_val = self.get_property(name)
+        if current_val is None:
+            current_val = default
+
+        row = QtWidgets.QWidget()
+        rl = QtWidgets.QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(2)
+
+        edit = QtWidgets.QLineEdit(str(current_val))
+        edit.setStyleSheet(
+            "QLineEdit { background: #222; border: 1px solid #444; color: #eee;"
+            " padding: 2px; border-radius: 2px; }"
+            "QLineEdit:focus { border: 1px solid #2e7d32; }"
+        )
+        edit.editingFinished.connect(
+            lambda n=name, e=edit: self.set_property(n, e.text()))
+
+        btn = QtWidgets.QToolButton()
+        btn.setText('▼')
+        btn.setFixedWidth(22)
+        btn.setStyleSheet(
+            "QToolButton { background: #333; border: 1px solid #444; color: #ccc;"
+            " border-radius: 2px; }"
+            "QToolButton:hover { background: #444; }")
+        btn._columns = []
+
+        def _show_menu(b=btn, e=edit, n=name):
+            menu = QtWidgets.QMenu()
+            for col in b._columns:
+                action = menu.addAction(str(col))
+                action.triggered.connect(
+                    lambda _c=False, c=col, ed=e, nm=n: (
+                        ed.setText(str(c)), self.set_property(nm, str(c))))
+            if not b._columns:
+                a = menu.addAction('(run graph first)')
+                a.setEnabled(False)
+            menu.exec(QtGui.QCursor.pos())
+
+        btn.clicked.connect(_show_menu)
+        rl.addWidget(edit, 1)
+        rl.addWidget(btn)
+        layout.addWidget(lbl)
+        layout.addWidget(row)
+        self.toolbox.add_widget_to_page(page, container)
+        self._toolbox_widgets[name] = edit
+        if not hasattr(self, '_tb_col_buttons'):
+            self._tb_col_buttons = {}
+        self._tb_col_buttons[name] = btn
+
+    def _tb_refresh_columns(self, df, *prop_names):
+        """Update toolbox column selector dropdowns with DataFrame columns."""
+        if df is None or not hasattr(self, '_tb_col_buttons'):
+            return
+        columns = list(df.columns)
+        for name in prop_names:
+            btn = self._tb_col_buttons.get(name)
+            if btn:
+                btn._columns = columns
 
     def _tb_checkbox(self, name, label, page, default=True):
         current_val = self.get_property(name)
@@ -2318,8 +2388,8 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._build_toolbox(450)
 
         # Group widgets into pages
-        self._tb_text('group_col', 'Group Column', 'Data & Labels', '')
-        self._tb_text('target_column', 'Target Column', 'Data & Labels', 'Value')
+        self._tb_column_selector('group_col', 'Group Column', 'Data & Labels', '')
+        self._tb_column_selector('target_column', 'Target Column', 'Data & Labels', 'Value')
         self._tb_order_list('x_axis_order', 'X-Axis Order', 'Data & Labels')
         self._tb_text('y_label', 'Y-Axis Label', 'Data & Labels', 'Fold Change')
         self._tb_text('x_label', 'X-Axis Label', 'Data & Labels', 'Treatment Group')
@@ -2389,7 +2459,9 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
         else:
             self.mark_error()
             return False, "Expected TableData or DataFrame for port 'data'"
-            
+
+        self._tb_refresh_columns(df, 'group_col', 'target_column')
+
         tukey_df = None
         stats_port = self.inputs().get('stats')
         if stats_port and stats_port.connected_ports():
@@ -3261,8 +3333,8 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         _add_stat_hidden_props(self)
 
         self._build_toolbox(400)
-        self._tb_text('x_col',      'Group Column',   'Data', 'Group')
-        self._tb_text('y_col',      'Value Column',   'Data', 'Value')
+        self._tb_column_selector('x_col',      'Group Column',   'Data', 'Group')
+        self._tb_column_selector('y_col',      'Value Column',   'Data', 'Value')
         self._tb_order_list('order', 'X-Axis Order', 'Data')
         self._tb_combo('palette',   'Palette',         'Data',
                        ['Set2', 'husl', 'colorblind', 'pastel', 'muted', 'None'])
@@ -3286,6 +3358,7 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         stat_df  = _read_table_port(self, 'stats')
         if df is None:
             self.mark_error(); return False, "No data connected"
+        self._tb_refresh_columns(df, 'x_col', 'y_col')
 
         x_col   = str(self.get_property('x_col') or 'group')
         y_col   = str(self.get_property('y_col') or 'value')
@@ -3395,8 +3468,8 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         _add_stat_hidden_props(self)
 
         self._build_toolbox(400)
-        self._tb_text('x_col',       'Group Column',    'Data', 'Group')
-        self._tb_text('y_col',       'Value Column',    'Data', 'Value')
+        self._tb_column_selector('x_col',       'Group Column',    'Data', 'Group')
+        self._tb_column_selector('y_col',       'Value Column',    'Data', 'Value')
         self._tb_order_list('order', 'X-Axis Order', 'Data')
         self._tb_combo('palette',    'Palette',          'Data',
                        ['Set2', 'husl', 'colorblind', 'pastel', 'muted', 'None'])
@@ -3419,6 +3492,7 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         stat_df = _read_table_port(self, 'stats')
         if df is None:
             self.mark_error(); return False, "No data connected"
+        self._tb_refresh_columns(df, 'x_col', 'y_col')
 
         x_col   = str(self.get_property('x_col') or 'Group')
         y_col   = str(self.get_property('y_col') or 'Value')
@@ -3535,8 +3609,8 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         _add_stat_hidden_props(self)
 
         self._build_toolbox(500)
-        self._tb_text('x_col',       'Group Column',    'Data', 'Group')
-        self._tb_text('y_col',       'Value Column',    'Data', 'Value')
+        self._tb_column_selector('x_col',       'Group Column',    'Data', 'Group')
+        self._tb_column_selector('y_col',       'Value Column',    'Data', 'Value')
         self._tb_order_list('order', 'X-Axis Order', 'Data')
         self._tb_combo('palette',    'Palette',          'Data',
                        ['Set2', 'husl', 'colorblind', 'pastel', 'muted', 'None'])
@@ -3710,9 +3784,9 @@ class ScatterPlotNode(BaseExecutionNode):
         self.add_input('data',  color=PORT_COLORS['table'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
-        self.add_text_input('x_col',       'X Column', text='x')
-        self.add_text_input('y_col',       'Y Column', text='y')
-        self.add_text_input('hue_col',     'Hue Column (optional)', text='')
+        self._add_column_selector('x_col',       'X Column', text='x', mode='single')
+        self._add_column_selector('y_col',       'Y Column', text='y', mode='single')
+        self._add_column_selector('hue_col',     'Hue Column (optional)', text='', mode='single')
         self.add_combo_menu('palette',     'Palette',
                             items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
         self.add_checkbox('regression',    '', text='Regression line', state=False)
@@ -3734,6 +3808,8 @@ class ScatterPlotNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'x_col', 'y_col', 'hue_col')
 
         x_col   = str(self.get_property('x_col') or 'x')
         y_col   = str(self.get_property('y_col') or 'y')
@@ -3791,8 +3867,8 @@ class HistogramNode(BaseExecutionNode):
         self.add_input('data',  color=PORT_COLORS['table'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
-        self.add_text_input('value_col',   'Value Column',         text='value')
-        self.add_text_input('group_col',   'Group Column (opt.)',  text='')
+        self._add_column_selector('value_col',   'Value Column',         text='value', mode='multi')
+        self._add_column_selector('group_col',   'Group Column (opt.)',  text='', mode='single')
         self.add_text_input('bins',        'Bins (int or "auto")', text='auto')
         self.add_text_input('binwidth',    'Bin width', text='')
         self.add_combo_menu('palette',     'Palette',
@@ -3816,6 +3892,7 @@ class HistogramNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+        self._refresh_column_selectors(df, 'value_col', 'group_col')
 
         val_col   = str(self.get_property('value_col') or 'value')
         grp_col   = str(self.get_property('group_col') or '') or None
@@ -3852,6 +3929,129 @@ class HistogramNode(BaseExecutionNode):
 
 
 # ===========================================================================
+# JointPlotNode
+# ===========================================================================
+
+class JointPlotNode(BaseExecutionNode):
+    """
+    Creates a joint plot — scatter with marginal distributions on each axis.
+
+    Columns:
+    - **x_col** — numeric column for the X axis
+    - **y_col** — numeric column for the Y axis
+    - **hue_col** — optional column for colour-coding by group
+
+    Options:
+    - *kind* — scatter, kde, hex, hist, or reg (scatter + regression)
+    - *marginal* — histogram, kde, or both for the marginal distributions
+    - *palette* — colour palette for hue groups
+
+    Keywords: joint plot, scatter, marginal distribution, histogram, kde, regression, 聯合圖, 散點, 邊際分佈, 繪圖
+    """
+    __identifier__ = 'nodes.plotting'
+    NODE_NAME      = 'Joint Plot'
+    PORT_SPEC      = {'inputs': ['table'], 'outputs': ['figure']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('data',  color=PORT_COLORS['table'])
+        self.add_output('plot', color=PORT_COLORS['figure'])
+
+        self._add_column_selector('x_col',    'X Column', text='x', mode='single')
+        self._add_column_selector('y_col',    'Y Column', text='y', mode='single')
+        self._add_column_selector('hue_col',  'Hue Column (optional)', text='', mode='single')
+        self.add_combo_menu('kind',     'Kind',
+                            items=['scatter', 'reg', 'kde', 'hex', 'hist'])
+        self.add_combo_menu('marginal', 'Marginal',
+                            items=['hist', 'kde', 'both'])
+        self.add_combo_menu('palette',  'Palette',
+                            items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
+        self.add_text_input('x_label',    'X Label',  text='')
+        self.add_text_input('y_label',    'Y Label',  text='')
+        self.add_text_input('plot_title', 'Title',    text='')
+
+        import NodeGraphQt
+        H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
+        self.create_property('fig_height', 7.0, widget_type=H)
+
+    def evaluate(self):
+        self.reset_progress()
+        import seaborn as sns
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        sns.set_theme(style='ticks')
+
+        df = _read_table_port(self, 'data')
+        if df is None:
+            self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'x_col', 'y_col', 'hue_col')
+
+        x_col   = str(self.get_property('x_col') or 'x')
+        y_col   = str(self.get_property('y_col') or 'y')
+        hue_col = str(self.get_property('hue_col') or '').strip() or None
+        kind    = str(self.get_property('kind') or 'scatter')
+        marginal = str(self.get_property('marginal') or 'hist')
+        palette = str(self.get_property('palette') or 'Set2')
+        if palette == 'None':
+            palette = None
+
+        if x_col not in df.columns or y_col not in df.columns:
+            self.mark_error()
+            return False, f"Columns '{x_col}' or '{y_col}' not found"
+        if hue_col and hue_col not in df.columns:
+            hue_col = None
+
+        self.set_progress(20)
+
+        height = float(self.get_property('fig_height') or 7)
+
+        # Map marginal option
+        marginal_kws = {}
+        if marginal == 'both':
+            marginal_kind = 'hist'
+            marginal_kws['kde'] = True
+        else:
+            marginal_kind = marginal
+
+        try:
+            g = sns.jointplot(
+                data=df, x=x_col, y=y_col,
+                hue=hue_col, kind=kind,
+                palette=palette, height=height,
+                marginal_kws=marginal_kws if marginal == 'both' else {},
+            )
+            # Override marginal kind if not 'both' (jointplot uses hist by default)
+            if marginal != 'both' and kind in ('scatter', 'reg'):
+                g.plot_marginals(
+                    sns.histplot if marginal == 'hist' else sns.kdeplot,
+                    **({'kde': False} if marginal == 'hist' else {}))
+        except Exception as e:
+            self.mark_error()
+            return False, str(e)
+
+        self.set_progress(70)
+
+        # Labels and title
+        x_label = str(self.get_property('x_label') or '').strip()
+        y_label = str(self.get_property('y_label') or '').strip()
+        title   = str(self.get_property('plot_title') or '').strip()
+        if x_label:
+            g.ax_joint.set_xlabel(x_label)
+        if y_label:
+            g.ax_joint.set_ylabel(y_label)
+        if title:
+            g.figure.suptitle(title, y=1.02)
+
+        # Attach canvas for rendering
+        FigureCanvasAgg(g.figure)
+
+        self.output_values['plot'] = FigureData(payload=g.figure)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+
+# ===========================================================================
 # KdePlotNode
 # ===========================================================================
 
@@ -3881,8 +4081,8 @@ class KdePlotNode(BaseExecutionNode):
         self.add_input('data',  color=PORT_COLORS['table'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
-        self.add_text_input('value_col',   'Value Column',        text='value')
-        self.add_text_input('group_col',   'Group Column (opt.)', text='')
+        self._add_column_selector('value_col',   'Value Column',        text='value', mode='single')
+        self._add_column_selector('group_col',   'Group Column (opt.)', text='', mode='single')
         self.add_combo_menu('palette',     'Palette',
                             items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
         self.add_checkbox('fill',          '', text='Fill under curve', state=True)
@@ -3904,6 +4104,8 @@ class KdePlotNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'value_col', 'group_col')
 
         val_col = str(self.get_property('value_col') or 'value')
         grp_col = str(self.get_property('group_col') or '') or None
@@ -3964,9 +4166,9 @@ class XYLinePlotNode(BaseExecutionNode):
         self.add_input('stats', color=PORT_COLORS['stat'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
-        self.add_text_input('x_col',     'X Column',               text='')
-        self.add_text_input('y_col',     'Y Column',               text='')
-        self.add_text_input('group_col', 'Group Column (opt.)',    text='')
+        self._add_column_selector('x_col',     'X Column',               text='', mode='single')
+        self._add_column_selector('y_col',     'Y Column',               text='', mode='single')
+        self._add_column_selector('group_col', 'Group Column (opt.)',    text='', mode='single')
         self.add_combo_menu('error_type', 'Error Type',
                             items=['SEM', 'SD', '95% CI', 'None'])
         self.add_text_input('x_order',   'X Order (comma-sep, opt.)', text='')
@@ -3992,6 +4194,8 @@ class XYLinePlotNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'x_col', 'y_col', 'group_col')
 
         stat_df    = _read_table_port(self, 'stats')
         x_col      = str(self.get_property('x_col')     or '').strip() or None
@@ -4159,9 +4363,8 @@ class HeatmapNode(BaseExecutionNode):
         self.add_input('data',  color=PORT_COLORS['table'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
-        self.add_text_input('row_label_col', 'Row Label Column (opt.)', text='')
-        self.add_text_input('value_cols',
-                            'Value Columns (comma-sep, blank=all numeric)', text='')
+        self._add_column_selector('row_label_col', 'Row Label Column (opt.)', text='', mode='single')
+        self._add_column_selector('value_cols', 'Value Columns (blank=all numeric)', text='', mode='multi')
         self.add_combo_menu('cmap', 'Colormap',
                             items=['viridis', 'RdYlGn', 'coolwarm', 'seismic',
                                    'Blues', 'Reds', 'Greens', 'Purples', 'Oranges',
@@ -4188,6 +4391,8 @@ class HeatmapNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'row_label_col', 'value_cols')
 
         row_lbl  = str(self.get_property('row_label_col') or '').strip() or None
         vcols_s  = str(self.get_property('value_cols')    or '').strip()
@@ -4291,9 +4496,9 @@ class VolcanoPlotNode(BaseExecutionNode):
         self.add_output('plot',       color=PORT_COLORS['figure'])
         self.add_output('significant', color=PORT_COLORS['table'])
 
-        self.add_text_input('fc_col',    'Log2 FC Column',           text='')
-        self.add_text_input('p_col',     'p-value Column',           text='')
-        self.add_text_input('label_col', 'Label Column (opt.)',      text='')
+        self._add_column_selector('fc_col',    'Log2 FC Column',           text='', mode='single')
+        self._add_column_selector('p_col',     'p-value Column',           text='', mode='single')
+        self._add_column_selector('label_col', 'Label Column (opt.)',      text='', mode='single')
         
         self._add_float_spinbox('fc_thresh', 'FC Threshold (|log2FC|)', value=1.0, step=0.1)
         self._add_float_spinbox('p_thresh',  'p-value Threshold',       value=0.05, step=0.01, decimals=4)
@@ -4321,6 +4526,8 @@ class VolcanoPlotNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'fc_col', 'p_col', 'label_col')
 
         fc_col    = str(self.get_property('fc_col')    or '').strip() or None
         p_col     = str(self.get_property('p_col')     or '').strip() or None
@@ -4438,9 +4645,9 @@ class RegressionPlotNode(BaseExecutionNode):
         self.add_input('curve', color=PORT_COLORS['table'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
-        self.add_text_input('x_col',     'X Column',            text='')
-        self.add_text_input('y_col',     'Y Column',            text='')
-        self.add_text_input('group_col', 'Group Column (opt.)', text='')
+        self._add_column_selector('x_col',     'X Column',            text='', mode='single')
+        self._add_column_selector('y_col',     'Y Column',            text='', mode='single')
+        self._add_column_selector('group_col', 'Group Column (opt.)', text='', mode='single')
         self.add_combo_menu('fit_type', 'Auto-Fit (no curve input)',
                             items=['Linear', 'Polynomial deg 2',
                                    'Polynomial deg 3', 'None'])
@@ -4472,6 +4679,8 @@ class RegressionPlotNode(BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, "No data connected"
+
+        self._refresh_column_selectors(df, 'x_col', 'y_col', 'group_col')
 
         curve_df  = _read_table_port(self, 'curve')
         x_col     = str(self.get_property('x_col')    or '').strip() or None
@@ -4824,8 +5033,8 @@ class AnglePlotNode(PlotToolboxMixin, BaseExecutionNode):
 
         self._build_toolbox(520)
         # ── Data page ─────────────────────────────────────────────────────────
-        self._tb_text('angle_col',    'Angle Column',        'Data', '')
-        self._tb_text('group_col',    'Group Column (opt)',  'Data', '')
+        self._tb_column_selector('angle_col',    'Angle Column',        'Data', '')
+        self._tb_column_selector('group_col',    'Group Column (opt)',  'Data', '')
         self._tb_combo('input_unit',  'Input Unit',          'Data',
                        ['Degrees', 'Radians'])
         self._tb_combo('plot_mode',   'Plot Mode',           'Data',
@@ -4923,6 +5132,7 @@ class AnglePlotNode(PlotToolboxMixin, BaseExecutionNode):
         df = _read_table_port(self, 'data')
         if df is None:
             self.mark_error(); return False, 'No data connected'
+        self._tb_refresh_columns(df, 'angle_col', 'group_col')
 
         angle_col  = str(self.get_property('angle_col')     or '').strip()
         group_col  = str(self.get_property('group_col')     or '').strip()
