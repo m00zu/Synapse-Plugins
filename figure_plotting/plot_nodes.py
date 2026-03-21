@@ -13,6 +13,12 @@ import pandas as pd
 import numpy as np
 from nodes.base import BaseExecutionNode, PORT_COLORS, ColorPickerButtonWidget, NodeToolBoxWidget
 
+# Set Arial as default font for consistent rendering between matplotlib and SVG
+import matplotlib
+matplotlib.rcParams['font.family'] = 'sans-serif'
+matplotlib.rcParams['font.sans-serif'] = ['Arial', 'Helvetica', 'DejaVu Sans', 'sans-serif']
+matplotlib.rcParams['svg.fonttype'] = 'none'  # output real <text> elements
+
 
 # ── Figure-parameter helpers ──────────────────────────────────────────────────
 
