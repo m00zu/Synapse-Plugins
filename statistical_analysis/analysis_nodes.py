@@ -813,8 +813,21 @@ class PairwiseMatrixWidget(NodeBaseWidget):
                     item.setToolTip(f'{groups[c]}  vs  {groups[r]}')
                 self._table.setItem(r, c, item)
 
-        # Height: fixed rotated header (80px) + rows, capped
-        table_h = min(n * 24 + _RotatedHeaderView._HEADER_H + 4, 300)
+        # Column width: fixed narrow cells (just enough for ✓)
+        cell_w = 26
+        for c in range(n):
+            self._table.setColumnWidth(c, cell_w)
+
+        # Header height: based on longest group name (rotated text)
+        fm = QtGui.QFontMetrics(QtGui.QFont('sans-serif', 8))
+        max_text_w = max((fm.horizontalAdvance(g) for g in groups), default=40)
+        header_h = min(max(max_text_w + 12, 40), 120)
+        self._col_header.setFixedHeight(header_h)
+
+        # Compact table size
+        row_header_w = self._table.verticalHeader().sizeHint().width()
+        self._table.setFixedWidth(row_header_w + n * cell_w + 4)
+        table_h = min(n * 24 + header_h + 4, 300)
         self._table.setFixedHeight(table_h)
         self._is_updating = False
 
@@ -905,14 +918,19 @@ class PairwiseComparisonNode(BaseExecutionNode):
     Performs pairwise comparisons between groups using parametric or non-parametric tests.
 
     Tests:
-    - *T-test* — parametric, assumes normal distribution
+    - *Student's T-test* — parametric, assumes equal variance and normal distribution
+    - *Welch's T-test* — parametric, does not assume equal variance
     - *Mann-Whitney U* — non-parametric rank-based test
+    - *Kolmogorov-Smirnov* — tests whether two groups come from the same distribution
     - *Tukey HSD* — post-hoc test after ANOVA
+    - *Dunn* — non-parametric post-hoc test (requires scikit-posthocs)
     - *Fisher's Z* — compare correlation coefficients between groups (target column = r values)
+
+    **Alternative** — two-sided (default), greater (group1 > group2), or less (group1 < group2). Tukey HSD and Dunn are always two-sided.
 
     **P-Adj Method** — multiple comparison correction (Bonferroni, Holm, BH).
 
-    Keywords: pairwise, t-test, welch, mann-whitney, tukey, fisher, correlation, 兩兩比較, 統計檢定, 分析, 顯著性, 比較
+    Keywords: pairwise, t-test, welch, mann-whitney, tukey, fisher, kolmogorov, ks, correlation, one-sided, 兩兩比較, 統計檢定, 分析, 顯著性, 比較
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Pairwise Comparison'
@@ -923,8 +941,11 @@ class PairwiseComparisonNode(BaseExecutionNode):
         self.add_input('in', color=PORT_COLORS['table'])
         self.add_output('stats_table', color=PORT_COLORS['stat'])
 
-        methods = ["Student's T-test", "Welch's T-test", 'Mann-Whitney U', 'Tukey HSD', 'Dunn', "Fisher's Z (corr.)"]
+        methods = ["Student's T-test", "Welch's T-test", 'Mann-Whitney U', 'Kolmogorov-Smirnov', 'Tukey HSD', 'Dunn', "Fisher's Z (corr.)"]
         self.add_combo_menu('method', 'Statistical Method', items=methods)
+
+        self.add_combo_menu('alternative', 'Alternative',
+                            items=['two-sided', 'greater', 'less'])
 
         p_adj_methods = ['none', 'bonferroni', 'sidak', 'holm-sidak', 'holm', 'simes-hochberg', 'hommel', 'fdr_bh', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky']
         self.add_combo_menu('p_adj_method', 'P-Adj Method', items=p_adj_methods)
@@ -986,6 +1007,7 @@ class PairwiseComparisonNode(BaseExecutionNode):
             return False, "Expected TableData or DataFrame input"
 
         method = self.get_property('method')
+        alternative = self.get_property('alternative') or 'two-sided'
         p_adj_method = self.get_property('p_adj_method')
         target_col = str(self.get_property('target_column')).strip()
         group_col = str(self.get_property('group_column')).strip()
@@ -1072,18 +1094,23 @@ class PairwiseComparisonNode(BaseExecutionNode):
                             'Significant': res.pvalue[i, j] < 0.05
                         })
 
-            elif 'T-test' in method or 'Mann-Whitney' in method:
+            elif 'T-test' in method or 'Mann-Whitney' in method or 'Kolmogorov' in method:
+                from scipy.stats import ks_2samp
                 raw_pvals = []
                 for g1, g2 in pairs:
                     d1 = df_clean[df_clean[group_col] == g1][target_col].values
                     d2 = df_clean[df_clean[group_col] == g2][target_col].values
                     if 'T-test' in method:
                         equal_var = 'Welch' not in method
-                        stat, p = ttest_ind(d1, d2, nan_policy='omit', equal_var=equal_var)
+                        stat, p = ttest_ind(d1, d2, nan_policy='omit',
+                                            equal_var=equal_var,
+                                            alternative=alternative)
+                    elif 'Kolmogorov' in method:
+                        stat, p = ks_2samp(d1, d2, alternative=alternative)
                     else:
-                        stat, p = mannwhitneyu(d1, d2, alternative='two-sided')
+                        stat, p = mannwhitneyu(d1, d2, alternative=alternative)
                     raw_pvals.append(p)
-                    results.append({'group1': g1, 'group2': g2, 'p-value': p})
+                    results.append({'group1': g1, 'group2': g2, 'statistic': round(stat, 4), 'p-value': p})
 
                 if p_adj_method != 'none' and results:
                     reject, pvals_corrected, _, _ = multipletests(raw_pvals, method=p_adj_method)
@@ -1118,7 +1145,12 @@ class PairwiseComparisonNode(BaseExecutionNode):
                     z2 = np.arctanh(r2_c)
                     se = np.sqrt(1.0 / (n1 - 3) + 1.0 / (n2 - 3))
                     z_diff = (z1 - z2) / se
-                    p = 2.0 * norm.sf(abs(z_diff))  # two-tailed
+                    if alternative == 'greater':
+                        p = norm.sf(z_diff)
+                    elif alternative == 'less':
+                        p = norm.cdf(z_diff)
+                    else:
+                        p = 2.0 * norm.sf(abs(z_diff))
                     raw_pvals.append(p)
                     results.append({'group1': g1, 'group2': g2,
                                     'r1': r1, 'r2': r2,

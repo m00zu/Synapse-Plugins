@@ -675,16 +675,20 @@ class ColocalizationNode(BaseExecutionNode):
     - *M2* — fraction of ch2 intensity where ch1 is above its Otsu threshold
     - *ICQ* — Li's Intensity Correlation Quotient (-0.5 to 0.5)
 
-    Outputs a 1-row table and a scatter plot of ch1 vs ch2 intensities.
+    Accepts an optional label image — when connected, metrics are computed
+    per-label (one row per region) instead of for the whole image.
 
-    Keywords: colocalization, coloc, pearson, spearman, kendall, manders, icq, 共定位, 強度, 相關性, 影像處理, 分析
+    Plot options: Scatter, Regression (with fit line per label), or Bar Chart
+    (Pearson r per label).
+
+    Keywords: colocalization, coloc, pearson, spearman, kendall, manders, icq, label, 共定位, 強度, 相關性, 影像處理, 分析
     """
     __identifier__ = 'nodes.image_process.measure'
     NODE_NAME      = 'Colocalization'
-    PORT_SPEC      = {'inputs': ['image', 'image', 'mask'], 'outputs': ['table', 'figure']}
+    PORT_SPEC      = {'inputs': ['image', 'image', 'mask', 'label'], 'outputs': ['table', 'figure']}
     _collection_aware = True
     OUTPUT_COLUMNS = {
-        'table': ['Pearson_r', 'Pearson_p', 'Spearman_r', 'Spearman_p',
+        'table': ['label', 'Pearson_r', 'Pearson_p', 'Spearman_r', 'Spearman_p',
                   'Kendall_tau', 'Kendall_p', 'MOC', 'M1', 'M2', 'ICQ',
                   'Otsu_ch1', 'Otsu_ch2', 'n_pixels']
     }
@@ -693,9 +697,13 @@ class ColocalizationNode(BaseExecutionNode):
         super().__init__()
         self.add_input('ch1',  color=PORT_COLORS['image'])
         self.add_input('ch2',  color=PORT_COLORS['image'])
-        self.add_input('mask', color=PORT_COLORS['mask'])   # optional
+        self.add_input('mask', color=PORT_COLORS['mask'])          # optional
+        self.add_input('label_image', color=PORT_COLORS['label'])  # optional
         self.add_output('table',  color=PORT_COLORS['table'])
         self.add_output('figure', color=PORT_COLORS['figure'])
+
+        self.add_combo_menu('plot_type', 'Plot Type',
+                            items=['Scatter', 'Regression', 'Bar Chart'])
 
     def _read_gray(self, port_name: str):
         port = self.inputs().get(port_name)
@@ -707,6 +715,55 @@ class ColocalizationNode(BaseExecutionNode):
             return _to_gray(data.payload).astype(np.float64)
         return None
 
+    @staticmethod
+    def _compute_metrics(a_m, b_m, label_id=None):
+        """Compute all colocalization metrics for a pair of pixel arrays."""
+        from scipy.stats import pearsonr, spearmanr, kendalltau
+        from skimage.filters import threshold_otsu
+
+        if a_m.size < 2:
+            return None
+
+        pcc, pcc_p = pearsonr(a_m, b_m)
+        spearman_r, spearman_p = spearmanr(a_m, b_m)
+
+        if a_m.size > 50000:
+            idx = np.random.choice(a_m.size, 50000, replace=False)
+            kendall_r, kendall_p = kendalltau(a_m[idx], b_m[idx])
+        else:
+            kendall_r, kendall_p = kendalltau(a_m, b_m)
+
+        denom = np.sqrt(np.sum(a_m ** 2) * np.sum(b_m ** 2))
+        moc = float(np.sum(a_m * b_m) / denom) if denom > 0 else float('nan')
+
+        t1 = float(threshold_otsu(a_m)) if a_m.max() > a_m.min() else 0.0
+        t2 = float(threshold_otsu(b_m)) if b_m.max() > b_m.min() else 0.0
+        s_a, s_b = np.sum(a_m), np.sum(b_m)
+        m1 = float(np.sum(a_m[b_m > t2]) / s_a) if s_a > 0 else float('nan')
+        m2 = float(np.sum(b_m[a_m > t1]) / s_b) if s_b > 0 else float('nan')
+
+        product = (a_m - a_m.mean()) * (b_m - b_m.mean())
+        icq = float(np.sum(product > 0) / product.size - 0.5)
+
+        row = {
+            'Pearson_r': round(float(pcc), 4),
+            'Pearson_p': round(float(pcc_p), 6),
+            'Spearman_r': round(float(spearman_r), 4),
+            'Spearman_p': round(float(spearman_p), 6),
+            'Kendall_tau': round(float(kendall_r), 4),
+            'Kendall_p': round(float(kendall_p), 6),
+            'MOC': round(moc, 4),
+            'M1': round(m1, 4),
+            'M2': round(m2, 4),
+            'ICQ': round(icq, 4),
+            'Otsu_ch1': round(float(t1), 4),
+            'Otsu_ch2': round(float(t2), 4),
+            'n_pixels': int(a_m.size),
+        }
+        if label_id is not None:
+            row['label'] = label_id
+        return row
+
     def evaluate(self):
         self.reset_progress()
 
@@ -717,96 +774,138 @@ class ColocalizationNode(BaseExecutionNode):
         if a.shape != b.shape:
             return False, f"Channel shapes differ: {a.shape} vs {b.shape}"
 
-        mask = _get_mask_arr(self, 'mask')  # may be None
-        self.set_progress(15)
+        mask = _get_mask_arr(self, 'mask')
+        plot_type = str(self.get_property('plot_type') or 'Scatter')
+        self.set_progress(10)
 
-        # Apply mask — use only masked pixels for all metrics
-        if mask is not None and mask.any():
-            a_m = a[mask].ravel()
-            b_m = b[mask].ravel()
+        # ── Read optional label image ─────────────────────────────────────
+        label_arr = None
+        lbl_port = self.inputs().get('label_image')
+        if lbl_port and lbl_port.connected_ports():
+            cp = lbl_port.connected_ports()[0]
+            lbl_data = cp.node().output_values.get(cp.name())
+            if lbl_data is not None:
+                lbl_payload = lbl_data.payload if hasattr(lbl_data, 'payload') else lbl_data
+                if isinstance(lbl_payload, np.ndarray) and lbl_payload.shape[:2] == a.shape[:2]:
+                    label_arr = lbl_payload.astype(np.int32)
+
+        # ── Compute metrics ───────────────────────────────────────────────
+        rows = []
+        per_label_data = {}  # {label: (a_pixels, b_pixels)} for plotting
+
+        if label_arr is not None:
+            unique_labels = [l for l in np.unique(label_arr) if l > 0]
+            total = len(unique_labels)
+            for i, lbl in enumerate(unique_labels):
+                self.set_progress(10 + int(50 * i / max(total, 1)))
+                region_mask = label_arr == lbl
+                if mask is not None:
+                    region_mask = region_mask & mask
+                a_m = a[region_mask].ravel()
+                b_m = b[region_mask].ravel()
+                row = self._compute_metrics(a_m, b_m, label_id=int(lbl))
+                if row is not None:
+                    rows.append(row)
+                    per_label_data[int(lbl)] = (a_m, b_m)
         else:
-            a_m = a.ravel()
-            b_m = b.ravel()
+            if mask is not None and mask.any():
+                a_m = a[mask].ravel()
+                b_m = b[mask].ravel()
+            else:
+                a_m = a.ravel()
+                b_m = b.ravel()
 
-        if a_m.size < 2:
+            if a_m.size < 2:
+                self.mark_error()
+                return False, "Not enough pixels for correlation (need at least 2)"
+
+            row = self._compute_metrics(a_m, b_m)
+            if row is not None:
+                rows.append(row)
+                per_label_data[0] = (a_m, b_m)
+
+        if not rows:
             self.mark_error()
-            return False, "Not enough pixels for correlation (need at least 2)"
+            return False, "No regions with enough pixels"
 
-        self.set_progress(25)
-
-        # ── Pearson (PCC) ─────────────────────────────────────────────────
-        from scipy.stats import pearsonr, spearmanr, kendalltau
-        pcc, pcc_p = pearsonr(a_m, b_m)
-
-        # ── Spearman ─────────────────────────────────────────────────────
-        spearman_r, spearman_p = spearmanr(a_m, b_m)
-
-        # ── Kendall ──────────────────────────────────────────────────────
-        # Subsample for large images (Kendall is O(n²))
-        if a_m.size > 50000:
-            idx = np.random.choice(a_m.size, 50000, replace=False)
-            kendall_r, kendall_p = kendalltau(a_m[idx], b_m[idx])
-        else:
-            kendall_r, kendall_p = kendalltau(a_m, b_m)
-
-        self.set_progress(35)
-
-        # ── Manders Overlap Coefficient ────────────────────────────────────
-        denom = np.sqrt(np.sum(a_m ** 2) * np.sum(b_m ** 2))
-        moc   = float(np.sum(a_m * b_m) / denom) if denom > 0 else float('nan')
-
-        # ── Manders M1 / M2 (Otsu thresholds) ─────────────────────────────
-        from skimage.filters import threshold_otsu
-        t1 = float(threshold_otsu(a_m)) if a_m.max() > a_m.min() else 0.0
-        t2 = float(threshold_otsu(b_m)) if b_m.max() > b_m.min() else 0.0
-        s_a = np.sum(a_m)
-        s_b = np.sum(b_m)
-        m1 = float(np.sum(a_m[b_m > t2]) / s_a) if s_a > 0 else float('nan')
-        m2 = float(np.sum(b_m[a_m > t1]) / s_b) if s_b > 0 else float('nan')
-        self.set_progress(50)
-
-        # ── Li ICQ ─────────────────────────────────────────────────────────
-        product = (a_m - a_m.mean()) * (b_m - b_m.mean())
-        icq     = float(np.sum(product > 0) / product.size - 0.5)
-
-        row = {
-            'Pearson_r':    [round(float(pcc), 4)],
-            'Pearson_p':    [round(float(pcc_p), 6)],
-            'Spearman_r':   [round(float(spearman_r), 4)],
-            'Spearman_p':   [round(float(spearman_p), 6)],
-            'Kendall_tau':  [round(float(kendall_r), 4)],
-            'Kendall_p':    [round(float(kendall_p), 6)],
-            'MOC':          [round(moc, 4)],
-            'M1':           [round(m1, 4)],
-            'M2':           [round(m2, 4)],
-            'ICQ':          [round(icq, 4)],
-            'Otsu_ch1':     [round(float(t1), 4)],
-            'Otsu_ch2':     [round(float(t2), 4)],
-            'n_pixels':     [int(a_m.size)],
-        }
-        self.output_values['table'] = TableData(payload=pd.DataFrame(row))
+        df = pd.DataFrame(rows)
+        # Reorder columns so label is first when present
+        if 'label' in df.columns:
+            cols = ['label'] + [c for c in df.columns if c != 'label']
+            df = df[cols]
+        self.output_values['table'] = TableData(payload=df)
         self.set_progress(65)
 
-        # ── Scatter plot (ch1 vs ch2, subsampled) ──────────────────────────
+        # ── Figure ────────────────────────────────────────────────────────
         from matplotlib.figure import Figure
         from matplotlib.backends.backend_agg import FigureCanvasAgg
+        import matplotlib.cm as cm
+
+        fig = Figure(figsize=(6, 5))
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
 
         MAX_PTS = 20_000
-        flat_a  = a_m
-        flat_b  = b_m
+        has_labels = label_arr is not None and len(per_label_data) > 1
+        colors = cm.tab10.colors if has_labels else [(.27, .51, .71)]
 
-        if len(flat_a) > MAX_PTS:
-            idx    = np.random.choice(len(flat_a), MAX_PTS, replace=False)
-            flat_a = flat_a[idx]
-            flat_b = flat_b[idx]
+        if plot_type == 'Bar Chart':
+            # Bar chart of Pearson r per label
+            labels_list = df['label'].tolist() if 'label' in df.columns else ['all']
+            r_vals = df['Pearson_r'].tolist()
+            bar_colors = [colors[i % len(colors)] for i in range(len(labels_list))]
+            bars = ax.bar(range(len(labels_list)), r_vals, color=bar_colors)
+            ax.set_xticks(range(len(labels_list)))
+            ax.set_xticklabels([str(l) for l in labels_list],
+                               rotation=45 if len(labels_list) > 10 else 0,
+                               fontsize=8)
+            ax.set_xlabel('Label')
+            ax.set_ylabel('Pearson r')
+            ax.set_title('Colocalization per region')
+            ax.axhline(0, color='gray', linewidth=0.5, linestyle='--')
 
-        fig    = Figure(figsize=(5, 5))
-        canvas = FigureCanvasAgg(fig)
-        ax     = fig.add_subplot(111)
-        ax.scatter(flat_a, flat_b, s=1, alpha=0.3, c='steelblue', linewidths=0)
-        ax.set_xlabel('Channel 1 intensity')
-        ax.set_ylabel('Channel 2 intensity')
-        ax.set_title(f'PCC = {pcc:.3f}  |  M1={m1:.3f}  M2={m2:.3f}')
+        elif plot_type == 'Regression':
+            for i, (lbl, (fa, fb)) in enumerate(per_label_data.items()):
+                if len(fa) > MAX_PTS:
+                    idx = np.random.choice(len(fa), MAX_PTS, replace=False)
+                    fa, fb = fa[idx], fb[idx]
+                c = colors[i % len(colors)]
+                lbl_str = f'Label {lbl}' if has_labels else None
+                ax.scatter(fa, fb, s=1, alpha=0.2, c=[c], linewidths=0,
+                           label=lbl_str)
+                # Fit line
+                if len(fa) > 1:
+                    coeffs = np.polyfit(fa, fb, 1)
+                    x_fit = np.linspace(fa.min(), fa.max(), 100)
+                    ax.plot(x_fit, np.polyval(coeffs, x_fit), c=c, linewidth=1.5)
+            ax.set_xlabel('Channel 1 intensity')
+            ax.set_ylabel('Channel 2 intensity')
+            pcc_str = f"PCC = {df['Pearson_r'].iloc[0]:.3f}" if len(df) == 1 else f"{len(df)} regions"
+            ax.set_title(pcc_str)
+            if has_labels and len(per_label_data) <= 15:
+                ax.legend(fontsize=7, markerscale=5)
+
+        else:  # Scatter (default)
+            for i, (lbl, (fa, fb)) in enumerate(per_label_data.items()):
+                if len(fa) > MAX_PTS:
+                    idx = np.random.choice(len(fa), MAX_PTS, replace=False)
+                    fa, fb = fa[idx], fb[idx]
+                c = colors[i % len(colors)]
+                lbl_str = f'Label {lbl}' if has_labels else None
+                ax.scatter(fa, fb, s=1, alpha=0.3, c=[c], linewidths=0,
+                           label=lbl_str)
+            ax.set_xlabel('Channel 1 intensity')
+            ax.set_ylabel('Channel 2 intensity')
+            if len(df) == 1:
+                r = df['Pearson_r'].iloc[0]
+                m1_v = df['M1'].iloc[0]
+                m2_v = df['M2'].iloc[0]
+                ax.set_title(f'PCC = {r:.3f}  |  M1={m1_v:.3f}  M2={m2_v:.3f}')
+            else:
+                ax.set_title(f'{len(df)} regions')
+            if has_labels and len(per_label_data) <= 15:
+                ax.legend(fontsize=7, markerscale=5)
+
         for sp in ['top', 'right']:
             ax.spines[sp].set_visible(False)
         fig.tight_layout()

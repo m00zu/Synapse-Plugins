@@ -3070,6 +3070,11 @@ def _draw_stat_brackets(ax, stat_df, group_to_x_idx: dict, y_max_per_group: dict
     if not pairs:
         return
 
+    # Sort: left group position (left to right), then by span (nearest first)
+    pairs.sort(key=lambda t: (
+        min(group_to_x_idx.get(t[0], 0), group_to_x_idx.get(t[1], 0)),
+        abs(group_to_x_idx.get(t[0], 0) - group_to_x_idx.get(t[1], 0))))
+
     heights    = dict(y_max_per_group)
     raw_vals   = [v for v in heights.values() if pd.notna(v)]
     if raw_vals:
@@ -3246,6 +3251,10 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('y_label',     '',      widget_type=H)
         self.create_property('plot_title',  '',      widget_type=H)
         self.create_property('inner_box',   True,    widget_type=H)
+        self.create_property('show_points', False,   widget_type=H)
+        self.create_property('point_style', 'Strip', widget_type=H)
+        self.create_property('point_size',  3,       widget_type=H)
+        self.create_property('point_color', 'match', widget_type=H)
         self.create_property('fig_width',   8.0,     widget_type=H)
         self.create_property('fig_height',  6.0,     widget_type=H)
         self.create_property('tick_rotation', 0.0,   widget_type=H)
@@ -3261,6 +3270,10 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_text('y_label',    'Y Label',        'Data', '')
         self._tb_text('plot_title', 'Title',           'Data', '')
         self._tb_checkbox('inner_box', 'Inner Box',   'Data', True)
+        self._tb_checkbox('show_points', 'Show Data Points', 'Data', False)
+        self._tb_combo('point_style', 'Point Style',   'Data', ['Strip', 'Swarm'])
+        self._tb_spinbox('point_size', 'Point Size',    'Data', 3, 1, 20)
+        self._tb_combo('point_color', 'Point Color',   'Data', ['match', 'black', 'gray', 'white'])
         self._tb_add_figure_page()
         self._tb_add_stats_page()
 
@@ -3292,6 +3305,25 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         fig, ax = _make_fig(self)
         sns.violinplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
                        palette=palette, inner=inner, legend=False, ax=ax)
+        if bool(self.get_property('show_points')):
+            pt_style = str(self.get_property('point_style') or 'Strip')
+            pt_size = int(self.get_property('point_size') or 3)
+            pt_color = str(self.get_property('point_color') or 'match')
+            pt_kw = dict(data=df, x=x_col, y=y_col, order=groups,
+                         alpha=0.6, size=pt_size, ax=ax)
+            if pt_color == 'match':
+                pt_kw['hue'] = x_col
+                pt_kw['palette'] = palette
+                pt_kw['legend'] = False
+                pt_kw['edgecolor'] = 'gray'
+                pt_kw['linewidth'] = 0.5
+            else:
+                pt_kw['color'] = pt_color
+            if pt_style == 'Swarm':
+                sns.swarmplot(**pt_kw)
+            else:
+                pt_kw['jitter'] = True
+                sns.stripplot(**pt_kw)
         self.set_progress(60)
 
         if stat_df is not None:
@@ -3354,6 +3386,9 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('y_label',      '',      widget_type=H)
         self.create_property('plot_title',   '',      widget_type=H)
         self.create_property('show_points',  False,   widget_type=H)
+        self.create_property('point_style', 'Strip', widget_type=H)
+        self.create_property('point_size',  3,       widget_type=H)
+        self.create_property('point_color', 'match', widget_type=H)
         self.create_property('fig_width',    8.0,     widget_type=H)
         self.create_property('fig_height',   6.0,     widget_type=H)
         self.create_property('tick_rotation', 0.0,    widget_type=H)
@@ -3368,7 +3403,10 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_text('x_label',     'X Label',         'Data', '')
         self._tb_text('y_label',     'Y Label',         'Data', '')
         self._tb_text('plot_title',  'Title',            'Data', '')
-        self._tb_checkbox('show_points', 'Overlay Points', 'Data', False)
+        self._tb_checkbox('show_points', 'Show Data Points', 'Data', False)
+        self._tb_combo('point_style', 'Point Style',     'Data', ['Strip', 'Swarm'])
+        self._tb_spinbox('point_size', 'Point Size',      'Data', 3, 1, 20)
+        self._tb_combo('point_color', 'Point Color',     'Data', ['match', 'black', 'gray', 'white'])
         self._tb_add_figure_page()
         self._tb_add_stats_page()
 
@@ -3400,8 +3438,24 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         sns.boxplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
                     palette=palette, legend=False, ax=ax)
         if bool(self.get_property('show_points')):
-            sns.stripplot(data=df, x=x_col, y=y_col, order=groups,
-                          color='black', alpha=0.5, size=3, jitter=True, ax=ax)
+            pt_style = str(self.get_property('point_style') or 'Strip')
+            pt_size = int(self.get_property('point_size') or 3)
+            pt_color = str(self.get_property('point_color') or 'match')
+            pt_kw = dict(data=df, x=x_col, y=y_col, order=groups,
+                         alpha=0.6, size=pt_size, ax=ax)
+            if pt_color == 'match':
+                pt_kw['hue'] = x_col
+                pt_kw['palette'] = palette
+                pt_kw['legend'] = False
+                pt_kw['edgecolor'] = 'gray'
+                pt_kw['linewidth'] = 0.5
+            else:
+                pt_kw['color'] = pt_color
+            if pt_style == 'Swarm':
+                sns.swarmplot(**pt_kw)
+            else:
+                pt_kw['jitter'] = True
+                sns.stripplot(**pt_kw)
         self.set_progress(60)
 
         if stat_df is not None:
@@ -3473,6 +3527,11 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('bar_value_fontsize',   9,       widget_type=H)
         self.create_property('bar_value_color',      [0, 0, 0, 255], widget_type=H)
         self.create_property('bar_value_fontweight', 'normal',widget_type=H)
+        self.create_property('capsize',     0.1,     widget_type=H)
+        self.create_property('show_points', False,   widget_type=H)
+        self.create_property('point_style', 'Strip', widget_type=H)
+        self.create_property('point_size',  3,       widget_type=H)
+        self.create_property('point_color', 'match', widget_type=H)
         _add_stat_hidden_props(self)
 
         self._build_toolbox(500)
@@ -3482,6 +3541,11 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_combo('palette',    'Palette',          'Data',
                        ['Set2', 'husl', 'colorblind', 'pastel', 'muted', 'None'])
         self._tb_combo('error_type', 'Error Bars',       'Data', ['se', 'sd', 'ci', 'pi'])
+        self._tb_spinbox('capsize', 'Error Bar Cap', 'Data', 0.1, 0.0, 0.5, 0.02, 2)
+        self._tb_checkbox('show_points', 'Show Data Points', 'Data', False)
+        self._tb_combo('point_style', 'Point Style',     'Data', ['Strip', 'Swarm'])
+        self._tb_spinbox('point_size', 'Point Size',      'Data', 3, 1, 20)
+        self._tb_combo('point_color', 'Point Color',     'Data', ['match', 'black', 'gray', 'white'])
         self._tb_checkbox('show_bar_values', 'Show Bar Values', 'Data', False)
         self._tb_text('bar_value_fmt', 'Value Format (e.g. .2f, .0f, .1%)', 'Data', '.2f')
         self._tb_spinbox('bar_value_fontsize', 'Label Font Size', 'Data', 9, 1, 48)
@@ -3520,15 +3584,17 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         g2idx   = {g: i for i, g in enumerate(groups)}
         fig, ax = _make_fig(self)
 
+        capsize = float(self.get_property('capsize') or 0.1)
         try:
             # seaborn ≥ 0.12: errorbar kwarg
             sns.barplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
-                        palette=palette, errorbar=error_type, legend=False, ax=ax)
+                        palette=palette, errorbar=error_type, capsize=capsize,
+                        legend=False, ax=ax)
         except TypeError:
             # older seaborn: ci kwarg
             ci = 68 if error_type == 'se' else 95
             sns.barplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
-                        palette=palette, legend=False, ci=ci, ax=ax)
+                        palette=palette, legend=False, ci=ci, capsize=capsize, ax=ax)
 
         # legend=False skips patch labelling; assign group names explicitly so
         # _extract_params can expose per-bar coloring in the figure editor.
@@ -3536,8 +3602,26 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         for i, g in enumerate(groups):
             if i < len(bar_patches):
                 bar_patches[i].set_label(str(g))
-        
 
+        if bool(self.get_property('show_points')):
+            pt_style = str(self.get_property('point_style') or 'Strip')
+            pt_size = int(self.get_property('point_size') or 3)
+            pt_color = str(self.get_property('point_color') or 'match')
+            pt_kw = dict(data=df, x=x_col, y=y_col, order=groups,
+                         alpha=0.6, size=pt_size, ax=ax)
+            if pt_color == 'match':
+                pt_kw['hue'] = x_col
+                pt_kw['palette'] = palette
+                pt_kw['legend'] = False
+                pt_kw['edgecolor'] = 'gray'
+                pt_kw['linewidth'] = 0.5
+            else:
+                pt_kw['color'] = pt_color
+            if pt_style == 'Swarm':
+                sns.swarmplot(**pt_kw)
+            else:
+                pt_kw['jitter'] = True
+                sns.stripplot(**pt_kw)
 
         self.set_progress(60)
 
@@ -3573,11 +3657,16 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
             err = _check_group_stat_df(stat_df)
             if err:
                 self.mark_error(); return False, err
-            # For bars, max = mean + se (approximate)
+            # When data points are overlaid, use actual max (dots extend above bar)
+            # Otherwise use mean + se (top of error bar)
             y_max = {}
+            show_pts = bool(self.get_property('show_points'))
             for g in groups:
-                sub  = df[df[x_col] == g][y_col].dropna()
-                y_max[g] = float(sub.mean() + sub.sem()) if len(sub) > 1 else float(sub.mean())
+                sub = df[df[x_col] == g][y_col].dropna()
+                if show_pts:
+                    y_max[g] = float(sub.max())
+                else:
+                    y_max[g] = float(sub.mean() + sub.sem()) if len(sub) > 1 else float(sub.mean())
             sp = _stat_props(self)
             _draw_stat_brackets(ax, stat_df, g2idx, y_max,
                                  sp['y_offset'], sp['show_ns'],
