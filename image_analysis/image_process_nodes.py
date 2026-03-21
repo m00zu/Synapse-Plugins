@@ -174,12 +174,23 @@ class SplitRGBNode(BaseImageProcessNode):
         green = arr[:, :, 1]
         blue  = arr[:, :, 2]
 
-        self.set_progress(90)
+        self.set_progress(70)
         self._make_image_output(red, 'red')
         self._make_image_output(green, 'green')
         self._make_image_output(blue, 'blue')
 
-        self.set_display(arr)
+        # Build 2x2 preview: original + R/G/B colorized
+        h, w = red.shape
+        z = np.zeros_like(red)
+        red_rgb   = np.stack([red,   z, z], axis=-1)
+        green_rgb = np.stack([z, green, z], axis=-1)
+        blue_rgb  = np.stack([z, z, blue], axis=-1)
+
+        top = np.concatenate([arr, red_rgb], axis=1)
+        bot = np.concatenate([green_rgb, blue_rgb], axis=1)
+        grid = np.concatenate([top, bot], axis=0)
+
+        self.set_display(grid)
         self.set_progress(100)
         return True, None
 

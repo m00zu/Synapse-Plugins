@@ -4886,10 +4886,11 @@ class MaskOverlayNode(BaseImageProcessNode):
         lbl_a = QtWidgets.QLabel('Opacity:')
         lbl_a.setStyleSheet(_LS)
         self._opacity_spin = QtWidgets.QSpinBox()
-        self._opacity_spin.setRange(0, 255)
-        self._opacity_spin.setValue(80)
-        self._opacity_spin.setFixedWidth(50)
-        self.create_property('fill_opacity', 80)
+        self._opacity_spin.setRange(0, 100)
+        self._opacity_spin.setValue(30)
+        self._opacity_spin.setSuffix('%')
+        self._opacity_spin.setFixedWidth(58)
+        self.create_property('fill_opacity', 30)
         self._opacity_spin.valueChanged.connect(
             lambda v: self.set_property('fill_opacity', v))
 
@@ -4957,13 +4958,13 @@ class MaskOverlayNode(BaseImageProcessNode):
         color = (int(color_raw[0]), int(color_raw[1]), int(color_raw[2]))
         color_f = tuple(c / 255.0 for c in color)
         fill_on = str(self.get_property('fill_mode')) == 'On'
-        fill_alpha = int(self.get_property('fill_opacity') or 80)
+        fill_pct = int(self.get_property('fill_opacity') or 30)
 
         self.set_progress(50)
 
         # Fill: blend directly on float array
         if fill_on and mask_bool.any():
-            alpha_f = fill_alpha / 255.0
+            alpha_f = fill_pct / 100.0
             for c in range(3):
                 arr[:, :, c] = np.where(mask_bool,
                     (1 - alpha_f) * arr[:, :, c] + alpha_f * color_f[c],
@@ -4980,6 +4981,260 @@ class MaskOverlayNode(BaseImageProcessNode):
                 _draw_styled_polyline(ov_draw, pts,
                                       color=color, width=lw,
                                       style=ls, closed=False)
+            ov_arr = np.array(ov)
+            ov_alpha = ov_arr[:, :, 3:4].astype(np.float32) / 255.0
+            ov_rgb = ov_arr[:, :, :3].astype(np.float32) / 255.0
+            mask_drawn = ov_alpha > 0
+            if mask_drawn.any():
+                alpha3 = np.broadcast_to(ov_alpha, arr.shape)
+                mask3 = np.broadcast_to(mask_drawn, arr.shape)
+                arr = np.where(mask3,
+                    (1 - alpha3) * arr + alpha3 * ov_rgb, arr)
+
+        self.set_progress(90)
+        self._make_image_output(arr)
+        self.set_display(arr)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+
+class LabelOverlayNode(BaseImageProcessNode):
+    """
+    Overlay a label image on top of a base image with automatic coloring.
+
+    Each unique label gets a distinct color from the selected colormap.
+    Background (label 0) is always transparent.
+
+    Controls:
+    - Opacity of the label overlay
+    - Colormap (tab10, tab20, Set1, Set3, etc.)
+    - Line width and style for contour-only mode
+    - Fill toggle: filled regions or contour outlines only
+
+    Keywords: label, overlay, segmentation, colormap, contour, fill, 標籤, 疊加, 分割
+    """
+    __identifier__ = 'nodes.image_process.Visualize'
+    NODE_NAME      = 'Label Overlay'
+    PORT_SPEC      = {'inputs': ['image', 'label'], 'outputs': ['image']}
+    _collection_aware = True
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_input('label_image', color=PORT_COLORS.get('label', (160, 220, 40)))
+        self.add_output('image', color=PORT_COLORS['image'], multi_output=True)
+
+        import NodeGraphQt
+        H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
+
+        _LS = 'color:#ccc; font-size:9px;'
+
+        # Row 1: Colormap + Opacity
+        row1 = QtWidgets.QWidget()
+        lay1 = QtWidgets.QHBoxLayout(row1)
+        lay1.setContentsMargins(0, 0, 0, 0)
+        lay1.setSpacing(4)
+
+        lbl_cm = QtWidgets.QLabel('Cmap:')
+        lbl_cm.setStyleSheet(_LS)
+        self._cmap_combo = QtWidgets.QComboBox()
+        self._cmap_combo.addItems(['default', 'tab10', 'tab20', 'Set1', 'Set2', 'Set3',
+                                    'Paired', 'Accent', 'Pastel1', 'Dark2'])
+        self._cmap_combo.setMinimumWidth(72)
+        self._cmap_combo.setMaxVisibleItems(6)
+        self._cmap_combo.view().setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.create_property('colormap', 'default')
+        self._cmap_combo.currentTextChanged.connect(
+            lambda v: self.set_property('colormap', v))
+
+        lbl_a = QtWidgets.QLabel('Opacity:')
+        lbl_a.setStyleSheet(_LS)
+        self._opacity_spin = QtWidgets.QSpinBox()
+        self._opacity_spin.setRange(0, 100)
+        self._opacity_spin.setValue(50)
+        self._opacity_spin.setSuffix('%')
+        self._opacity_spin.setFixedWidth(58)
+        self.create_property('opacity', 50)
+        self._opacity_spin.valueChanged.connect(
+            lambda v: self.set_property('opacity', v))
+
+        lay1.addWidget(lbl_cm)
+        lay1.addWidget(self._cmap_combo)
+        lay1.addSpacing(6)
+        lay1.addWidget(lbl_a)
+        lay1.addWidget(self._opacity_spin)
+        lay1.addStretch()
+
+        class _RowWidget(NodeBaseWidget):
+            def __init__(self, parent, name, widget):
+                super().__init__(parent, name, '')
+                self.set_custom_widget(widget)
+            def get_value(self): return None
+            def set_value(self, v): pass
+
+        self.add_custom_widget(_RowWidget(self.view, '_lbl_ov_row1', row1),
+                               widget_type=H, tab='Properties')
+
+        # Row 2: Fill + Line Width + Style
+        row2 = QtWidgets.QWidget()
+        lay2 = QtWidgets.QHBoxLayout(row2)
+        lay2.setContentsMargins(0, 0, 0, 0)
+        lay2.setSpacing(4)
+
+        lbl_f = QtWidgets.QLabel('Fill:')
+        lbl_f.setStyleSheet(_LS)
+        self._fill_cb = QtWidgets.QCheckBox()
+        self._fill_cb.setChecked(True)
+        self.create_property('fill_mode', 'On')
+        self._fill_cb.toggled.connect(
+            lambda v: self.set_property('fill_mode', 'On' if v else 'Off'))
+
+        lbl_w = QtWidgets.QLabel('Width:')
+        lbl_w.setStyleSheet(_LS)
+        self._width_spin = QtWidgets.QDoubleSpinBox()
+        self._width_spin.setRange(0.5, 20.0)
+        self._width_spin.setValue(2.0)
+        self._width_spin.setSingleStep(0.5)
+        self._width_spin.setDecimals(1)
+        self._width_spin.setMinimumWidth(48)
+        self.create_property('line_width', 2.0)
+        self._width_spin.valueChanged.connect(
+            lambda v: self.set_property('line_width', v))
+
+        lbl_s = QtWidgets.QLabel('Style:')
+        lbl_s.setStyleSheet(_LS)
+        self._style_combo = QtWidgets.QComboBox()
+        self._style_combo.addItems(['solid', 'dashed', 'dotted', 'dashdot'])
+        self._style_combo.setMinimumWidth(72)
+        self.create_property('line_style', 'solid')
+        self._style_combo.currentTextChanged.connect(
+            lambda v: self.set_property('line_style', v))
+
+        lay2.addWidget(lbl_f)
+        lay2.addWidget(self._fill_cb)
+        lay2.addSpacing(6)
+        lay2.addWidget(lbl_w)
+        lay2.addWidget(self._width_spin)
+        lay2.addSpacing(6)
+        lay2.addWidget(lbl_s)
+        lay2.addWidget(self._style_combo)
+        lay2.addStretch()
+
+        self.add_custom_widget(_RowWidget(self.view, '_lbl_ov_row2', row2),
+                               widget_type=H, tab='Properties')
+
+        self.create_preview_widgets()
+        self._fix_widget_z_order()
+
+    def evaluate(self):
+        self.reset_progress()
+        from PIL import Image as _PIL, ImageDraw
+        from skimage.segmentation import find_boundaries
+        import matplotlib.cm as cm
+
+        # Read image
+        data = self._get_input_image_data()
+        if data is None:
+            return False, "No image connected"
+        arr = data.payload.copy()
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        h, w = arr.shape[:2]
+
+        # Read label image
+        label_port = self.inputs().get('label_image')
+        if not label_port or not label_port.connected_ports():
+            self._make_image_output(arr)
+            self.set_display(arr)
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+
+        cp = label_port.connected_ports()[0]
+        ldata = cp.node().output_values.get(cp.name())
+        if ldata is None:
+            self._make_image_output(arr)
+            self.set_display(arr)
+            self.mark_clean()
+            return True, None
+
+        labels = ldata.payload if hasattr(ldata, 'payload') else ldata
+        if hasattr(labels, 'numpy'):
+            labels = labels.numpy()
+        labels = np.asarray(labels)
+        if labels.ndim == 3:
+            labels = labels[:, :, 0]
+        labels = labels.astype(np.int32)
+
+        self.set_progress(30)
+
+        # Get parameters
+        cmap_name = str(self.get_property('colormap') or 'default')
+        alpha_pct = int(self.get_property('opacity') or 50)
+        alpha_f = alpha_pct / 100.0
+        fill_on = str(self.get_property('fill_mode')) == 'On'
+        lw = max(1, int(self.get_property('line_width')))
+        ls = str(self.get_property('line_style') or 'solid')
+
+        unique_labels = np.unique(labels)
+        unique_labels = unique_labels[unique_labels > 0]  # skip background
+        n_labels = int(labels.max()) if labels.max() > 0 else 1
+
+        # Build color lookup: label → (r, g, b) in 0-255
+        if cmap_name == 'default':
+            try:
+                from .vision_nodes import _label_palette
+            except ImportError:
+                from vision_nodes import _label_palette
+            palette = _label_palette(n_labels)
+            def _get_color(lbl):
+                c = palette[(int(lbl) - 1) % len(palette)]
+                return c  # (r, g, b) uint8
+        else:
+            try:
+                cmap = cm.get_cmap(cmap_name)
+            except ValueError:
+                cmap = cm.get_cmap('tab20')
+            n_colors = cmap.N if hasattr(cmap, 'N') else 20
+            def _get_color(lbl):
+                rgba = cmap((int(lbl) - 1) % n_colors / max(n_colors - 1, 1))
+                return (int(rgba[0] * 255), int(rgba[1] * 255), int(rgba[2] * 255))
+
+        self.set_progress(50)
+
+        # Fill: blend each label's color onto the base image
+        if fill_on:
+            for lbl in unique_labels:
+                color = _get_color(lbl)
+                color_f = (color[0] / 255.0, color[1] / 255.0, color[2] / 255.0)
+                mask = labels == lbl
+                for c in range(3):
+                    arr[:, :, c] = np.where(mask,
+                        (1 - alpha_f) * arr[:, :, c] + alpha_f * color_f[c],
+                        arr[:, :, c])
+
+        self.set_progress(70)
+
+        # Contours: draw boundaries for each label
+        boundaries = find_boundaries(labels, mode='thick')
+        if boundaries.any():
+            # Draw colored contours per label
+            ov = _PIL.new('RGBA', (w, h), (0, 0, 0, 0))
+            ov_draw = ImageDraw.Draw(ov)
+
+            for lbl in unique_labels:
+                color = _get_color(lbl)
+                lbl_boundary = boundaries & (labels == lbl)
+                if not lbl_boundary.any():
+                    continue
+                # Convert boundary mask to contour paths
+                paths = _mask_to_outline_paths(lbl_boundary)
+                for pts in paths:
+                    _draw_styled_polyline(ov_draw, pts,
+                                          color=color, width=lw,
+                                          style=ls, closed=False)
+
             ov_arr = np.array(ov)
             ov_alpha = ov_arr[:, :, 3:4].astype(np.float32) / 255.0
             ov_rgb = ov_arr[:, :, :3].astype(np.float32) / 255.0
