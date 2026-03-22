@@ -527,20 +527,20 @@ class GroupedComparisonNode(BaseExecutionNode):
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Grouped Comparison'
-    PORT_SPEC = {'inputs': ['in'], 'outputs': ['stats_table']}
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['stat']}
     
     def __init__(self):
         super(GroupedComparisonNode, self).__init__()
         self.add_input('in', color=PORT_COLORS['table'])
-        self.add_output('stats_table', color=PORT_COLORS['table'])
+        self.add_output('stats_table', color=PORT_COLORS['stat'])
         
         methods = ['One-Way ANOVA', 'Kruskal-Wallis']
         self.add_combo_menu('method', 'Statistical Method', items=methods)
-        self.add_text_input('target_column', 'Target Column', text='')
-        self.add_text_input('group_column', 'Group Column', text='Group')
+        self._add_column_selector('target_column', 'Target Column', text='')
+        self._add_column_selector('group_column', 'Group Column', text='Group')
         self.add_text_input('reference_group', 'Reference Group (for detection)', text='DMSO')
         self._fix_widget_z_order()
-        
+
     def evaluate(self):
         self.reset_progress()
         from scipy.stats import f_oneway, kruskal
@@ -563,10 +563,12 @@ class GroupedComparisonNode(BaseExecutionNode):
             self.mark_error()
             return False, "Expected TableData or DataFrame input"
             
+        self._refresh_column_selectors(df, 'target_column', 'group_column')
+
         method = self.get_property('method')
         target_col = str(self.get_property('target_column')).strip()
         group_col = str(self.get_property('group_column')).strip()
-        
+
         if not group_col:
             for col in df.columns:
                 if str(col).lower() in ['group', 'class', 'treatment']:
@@ -922,6 +924,8 @@ class PairwiseComparisonNode(BaseExecutionNode):
     - *Welch's T-test* — parametric, does not assume equal variance
     - *Mann-Whitney U* — non-parametric rank-based test
     - *Kolmogorov-Smirnov* — tests whether two groups come from the same distribution
+    - *Two-sample Z-test* — compares means when variance is known or n is large
+    - *Permutation test* — non-parametric, no distributional assumptions, resampling-based
     - *Tukey HSD* — post-hoc test after ANOVA
     - *Dunn* — non-parametric post-hoc test (requires scikit-posthocs)
     - *Fisher's Z* — compare correlation coefficients between groups (target column = r values)
@@ -930,7 +934,9 @@ class PairwiseComparisonNode(BaseExecutionNode):
 
     **P-Adj Method** — multiple comparison correction (Bonferroni, Holm, BH).
 
-    Keywords: pairwise, t-test, welch, mann-whitney, tukey, fisher, kolmogorov, ks, correlation, one-sided, 兩兩比較, 統計檢定, 分析, 顯著性, 比較
+    **N Permutations** — number of resampling iterations for the permutation test (default 10,000).
+
+    Keywords: pairwise, t-test, welch, mann-whitney, tukey, fisher, kolmogorov, ks, z-test, permutation, correlation, one-sided, 兩兩比較, 統計檢定, 分析, 顯著性, 比較, 排列檢定
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Pairwise Comparison'
@@ -941,17 +947,22 @@ class PairwiseComparisonNode(BaseExecutionNode):
         self.add_input('in', color=PORT_COLORS['table'])
         self.add_output('stats_table', color=PORT_COLORS['stat'])
 
-        methods = ["Student's T-test", "Welch's T-test", 'Mann-Whitney U', 'Kolmogorov-Smirnov', 'Tukey HSD', 'Dunn', "Fisher's Z (corr.)"]
+        methods = ["Student's T-test", "Welch's T-test", 'Mann-Whitney U', 'Kolmogorov-Smirnov',
+                   'Two-sample Z-test', 'Permutation test',
+                   'Tukey HSD', 'Dunn', "Fisher's Z (corr.)"]
         self.add_combo_menu('method', 'Statistical Method', items=methods)
 
         self.add_combo_menu('alternative', 'Alternative',
                             items=['two-sided', 'greater', 'less'])
 
+        self._add_int_spinbox('n_permutations', 'N Permutations', value=10000,
+                              min_val=1000, max_val=1000000)
+
         p_adj_methods = ['none', 'bonferroni', 'sidak', 'holm-sidak', 'holm', 'simes-hochberg', 'hommel', 'fdr_bh', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky']
         self.add_combo_menu('p_adj_method', 'P-Adj Method', items=p_adj_methods)
 
-        self.add_text_input('target_column', 'Target Column', text='')
-        self.add_text_input('group_column', 'Group Column', text='')
+        self._add_column_selector('target_column', 'Target Column', text='')
+        self._add_column_selector('group_column', 'Group Column', text='')
 
         # Hidden property to persist selected pairs across save/load
         self.create_property('selected_pairs', '',
@@ -1005,6 +1016,8 @@ class PairwiseComparisonNode(BaseExecutionNode):
         else:
             self.mark_error()
             return False, "Expected TableData or DataFrame input"
+
+        self._refresh_column_selectors(df, 'target_column', 'group_column')
 
         method = self.get_property('method')
         alternative = self.get_property('alternative') or 'two-sided'
@@ -1094,8 +1107,8 @@ class PairwiseComparisonNode(BaseExecutionNode):
                             'Significant': res.pvalue[i, j] < 0.05
                         })
 
-            elif 'T-test' in method or 'Mann-Whitney' in method or 'Kolmogorov' in method:
-                from scipy.stats import ks_2samp
+            elif 'T-test' in method or 'Mann-Whitney' in method or 'Kolmogorov' in method or 'Z-test' in method:
+                from scipy.stats import ks_2samp, norm as _norm
                 raw_pvals = []
                 for g1, g2 in pairs:
                     d1 = df_clean[df_clean[group_col] == g1][target_col].values
@@ -1107,10 +1120,69 @@ class PairwiseComparisonNode(BaseExecutionNode):
                                             alternative=alternative)
                     elif 'Kolmogorov' in method:
                         stat, p = ks_2samp(d1, d2, alternative=alternative)
+                    elif 'Z-test' in method:
+                        # Two-sample Z-test using pooled variance
+                        n1, n2 = len(d1), len(d2)
+                        m1, m2 = np.mean(d1), np.mean(d2)
+                        s1, s2 = np.var(d1, ddof=1), np.var(d2, ddof=1)
+                        se = np.sqrt(s1 / n1 + s2 / n2)
+                        if se == 0:
+                            stat, p = 0.0, 1.0
+                        else:
+                            stat = (m1 - m2) / se
+                            if alternative == 'greater':
+                                p = _norm.sf(stat)
+                            elif alternative == 'less':
+                                p = _norm.cdf(stat)
+                            else:
+                                p = 2.0 * _norm.sf(abs(stat))
                     else:
                         stat, p = mannwhitneyu(d1, d2, alternative=alternative)
                     raw_pvals.append(p)
                     results.append({'group1': g1, 'group2': g2, 'statistic': round(stat, 4), 'p-value': p})
+
+                if p_adj_method != 'none' and results:
+                    reject, pvals_corrected, _, _ = multipletests(raw_pvals, method=p_adj_method)
+                    for i, r in enumerate(results):
+                        r['p-adj'] = pvals_corrected[i]
+                        r['Significant'] = reject[i]
+                else:
+                    for r in results:
+                        r['p-adj'] = r['p-value']
+                        r['Significant'] = r['p-value'] < 0.05
+
+            elif 'Permutation' in method:
+                n_perms = int(self.get_property('n_permutations') or 10000)
+                raw_pvals = []
+                for g1, g2 in pairs:
+                    d1 = df_clean[df_clean[group_col] == g1][target_col].values
+                    d2 = df_clean[df_clean[group_col] == g2][target_col].values
+                    all_vals = np.concatenate([d1, d2])
+                    n1 = len(d1)
+                    obs_diff = np.mean(d1) - np.mean(d2)
+
+                    count = 0
+                    rng = np.random.default_rng(seed=42)
+                    for _ in range(n_perms):
+                        perm = rng.permutation(all_vals)
+                        perm_diff = np.mean(perm[:n1]) - np.mean(perm[n1:])
+                        if alternative == 'greater':
+                            if perm_diff >= obs_diff:
+                                count += 1
+                        elif alternative == 'less':
+                            if perm_diff <= obs_diff:
+                                count += 1
+                        else:
+                            if abs(perm_diff) >= abs(obs_diff):
+                                count += 1
+                    p = count / n_perms
+                    raw_pvals.append(p)
+                    results.append({
+                        'group1': g1, 'group2': g2,
+                        'mean_diff': round(obs_diff, 4),
+                        'n_permutations': n_perms,
+                        'p-value': p
+                    })
 
                 if p_adj_method != 'none' and results:
                     reject, pvals_corrected, _, _ = multipletests(raw_pvals, method=p_adj_method)
@@ -1244,7 +1316,7 @@ class NormalityTestNode(BaseExecutionNode):
                  'Anderson-Darling']
         self.add_combo_menu('test', 'Test(s)', items=tests)
         self.add_text_input('alpha', 'Significance Level (α)', text='0.05')
-        self.add_text_input('group_column', 'Group Column (optional)', text='')
+        self._add_column_selector('group_column', 'Group Column (optional)', text='')
 
     def evaluate(self):
         self.reset_progress()
@@ -1265,6 +1337,8 @@ class NormalityTestNode(BaseExecutionNode):
         else:
             self.mark_error()
             return False, "Expected TableData or DataFrame input"
+
+        self._refresh_column_selectors(df, 'group_column')
 
         try:
             alpha = float(self.get_property('alpha') or 0.05)
@@ -1499,3 +1573,158 @@ class PairwiseMatrixNode(BaseExecutionNode):
         self.set_progress(100)
         self.mark_clean()
         return True, None
+
+
+class VarianceTestNode(BaseExecutionNode):
+    """
+    Tests whether two or more groups have equal variance (homoscedasticity).
+
+    Use this to decide between Student's t-test (equal variance) and Welch's t-test
+    (unequal variance), or to check ANOVA assumptions.
+
+    Tests:
+    - *Levene's test* — robust, works for non-normal data (recommended default)
+    - *Bartlett's test* — more powerful but assumes normality
+    - *F-test* — classical variance ratio test for exactly 2 groups (sensitive to non-normality)
+
+    Outputs a table with test statistic and p-value per group pair (F-test) or
+    for all groups at once (Levene, Bartlett).
+
+    A significant p-value (< 0.05) means variances are NOT equal — use Welch's t-test.
+
+    Keywords: variance, homoscedasticity, levene, bartlett, f-test, equal variance, homogeneity, 變異數, 等變異性, 檢定
+    """
+    __identifier__ = 'nodes.analysis'
+    NODE_NAME = 'Variance Test'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('in', color=PORT_COLORS['table'])
+        self.add_output('stats_table', color=PORT_COLORS['stat'])
+
+        methods = ["Levene's test", "Bartlett's test", 'F-test (2 groups)']
+        self.add_combo_menu('method', 'Test', items=methods)
+        self._add_column_selector('target_column', 'Target Column', text='')
+        self._add_column_selector('group_column', 'Group Column', text='')
+
+    def evaluate(self):
+        self.reset_progress()
+        from scipy.stats import levene, bartlett, f as f_dist
+
+        in_port = self.inputs().get('in')
+        if not in_port or not in_port.connected_ports():
+            self.mark_error()
+            return False, "No input data"
+        upstream = in_port.connected_ports()[0]
+        up_val = upstream.node().output_values.get(upstream.name())
+
+        if isinstance(up_val, TableData):
+            df = up_val.df.copy()
+        elif isinstance(up_val, pd.DataFrame):
+            df = up_val.copy()
+        else:
+            self.mark_error()
+            return False, "Expected TableData or DataFrame"
+
+        method = self.get_property('method')
+        target_col = str(self.get_property('target_column')).strip()
+        group_col = str(self.get_property('group_column')).strip()
+
+        # Auto-detect columns
+        if not group_col:
+            for col in df.columns:
+                if str(col).lower() in ['group', 'class', 'treatment']:
+                    group_col = col
+                    break
+        if not target_col:
+            num_cols = df.select_dtypes(include=[np.number]).columns
+            val_cols = [c for c in num_cols if c != group_col]
+            if val_cols:
+                target_col = val_cols[0]
+
+        if group_col not in df.columns or target_col not in df.columns:
+            self.mark_error()
+            return False, f"Columns '{group_col}' or '{target_col}' not found"
+
+        self._refresh_column_selectors(df, 'target_column', 'group_column')
+
+        df_clean = df.dropna(subset=[target_col, group_col])
+        df_clean[group_col] = df_clean[group_col].astype(str).str.strip()
+        groups = sorted(df_clean[group_col].unique())
+
+        if len(groups) < 2:
+            self.mark_error()
+            return False, "At least two groups required"
+
+        group_data = [df_clean[df_clean[group_col] == g][target_col].values for g in groups]
+
+        self.set_progress(50)
+
+        try:
+            results = []
+
+            if 'Levene' in method:
+                stat, p = levene(*group_data)
+                results.append({
+                    'test': "Levene's test",
+                    'statistic': round(stat, 4),
+                    'p-value': p,
+                    'groups': ' vs '.join(groups),
+                    'equal_variance': p >= 0.05,
+                    'recommendation': "Student's t-test" if p >= 0.05 else "Welch's t-test"
+                })
+                # Also report per-group variance
+                for g, d in zip(groups, group_data):
+                    results[0][f'var_{g}'] = round(float(np.var(d, ddof=1)), 4)
+                    results[0][f'n_{g}'] = len(d)
+
+            elif 'Bartlett' in method:
+                stat, p = bartlett(*group_data)
+                results.append({
+                    'test': "Bartlett's test",
+                    'statistic': round(stat, 4),
+                    'p-value': p,
+                    'groups': ' vs '.join(groups),
+                    'equal_variance': p >= 0.05,
+                    'recommendation': "Student's t-test" if p >= 0.05 else "Welch's t-test"
+                })
+                for g, d in zip(groups, group_data):
+                    results[0][f'var_{g}'] = round(float(np.var(d, ddof=1)), 4)
+                    results[0][f'n_{g}'] = len(d)
+
+            elif 'F-test' in method:
+                if len(groups) != 2:
+                    self.mark_error()
+                    return False, "F-test requires exactly 2 groups"
+                d1, d2 = group_data[0], group_data[1]
+                var1, var2 = np.var(d1, ddof=1), np.var(d2, ddof=1)
+                if var2 == 0:
+                    self.mark_error()
+                    return False, "Second group has zero variance"
+                f_stat = var1 / var2
+                df1, df2 = len(d1) - 1, len(d2) - 1
+                # Two-tailed F-test
+                p = 2 * min(f_dist.cdf(f_stat, df1, df2),
+                            f_dist.sf(f_stat, df1, df2))
+                results.append({
+                    'test': 'F-test',
+                    'F-statistic': round(f_stat, 4),
+                    'df1': df1, 'df2': df2,
+                    'p-value': p,
+                    f'var_{groups[0]}': round(float(var1), 4),
+                    f'var_{groups[1]}': round(float(var2), 4),
+                    f'n_{groups[0]}': len(d1),
+                    f'n_{groups[1]}': len(d2),
+                    'equal_variance': p >= 0.05,
+                    'recommendation': "Student's t-test" if p >= 0.05 else "Welch's t-test"
+                })
+
+            res_df = pd.DataFrame(results)
+            self.output_values['stats_table'] = StatData(payload=res_df)
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+        except Exception as e:
+            self.mark_error()
+            return False, str(e)

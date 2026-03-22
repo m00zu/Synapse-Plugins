@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QLineF
 from NodeGraphQt.widgets.node_widgets import NodeBaseWidget
 from nodes.base import BaseExecutionNode, BaseImageProcessNode, PORT_COLORS
-from data_models import ImageData, MaskData, LabelData
+from data_models import ImageData, MaskData, LabelData, TableData
 
 
 def _image_hw(image) -> tuple[int, int]:
@@ -5250,4 +5250,918 @@ class LabelOverlayNode(BaseImageProcessNode):
         self.set_display(arr)
         self.set_progress(100)
         self.mark_clean()
+        return True, None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LabelEditorNode
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _LabelEditorView(QGraphicsView):
+    """QGraphicsView canvas for multi-label editing with shape, brush, and fill tools."""
+    shape_committed = Signal(str, list)   # (tool, data)  — data depends on tool
+
+    _TOOLS = ('rect', 'ellipse', 'polygon', 'lasso', 'brush', 'flood_fill')
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        scene = QGraphicsScene(self)
+        self.setScene(scene)
+        scene.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        self._tool = 'rect'
+        self._drawing = False
+        self._start = QPointF()
+        self._preview = None
+        self._poly_item = None
+        self._poly_pts: list[QPointF] = []
+        self._bg_item: QGraphicsPixmapItem | None = None
+        self._img_w = 1
+        self._img_h = 1
+
+        # brush tool state
+        self._brush_size = 5
+        self._brush_pts: list[tuple[int, int]] = []
+        self._brush_preview_items: list = []
+
+    # ── public ───────────────────────────────────────────────────────────────
+
+    def set_pixmap(self, qpixmap: QPixmap):
+        scene = self.scene()
+        if self._bg_item:
+            scene.removeItem(self._bg_item)
+        self._bg_item = scene.addPixmap(qpixmap)
+        self._bg_item.setZValue(-1)
+        self._img_w = qpixmap.width()
+        self._img_h = qpixmap.height()
+        scene.setSceneRect(0, 0, self._img_w, self._img_h)
+        self._fit()
+
+    def set_tool(self, tool: str):
+        self._tool = tool
+        self._cancel()
+
+    def set_brush_size(self, size: int):
+        self._brush_size = max(1, min(size, 50))
+
+    def brush_size(self) -> int:
+        return self._brush_size
+
+    # ── layout ───────────────────────────────────────────────────────────────
+
+    def _fit(self):
+        if self._img_w > 0 and self._img_h > 0:
+            self.fitInView(QRectF(0, 0, self._img_w, self._img_h),
+                           Qt.AspectRatioMode.KeepAspectRatio)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _scene_pt(self, event) -> QPointF:
+        return self.mapToScene(event.position().toPoint())
+
+    def _make_pen(self) -> QPen:
+        pen = QPen(QColor(255, 220, 0))
+        pen.setWidthF(1.0)
+        pen.setCosmetic(True)
+        return pen
+
+    def _cancel(self):
+        scene = self.scene()
+        for item in (self._preview, self._poly_item):
+            if item:
+                scene.removeItem(item)
+        self._preview = self._poly_item = None
+        self._poly_pts = []
+        self._drawing = False
+        self._clear_brush_preview()
+        self._brush_pts = []
+
+    def _clear_brush_preview(self):
+        scene = self.scene()
+        for item in self._brush_preview_items:
+            scene.removeItem(item)
+        self._brush_preview_items = []
+
+    # ── mouse events ─────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pt = self._scene_pt(event)
+        if self._tool == 'flood_fill':
+            ix = int(pt.x())
+            iy = int(pt.y())
+            if 0 <= ix < self._img_w and 0 <= iy < self._img_h:
+                self.shape_committed.emit('flood_fill', [(ix, iy)])
+            return
+        if self._tool == 'brush':
+            self._drawing = True
+            self._brush_pts = []
+            self._stamp_brush(pt)
+            return
+        if self._tool in ('polygon', 'lasso'):
+            if not self._drawing:
+                self._drawing = True
+                self._poly_pts = [pt]
+            else:
+                self._poly_pts.append(pt)
+            self._update_poly_preview()
+        else:
+            self._drawing = True
+            self._start = pt
+            self._update_box_preview(pt)
+
+    def mouseMoveEvent(self, event):
+        if not self._drawing:
+            return
+        pt = self._scene_pt(event)
+        if self._tool == 'brush':
+            self._stamp_brush(pt)
+            return
+        if self._tool == 'lasso':
+            self._poly_pts.append(pt)
+            self._update_poly_preview()
+        elif self._tool == 'polygon':
+            self._update_poly_preview(tentative=pt)
+        else:
+            self._update_box_preview(pt)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pt = self._scene_pt(event)
+        if self._tool == 'brush':
+            if self._brush_pts:
+                pts = list(self._brush_pts)
+                self._brush_pts = []
+                self._clear_brush_preview()
+                self._drawing = False
+                self.shape_committed.emit('brush', pts)
+            return
+        if self._tool == 'lasso':
+            if len(self._poly_pts) >= 3:
+                self._commit_polygon()
+        elif self._tool != 'polygon':
+            pts = [(self._start.x(), self._start.y()), (pt.x(), pt.y())]
+            self._cancel()
+            self.shape_committed.emit(self._tool, pts)
+
+    def mouseDoubleClickEvent(self, event):
+        if self._tool == 'polygon' and self._drawing:
+            if len(self._poly_pts) >= 3:
+                self._commit_polygon()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self._tool == 'polygon' and self._drawing and len(self._poly_pts) >= 3:
+                self._commit_polygon()
+        elif event.key() == Qt.Key.Key_Escape:
+            self._cancel()
+        else:
+            super().keyPressEvent(event)
+
+    def wheelEvent(self, event):
+        if self._tool == 'brush':
+            delta = event.angleDelta().y()
+            step = 1 if delta > 0 else -1
+            self._brush_size = max(1, min(50, self._brush_size + step))
+            # Notify widget to update spinbox
+            parent = self.parent()
+            while parent and not isinstance(parent, LabelEditorWidget):
+                parent = parent.parent()
+            if parent and hasattr(parent, '_brush_spin'):
+                parent._brush_spin.setValue(self._brush_size)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    # ── brush stamping ────────────────────────────────────────────────────────
+
+    def _stamp_brush(self, pt: QPointF):
+        ix = int(pt.x())
+        iy = int(pt.y())
+        r = self._brush_size
+        # Collect all pixels in the circle
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dy * dy <= r * r:
+                    px = ix + dx
+                    py = iy + dy
+                    if 0 <= px < self._img_w and 0 <= py < self._img_h:
+                        coord = (px, py)
+                        if coord not in self._brush_pts:
+                            self._brush_pts.append(coord)
+        # Draw preview circle
+        pen = self._make_pen()
+        scene = self.scene()
+        r_scene = float(r)
+        item = scene.addEllipse(
+            ix - r_scene, iy - r_scene, r_scene * 2, r_scene * 2, pen)
+        item.setZValue(10)
+        self._brush_preview_items.append(item)
+        # Limit preview items to avoid slowdown
+        if len(self._brush_preview_items) > 100:
+            old = self._brush_preview_items.pop(0)
+            scene.removeItem(old)
+
+    # ── preview drawing ───────────────────────────────────────────────────────
+
+    def _update_box_preview(self, cur: QPointF):
+        scene = self.scene()
+        if self._preview:
+            scene.removeItem(self._preview)
+        pen = self._make_pen()
+        x0 = min(self._start.x(), cur.x())
+        y0 = min(self._start.y(), cur.y())
+        x1 = max(self._start.x(), cur.x())
+        y1 = max(self._start.y(), cur.y())
+        r = QRectF(x0, y0, x1 - x0, y1 - y0)
+        if self._tool == 'ellipse':
+            self._preview = scene.addEllipse(r, pen)
+        else:
+            self._preview = scene.addRect(r, pen)
+        self._preview.setZValue(10)
+
+    def _update_poly_preview(self, tentative: QPointF | None = None):
+        scene = self.scene()
+        if self._poly_item:
+            scene.removeItem(self._poly_item)
+        pts = list(self._poly_pts)
+        if tentative:
+            pts.append(tentative)
+        if len(pts) < 2:
+            self._poly_item = None
+            return
+        path = QPainterPath(pts[0])
+        for p in pts[1:]:
+            path.lineTo(p)
+        pen = self._make_pen()
+        self._poly_item = scene.addPath(path, pen)
+        self._poly_item.setZValue(10)
+
+    def _commit_polygon(self):
+        pts = [(p.x(), p.y()) for p in self._poly_pts]
+        self._cancel()
+        self.shape_committed.emit('polygon', pts)
+
+
+class LabelEditorWidget(NodeBaseWidget):
+    """
+    Interactive multi-label editing widget with shape, brush, and flood-fill tools.
+
+    Maintains an int32 label array where 0=background and 1+ are distinct labels.
+    """
+
+    label_changed = Signal()
+
+    _OVERLAY_ALPHA = 0.50
+    _MAX_UNDO = 30
+
+    _set_input_signal = Signal(object, object)   # (label_arr, bg_pil) -> main thread
+
+    def __init__(self, parent=None):
+        super().__init__(parent, 'label_editor')
+
+        root = QtWidgets.QVBoxLayout()
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(3)
+        container = QtWidgets.QWidget()
+        container.setLayout(root)
+
+        # ── tool bar ─────────────────────────────────────────────────────────
+        tb = QtWidgets.QHBoxLayout()
+        tb.setSpacing(3)
+        self._tool_group = QtWidgets.QButtonGroup(container)
+        self._tool_names = ['rect', 'ellipse', 'polygon', 'lasso', 'brush', 'flood_fill']
+        tool_labels = ['Rect', 'Ellipse', 'Polygon', 'Lasso', 'Brush', 'Fill']
+        for i, label in enumerate(tool_labels):
+            btn = QtWidgets.QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(24)
+            btn.setMinimumWidth(45)
+            self._tool_group.addButton(btn, i)
+            tb.addWidget(btn)
+            if i == 0:
+                btn.setChecked(True)
+        tb.addSpacing(6)
+        tb.addWidget(QtWidgets.QLabel('Op:'))
+        self._op_combo = QtWidgets.QComboBox()
+        self._op_combo.addItems(['Union', 'Subtract', 'Replace'])
+        self._op_combo.setFixedHeight(24)
+        self._op_combo.setMinimumWidth(55)
+        tb.addWidget(self._op_combo)
+        tb.addStretch()
+        root.addLayout(tb)
+
+        # ── brush size row ───────────────────────────────────────────────────
+        br = QtWidgets.QHBoxLayout()
+        br.setSpacing(3)
+        _LS = 'color:#ccc; font-size:9px;'
+        lbl_bs = QtWidgets.QLabel('Brush:')
+        lbl_bs.setStyleSheet(_LS)
+        self._brush_spin = QtWidgets.QSpinBox()
+        self._brush_spin.setRange(1, 50)
+        self._brush_spin.setValue(5)
+        self._brush_spin.setFixedWidth(50)
+        self._brush_spin.valueChanged.connect(
+            lambda v: self._view.set_brush_size(v))
+        br.addWidget(lbl_bs)
+        br.addWidget(self._brush_spin)
+
+        br.addSpacing(8)
+        lbl_o = QtWidgets.QLabel('Opacity:')
+        lbl_o.setStyleSheet(_LS)
+        self._opacity_spin = QtWidgets.QSpinBox()
+        self._opacity_spin.setRange(10, 100)
+        self._opacity_spin.setValue(int(self._OVERLAY_ALPHA * 100))
+        self._opacity_spin.setSuffix('%')
+        self._opacity_spin.setFixedWidth(58)
+        self._opacity_spin.valueChanged.connect(lambda _: self._render())
+        br.addWidget(lbl_o)
+        br.addWidget(self._opacity_spin)
+        br.addStretch()
+        root.addLayout(br)
+
+        # ── canvas ───────────────────────────────────────────────────────────
+        self._view = _LabelEditorView()
+        self._view.setMinimumSize(400, 300)
+        root.addWidget(self._view)
+
+        # ── label list + controls ────────────────────────────────────────────
+        label_row = QtWidgets.QHBoxLayout()
+        label_row.setSpacing(3)
+
+        self._label_list = QtWidgets.QListWidget()
+        self._label_list.setFixedHeight(90)
+        self._label_list.setMinimumWidth(200)
+        self._label_list.setStyleSheet(
+            'QListWidget { font-size: 11px; }'
+            'QListWidget::item { padding: 3px 4px; }'
+            'QListWidget::item:selected { background-color: #555; border: 2px solid #fff; }')
+        self._label_list.currentRowChanged.connect(self._on_label_selected)
+        label_row.addWidget(self._label_list)
+
+        label_btn_col = QtWidgets.QVBoxLayout()
+        label_btn_col.setSpacing(3)
+        self._add_label_btn = QtWidgets.QPushButton('+ New Label')
+        self._add_label_btn.setFixedHeight(22)
+        self._add_label_btn.clicked.connect(self._add_label)
+        label_btn_col.addWidget(self._add_label_btn)
+
+        self._del_label_btn = QtWidgets.QPushButton('Delete')
+        self._del_label_btn.setFixedHeight(22)
+        self._del_label_btn.clicked.connect(self._delete_label)
+        label_btn_col.addWidget(self._del_label_btn)
+
+        self._cur_label_lbl = QtWidgets.QLabel('Label: 1')
+        self._cur_label_lbl.setStyleSheet('color:#fff; font-size:11px; font-weight:bold;')
+        label_btn_col.addWidget(self._cur_label_lbl)
+        label_btn_col.addStretch()
+        label_row.addLayout(label_btn_col)
+        root.addLayout(label_row)
+
+        # ── bottom bar ───────────────────────────────────────────────────────
+        bb = QtWidgets.QHBoxLayout()
+        bb.setSpacing(4)
+        for label, slot in [('Undo', '_undo'), ('Reset', '_reset'), ('Clear', '_clear')]:
+            btn = QtWidgets.QPushButton(label)
+            btn.setFixedHeight(22)
+            btn.setMinimumWidth(55)
+            btn.clicked.connect(getattr(self, slot))
+            bb.addWidget(btn)
+        bb.addStretch()
+        self._info_lbl = QtWidgets.QLabel('No labels')
+        self._info_lbl.setStyleSheet('color:#aaa; font-size:10px;')
+        bb.addWidget(self._info_lbl)
+        root.addLayout(bb)
+
+        self.set_custom_widget(container)
+
+        # ── state ────────────────────────────────────────────────────────────
+        self._label_arr: np.ndarray | None = None     # int32 H x W
+        self._input_label_arr: np.ndarray | None = None  # original (for Reset)
+        self._history: list[np.ndarray] = []
+        self._img_w = 1
+        self._img_h = 1
+        self._bg_pil = None
+        self._current_label = 1
+        self._palette: list[tuple[int, int, int]] = []
+        self._has_user_edits = False
+        self._refresh_palette(1)
+
+        # ── connections ──────────────────────────────────────────────────────
+        self._tool_group.idClicked.connect(
+            lambda i: self._view.set_tool(self._tool_names[i]))
+        self._view.shape_committed.connect(self._on_shape_committed)
+        self._set_input_signal.connect(
+            self._apply_set_input, Qt.ConnectionType.QueuedConnection)
+
+    def get_value(self):         return ''
+    def set_value(self, _value): pass
+
+    # ── palette ──────────────────────────────────────────────────────────────
+
+    def _refresh_palette(self, n_labels: int):
+        n = max(n_labels, 1)
+        try:
+            from .vision_nodes import _label_palette
+        except ImportError:
+            from vision_nodes import _label_palette
+        self._palette = _label_palette(n)
+
+    def _label_color(self, label: int) -> tuple[int, int, int]:
+        if not self._palette:
+            self._refresh_palette(label)
+        return self._palette[(label - 1) % len(self._palette)]
+
+    # ── public API ───────────────────────────────────────────────────────────
+
+    def set_input(self, label_arr: np.ndarray | None, bg_pil=None):
+        """Thread-safe: called from evaluate() which may run on worker thread."""
+        if threading.current_thread() is not threading.main_thread():
+            self._set_input_signal.emit(label_arr, bg_pil)
+        else:
+            self._apply_set_input(label_arr, bg_pil)
+
+    def _apply_set_input(self, label_arr, bg_pil):
+        label_changed = (
+            label_arr is not None and (
+                self._input_label_arr is None
+                or label_arr.shape != self._input_label_arr.shape
+                or not np.array_equal(label_arr, self._input_label_arr)
+            )
+        )
+        bg_changed = False
+        if bg_pil is not None:
+            if self._bg_pil is None:
+                bg_changed = True
+            elif isinstance(bg_pil, np.ndarray) and isinstance(self._bg_pil, np.ndarray):
+                bg_changed = bg_pil.shape != self._bg_pil.shape
+            else:
+                bg_changed = True
+
+        if label_changed or bg_changed:
+            if label_arr is not None:
+                self._input_label_arr = label_arr.astype(np.int32)
+                self._label_arr = self._input_label_arr.copy()
+                self._img_h, self._img_w = label_arr.shape[:2]
+            elif bg_pil is not None:
+                h = bg_pil.shape[0] if isinstance(bg_pil, np.ndarray) else 512
+                w = bg_pil.shape[1] if isinstance(bg_pil, np.ndarray) else 512
+                self._input_label_arr = np.zeros((h, w), dtype=np.int32)
+                self._label_arr = self._input_label_arr.copy()
+                self._img_h, self._img_w = h, w
+            self._history.clear()
+            self._has_user_edits = False
+        elif label_arr is None and self._label_arr is None:
+            return
+        self._bg_pil = bg_pil
+        max_lbl = int(self._label_arr.max()) if self._label_arr is not None and self._label_arr.max() > 0 else 1
+        self._refresh_palette(max_lbl)
+        self._update_label_list()
+        self._render()
+
+    def get_labels(self) -> np.ndarray | None:
+        return self._label_arr
+
+    # ── label list management ────────────────────────────────────────────────
+
+    def _update_label_list(self):
+        self._label_list.blockSignals(True)
+        self._label_list.clear()
+        if self._label_arr is None:
+            self._label_list.blockSignals(False)
+            return
+        unique = np.unique(self._label_arr)
+        unique = unique[unique > 0]
+        for lbl in unique:
+            count = int(np.sum(self._label_arr == lbl))
+            r, g, b = self._label_color(int(lbl))
+            swatch = QPixmap(14, 14)
+            swatch.fill(QColor(r, g, b))
+            item = QtWidgets.QListWidgetItem(
+                f'  Label {lbl}  ({count:,} px)')
+            item.setIcon(QtGui.QIcon(swatch))
+            item.setData(Qt.ItemDataRole.UserRole, int(lbl))
+            self._label_list.addItem(item)
+        # Select the current label row
+        for i in range(self._label_list.count()):
+            item = self._label_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == self._current_label:
+                self._label_list.setCurrentRow(i)
+                break
+        self._label_list.blockSignals(False)
+
+    def _on_label_selected(self, row):
+        if row < 0:
+            self._clear_highlight()
+            return
+        item = self._label_list.item(row)
+        if item:
+            self._current_label = item.data(Qt.ItemDataRole.UserRole)
+            if self._palette:
+                color = self._palette[(self._current_label - 1) % len(self._palette)]
+                self._cur_label_lbl.setText(f'Label: {self._current_label}')
+                self._cur_label_lbl.setStyleSheet(
+                    f'color: rgb({color[0]},{color[1]},{color[2]}); '
+                    f'font-size: 11px; font-weight: bold;')
+            else:
+                self._cur_label_lbl.setText(f'Label: {self._current_label}')
+            self._highlight_label(self._current_label)
+
+    def _clear_highlight(self):
+        """Remove any existing highlight items from the canvas."""
+        scene = self._view.scene()
+        for item in getattr(self, '_highlight_items', []):
+            try:
+                scene.removeItem(item)
+            except Exception:
+                pass
+        self._highlight_items = []
+
+    def _highlight_label(self, label_id):
+        """Draw a bounding box + brighter overlay around the selected label."""
+        self._clear_highlight()
+        if self._label_arr is None:
+            return
+
+        mask = self._label_arr == label_id
+        if not mask.any():
+            return
+
+        # Find bounding box
+        ys, xs = np.where(mask)
+        y0, y1 = int(ys.min()), int(ys.max())
+        x0, x1 = int(xs.min()), int(xs.max())
+
+        # Get label color
+        if self._palette:
+            color = self._palette[(label_id - 1) % len(self._palette)]
+        else:
+            color = (255, 255, 0)
+
+        scene = self._view.scene()
+
+        # Draw bounding box
+        pen = QPen(QColor(*color))
+        pen.setWidthF(2.0)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pad = 3
+        rect_item = scene.addRect(
+            QRectF(x0 - pad, y0 - pad, (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad),
+            pen)
+        rect_item.setZValue(20)
+        self._highlight_items.append(rect_item)
+
+        # Draw label number near top-left of bbox
+        text_item = scene.addSimpleText(str(label_id))
+        text_item.setBrush(QBrush(QColor(*color)))
+        font = text_item.font()
+        font.setPixelSize(max(14, min(30, (y1 - y0) // 4)))
+        font.setBold(True)
+        text_item.setFont(font)
+        text_item.setPos(x0 - pad, y0 - pad - font.pixelSize() - 2)
+        text_item.setZValue(20)
+        self._highlight_items.append(text_item)
+
+    def _add_label(self):
+        if self._label_arr is None:
+            return
+        max_label = int(self._label_arr.max()) if self._label_arr.max() > 0 else 0
+        self._current_label = max_label + 1
+        self._cur_label_lbl.setText(f'Label: {self._current_label}')
+        self._refresh_palette(self._current_label)
+        self._update_label_list()
+
+    def _delete_label(self):
+        if self._label_arr is None:
+            return
+        row = self._label_list.currentRow()
+        if row < 0:
+            return
+        item = self._label_list.item(row)
+        lbl = item.data(Qt.ItemDataRole.UserRole)
+        self._push_history()
+        self._label_arr[self._label_arr == lbl] = 0
+        self._has_user_edits = True
+        self._update_label_list()
+        self._render()
+        self.label_changed.emit()
+
+    # ── shape operations ─────────────────────────────────────────────────────
+
+    def _on_shape_committed(self, tool: str, pts: list):
+        if self._label_arr is None:
+            return
+        if tool == 'flood_fill':
+            self._do_flood_fill(pts[0])
+            return
+        if tool == 'brush':
+            self._do_brush(pts)
+            return
+        if len(pts) < 2:
+            return
+        shape_mask = self._rasterize(tool, pts)
+        if shape_mask is None:
+            return
+        self._push_history()
+        op = self._op_combo.currentText()
+        lbl = self._current_label
+        if op == 'Union':
+            self._label_arr[shape_mask] = lbl
+        elif op == 'Subtract':
+            self._label_arr[shape_mask & (self._label_arr == lbl)] = 0
+        elif op == 'Replace':
+            self._label_arr[shape_mask] = lbl
+        self._has_user_edits = True
+        max_lbl = int(self._label_arr.max()) if self._label_arr.max() > 0 else 1
+        self._refresh_palette(max_lbl)
+        self._update_label_list()
+        self._render()
+        self.label_changed.emit()
+
+    def _do_brush(self, pts: list):
+        if self._label_arr is None or not pts:
+            return
+        self._push_history()
+        op = self._op_combo.currentText()
+        lbl = self._current_label
+        h, w = self._label_arr.shape
+        for (px, py) in pts:
+            if 0 <= px < w and 0 <= py < h:
+                if op == 'Union' or op == 'Replace':
+                    self._label_arr[py, px] = lbl
+                elif op == 'Subtract':
+                    if self._label_arr[py, px] == lbl:
+                        self._label_arr[py, px] = 0
+        self._has_user_edits = True
+        max_lbl = int(self._label_arr.max()) if self._label_arr.max() > 0 else 1
+        self._refresh_palette(max_lbl)
+        self._update_label_list()
+        self._render()
+        self.label_changed.emit()
+
+    def _do_flood_fill(self, seed: tuple):
+        if self._label_arr is None:
+            return
+        x, y = seed
+        h, w = self._label_arr.shape
+        if not (0 <= x < w and 0 <= y < h):
+            return
+        target_val = int(self._label_arr[y, x])
+        fill_val = self._current_label
+        if target_val == fill_val:
+            return
+        self._push_history()
+        # BFS flood fill
+        visited = np.zeros((h, w), dtype=bool)
+        stack = [(x, y)]
+        visited[y, x] = True
+        filled = []
+        while stack:
+            cx, cy = stack.pop()
+            filled.append((cx, cy))
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < w and 0 <= ny < h and not visited[ny, nx]:
+                    if int(self._label_arr[ny, nx]) == target_val:
+                        visited[ny, nx] = True
+                        stack.append((nx, ny))
+        op = self._op_combo.currentText()
+        for (px, py) in filled:
+            if op == 'Union' or op == 'Replace':
+                self._label_arr[py, px] = fill_val
+            elif op == 'Subtract':
+                if self._label_arr[py, px] == fill_val:
+                    self._label_arr[py, px] = 0
+        self._has_user_edits = True
+        max_lbl = int(self._label_arr.max()) if self._label_arr.max() > 0 else 1
+        self._refresh_palette(max_lbl)
+        self._update_label_list()
+        self._render()
+        self.label_changed.emit()
+
+    def _rasterize(self, tool: str, pts: list) -> np.ndarray | None:
+        from PIL import Image as _PIL, ImageDraw
+        img = _PIL.new('L', (self._img_w, self._img_h), 0)
+        draw = ImageDraw.Draw(img)
+        if tool in ('rect', 'ellipse'):
+            x0 = min(pts[0][0], pts[1][0])
+            y0 = min(pts[0][1], pts[1][1])
+            x1 = max(pts[0][0], pts[1][0])
+            y1 = max(pts[0][1], pts[1][1])
+            if x1 <= x0 or y1 <= y0:
+                return None
+            if tool == 'ellipse':
+                draw.ellipse([x0, y0, x1, y1], fill=255)
+            else:
+                draw.rectangle([x0, y0, x1, y1], fill=255)
+        elif tool in ('polygon', 'lasso'):
+            if len(pts) < 3:
+                return None
+            draw.polygon([(float(x), float(y)) for x, y in pts], fill=255)
+        return np.array(img) > 0
+
+    # ── undo / reset / clear ─────────────────────────────────────────────────
+
+    def _push_history(self):
+        if self._label_arr is not None:
+            self._history.append(self._label_arr.copy())
+            if len(self._history) > self._MAX_UNDO:
+                self._history.pop(0)
+
+    def _undo(self):
+        if self._history:
+            self._label_arr = self._history.pop()
+            max_lbl = int(self._label_arr.max()) if self._label_arr.max() > 0 else 1
+            self._refresh_palette(max_lbl)
+            self._update_label_list()
+            self._render()
+            self.label_changed.emit()
+
+    def _reset(self):
+        if self._input_label_arr is not None:
+            self._push_history()
+            self._label_arr = self._input_label_arr.copy()
+            self._has_user_edits = False
+            max_lbl = int(self._label_arr.max()) if self._label_arr.max() > 0 else 1
+            self._refresh_palette(max_lbl)
+            self._update_label_list()
+            self._render()
+            self.label_changed.emit()
+
+    def _clear(self):
+        if self._label_arr is not None:
+            self._push_history()
+            self._label_arr = np.zeros((self._img_h, self._img_w), dtype=np.int32)
+            self._has_user_edits = True
+            self._update_label_list()
+            self._render()
+            self.label_changed.emit()
+
+    # ── rendering ────────────────────────────────────────────────────────────
+
+    def _render(self):
+        if self._label_arr is None:
+            return
+        h, w = self._label_arr.shape
+        # Background
+        if self._bg_pil is not None:
+            bg = _ensure_display_rgb(self._bg_pil)
+            bg_h, bg_w = bg.shape[:2]
+            if bg_w != w or bg_h != h:
+                from PIL import Image as _PIL
+                bg = np.array(_PIL.fromarray(bg).resize((w, h)))
+        else:
+            bg = np.full((h, w, 3), 30, dtype=np.uint8)
+
+        result = bg.astype(np.float32)
+        alpha = self._opacity_spin.value() / 100.0
+
+        unique = np.unique(self._label_arr)
+        unique = unique[unique > 0]
+        for lbl in unique:
+            r, g, b = self._label_color(int(lbl))
+            mask = self._label_arr == lbl
+            result[mask, 0] = result[mask, 0] * (1 - alpha) + r * alpha
+            result[mask, 1] = result[mask, 1] * (1 - alpha) + g * alpha
+            result[mask, 2] = result[mask, 2] * (1 - alpha) + b * alpha
+
+        result = result.clip(0, 255).astype(np.uint8)
+        qimg = QImage(result.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888)
+        self._view.set_pixmap(QPixmap.fromImage(qimg))
+
+        # Info
+        total = int(np.sum(self._label_arr > 0))
+        n_labels = len(unique)
+        self._info_lbl.setText(f'{n_labels} label(s), {total:,} px')
+
+
+class LabelEditorNode(BaseExecutionNode):
+    """
+    Interactively edits a multi-label image by drawing shapes and applying operations.
+
+    Supports rect, ellipse, polygon, lasso, brush, and flood-fill tools.
+    Each label is assigned a distinct color. Outputs the label array and a summary table.
+    """
+
+    __identifier__ = 'nodes.image_process.Visualize'
+    NODE_NAME = 'Label Editor'
+    PORT_SPEC = {'inputs': ['image', 'label_image'], 'outputs': ['label_image', 'table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_input('label_image', color=PORT_COLORS.get('label', (160, 220, 40)))
+        self.add_output('label_image', color=PORT_COLORS.get('label', (160, 220, 40)),
+                        multi_output=True)
+        self.add_output('table', color=PORT_COLORS['table'], multi_output=True)
+
+        self._editor = LabelEditorWidget(self.view)
+        self._editor.label_changed.connect(self._on_label_changed)
+        self.add_custom_widget(self._editor)
+
+    def _on_label_changed(self):
+        """Called when user edits labels; push result downstream."""
+        import pandas as pd
+        result = self._editor.get_labels()
+        if result is not None:
+            self.output_values['label_image'] = LabelData(payload=result.astype(np.int32))
+            # Build summary table
+            unique = np.unique(result)
+            unique = unique[unique > 0]
+            rows = []
+            for lbl in unique:
+                rows.append({'label': int(lbl), 'area': int(np.sum(result == lbl))})
+            if rows:
+                self.output_values['table'] = TableData(payload=pd.DataFrame(rows))
+            else:
+                self.output_values['table'] = TableData(
+                    payload=pd.DataFrame(columns=['label', 'area']))
+        else:
+            self.output_values['label_image'] = LabelData(
+                payload=np.zeros((1, 1), dtype=np.int32))
+            self.output_values['table'] = TableData(
+                payload=pd.DataFrame(columns=['label', 'area']))
+        self.mark_dirty()
+
+    def evaluate(self):
+        import pandas as pd
+        self.reset_progress()
+
+        # ── optional background image ─────────────────────────────────────
+        bg_arr = None
+        img_port = self.inputs().get('image')
+        if img_port and img_port.connected_ports():
+            cp = img_port.connected_ports()[0]
+            data = cp.node().output_values.get(cp.name())
+            if isinstance(data, ImageData):
+                bg_arr = data.payload
+
+        # ── label_image input ───────────────────────────────────────────────
+        label_arr = None
+        label_port = self.inputs().get('label_image')
+        if label_port and label_port.connected_ports():
+            cp = label_port.connected_ports()[0]
+            data = cp.node().output_values.get(cp.name())
+            if isinstance(data, LabelData):
+                label_arr = data.payload.astype(np.int32)
+
+        if label_arr is None and bg_arr is None:
+            return False, 'Connect a label image or background image'
+
+        # If only image is connected, start with a blank label array
+        if label_arr is None:
+            h, w = bg_arr.shape[:2]
+            label_arr = np.zeros((h, w), dtype=np.int32)
+
+        # Preserve user edits if input hasn't changed
+        prev_input = getattr(self._editor, '_input_label_arr', None)
+        edited = self._editor._label_arr
+        input_unchanged = (
+            prev_input is not None
+            and label_arr.shape == prev_input.shape
+            and np.array_equal(label_arr, prev_input)
+        )
+        has_edits = (
+            input_unchanged
+            and edited is not None
+            and not np.array_equal(edited, prev_input)
+        )
+
+        self._editor.set_input(label_arr, bg_arr)
+        self.set_progress(50)
+
+        # ── output ───────────────────────────────────────────────────────
+        if has_edits:
+            out_labels = edited.astype(np.int32)
+        else:
+            out_labels = label_arr.astype(np.int32)
+
+        self.output_values['label_image'] = LabelData(payload=out_labels)
+
+        # Build summary table
+        unique = np.unique(out_labels)
+        unique = unique[unique > 0]
+        rows = []
+        for lbl in unique:
+            rows.append({'label': int(lbl), 'area': int(np.sum(out_labels == lbl))})
+        if rows:
+            self.output_values['table'] = TableData(payload=pd.DataFrame(rows))
+        else:
+            self.output_values['table'] = TableData(
+                payload=pd.DataFrame(columns=['label', 'area']))
+
+        self.set_progress(100)
         return True, None
