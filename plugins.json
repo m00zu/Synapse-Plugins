@@ -26,5 +26,9 @@
     "filopodia_nodes": {
         "name": "Filopodia Analysis",
         "description": "Cell protrusion detection and measurement"
+    },
+    "data_processing": {
+        "name": "Data Processing",
+        "description": "Additional dataframe processing"
     }
 }

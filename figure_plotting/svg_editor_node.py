@@ -1489,8 +1489,16 @@ class _SvgPropsPanel(object):
                         # Replace marker path for THIS group only.
                         new_d = _MARKER_PATHS.get(val)
                         if new_d:
+                            print(f"[marker] changing shape to {val}, d={new_d[:40]}...")
+                            print(f"[marker] svg_root is None: {self._svg_root is None}")
                             _change_marker_shape_for_group(
                                 elem, new_d, self._svg_root)
+                            # Verify the change stuck
+                            for ch in elem.iter():
+                                if _ltag(ch) == 'use':
+                                    href = ch.get(f'{{{_XLINK_NS}}}href', ch.get('href', ''))
+                                    print(f"[marker] use href after change: {href}")
+                                    break
 
                     elif key == 'marker:size':
                         # Scale <use> elements around their own center.
@@ -1776,6 +1784,20 @@ class NodeSvgEditorWidget(object):
                 tb3.addWidget(apply_pad_btn)
                 tb3.addStretch()
                 root.addLayout(tb3)
+
+                # ── toolbar row 4: legend manager ────────────────────────
+                tb4 = QtWidgets.QHBoxLayout()
+                leg_lbl = QtWidgets.QLabel("Legend:")
+                leg_lbl.setStyleSheet("color: #aaa; font-size: 8pt;")
+                tb4.addWidget(leg_lbl)
+                self._legend_list = QtWidgets.QWidget()
+                self._legend_layout = QtWidgets.QHBoxLayout(self._legend_list)
+                self._legend_layout.setContentsMargins(0, 0, 0, 0)
+                self._legend_layout.setSpacing(6)
+                self._legend_cbs = []  # list of (QCheckBox, patch_elem, text_elem)
+                tb4.addWidget(self._legend_list)
+                tb4.addStretch()
+                root.addLayout(tb4)
 
                 # ── splitter: view  |  properties panel ───────────────────
                 self._sp = QtWidgets.QSplitter(
@@ -2145,6 +2167,26 @@ class NodeSvgEditorWidget(object):
                     f"Palette applied to {len(series_groups)} series.")
 
             # ── reserialize ───────────────────────────────────────────────
+            def _detect_bg_color(self, root):
+                """Detect figure background color from the largest rect's fill."""
+                best_area = 0
+                bg_color = '#ffffff'
+                for elem in root.iter():
+                    if _ltag(elem) == 'rect' and elem.get('id', '') != 'figure_bg_':
+                        w = float(elem.get('width', 0))
+                        h = float(elem.get('height', 0))
+                        area = w * h
+                        if area > best_area:
+                            best_area = area
+                            style = elem.get('style', '')
+                            m = re.search(r'fill:\s*(#[0-9a-fA-F]{3,8})', style)
+                            if m:
+                                bg_color = m.group(1)
+                            fill = elem.get('fill', '')
+                            if fill and fill != 'none':
+                                bg_color = fill
+                return bg_color
+
             def _expand_canvas(self):
                 """Expand the SVG canvas (viewBox, width/height, bg rect)
                 to encompass all annotation elements."""
@@ -2167,9 +2209,13 @@ class NodeSvgEditorWidget(object):
 
                 for elem in root.iter():
                     eid = elem.get('id', '')
-                    if not any(eid.startswith(p) for p in
-                               ('annotation_', 'rect_ann_', 'ellipse_ann_',
-                                'line_ann_', 'arrow_ann_')):
+                    # Check annotation elements AND any element with a
+                    # translate transform (i.e. user has moved it)
+                    is_annotation = any(eid.startswith(p) for p in
+                                        ('annotation_', 'rect_ann_', 'ellipse_ann_',
+                                         'line_ann_', 'arrow_ann_'))
+                    has_translate = 'translate(' in elem.get('transform', '')
+                    if not (is_annotation or has_translate):
                         continue
                     tag = _ltag(elem)
                     # Also account for translate transforms on the element
@@ -2215,6 +2261,37 @@ class NodeSvgEditorWidget(object):
                         min_y = min(min_y, ty - 20 - margin)
                         max_x = max(max_x, tx + 100 + margin)
                         max_y = max(max_y, ty + margin)
+                    elif has_translate and tx_off != 0 or ty_off != 0:
+                        # For moved elements without explicit geometry (e.g. <g> groups),
+                        # scan children for coordinates to estimate bounds
+                        for child in elem.iter():
+                            ctag = _ltag(child)
+                            if ctag == 'text':
+                                cx = float(child.get('x', 0)) + tx_off
+                                cy = float(child.get('y', 0)) + ty_off
+                                min_x = min(min_x, cx - margin)
+                                min_y = min(min_y, cy - 20 - margin)
+                                max_x = max(max_x, cx + 100 + margin)
+                                max_y = max(max_y, cy + margin)
+                            elif ctag == 'use':
+                                cx = float(child.get('x', 0)) + tx_off
+                                cy = float(child.get('y', 0)) + ty_off
+                                min_x = min(min_x, cx - margin)
+                                min_y = min(min_y, cy - margin)
+                                max_x = max(max_x, cx + margin)
+                                max_y = max(max_y, cy + margin)
+                            elif ctag == 'path':
+                                # Parse path d attribute for approximate bounds
+                                d = child.get('d', '')
+                                nums = re.findall(r'[-+]?[\d.]+', d)
+                                if len(nums) >= 2:
+                                    xs = [float(nums[i]) + tx_off for i in range(0, len(nums), 2)]
+                                    ys = [float(nums[i]) + ty_off for i in range(1, len(nums), 2)]
+                                    if xs and ys:
+                                        min_x = min(min_x, min(xs) - margin)
+                                        min_y = min(min_y, min(ys) - margin)
+                                        max_x = max(max_x, max(xs) + margin)
+                                        max_y = max(max_y, max(ys) + margin)
 
                 new_vw = max_x - min_x
                 new_vh = max_y - min_y
@@ -2224,24 +2301,41 @@ class NodeSvgEditorWidget(object):
                     # Update SVG width/height to match
                     root.set('width', f'{new_vw:.2f}pt')
                     root.set('height', f'{new_vh:.2f}pt')
-                    # Expand the background rect (first <rect> in root, usually
-                    # matplotlib's figure patch)
-                    for child in root:
-                        if _ltag(child) == 'rect':
-                            child.set('x', f'{min_x:.2f}')
-                            child.set('y', f'{min_y:.2f}')
-                            child.set('width', f'{new_vw:.2f}')
-                            child.set('height', f'{new_vh:.2f}')
+                    # Find or create figure background rect
+                    bg_rect = None
+                    for elem in root.iter():
+                        if _ltag(elem) == 'rect' and elem.get('id', '') == 'figure_bg_':
+                            bg_rect = elem
                             break
+                    if bg_rect is None:
+                        bg_color = self._detect_bg_color(root)
+                        bg_rect = _ET.SubElement(root, self._ns('rect'))
+                        bg_rect.set('id', 'figure_bg_')
+                        bg_rect.set('style', f'fill:{bg_color};stroke:none')
+                        root.remove(bg_rect)
+                        root.insert(0, bg_rect)
+                    bg_rect.set('x', f'{min_x:.2f}')
+                    bg_rect.set('y', f'{min_y:.2f}')
+                    bg_rect.set('width', f'{new_vw:.2f}')
+                    bg_rect.set('height', f'{new_vh:.2f}')
 
             def _on_apply_padding(self):
                 """Add user-specified padding around the SVG canvas."""
                 root = self._view.svg_root
                 if root is None:
+                    print("[padding] no svg_root")
                     return
                 vb_str = root.get('viewBox', '')
                 if not vb_str:
+                    print("[padding] no viewBox")
                     return
+                print(f"[padding] current viewBox: {vb_str}")
+                # Debug: list all rects
+                for i, elem in enumerate(root.iter()):
+                    if _ltag(elem) == 'rect':
+                        print(f"  rect[{i}]: x={elem.get('x','?')} y={elem.get('y','?')} "
+                              f"w={elem.get('width','?')} h={elem.get('height','?')} "
+                              f"id={elem.get('id','')} style={elem.get('style','')[:60]}")
                 try:
                     parts = vb_str.split()
                     vx, vy, vw, vh = (float(parts[0]), float(parts[1]),
@@ -2254,7 +2348,9 @@ class NodeSvgEditorWidget(object):
                 pl = self._pad_left.value()
                 pr = self._pad_right.value()
 
+                print(f"[padding] T={pt}, B={pb}, L={pl}, R={pr}")
                 if pt == 0 and pb == 0 and pl == 0 and pr == 0:
+                    print("[padding] all zero, skipping")
                     return
 
                 self._snapshot()
@@ -2263,18 +2359,30 @@ class NodeSvgEditorWidget(object):
                 new_w = vw + pl + pr
                 new_h = vh + pt + pb
 
+                print(f"[padding] new viewBox: {new_x:.2f} {new_y:.2f} {new_w:.2f} {new_h:.2f}")
                 root.set('viewBox',
                          f'{new_x:.2f} {new_y:.2f} {new_w:.2f} {new_h:.2f}')
                 root.set('width', f'{new_w:.2f}pt')
                 root.set('height', f'{new_h:.2f}pt')
-                # Expand background rect
-                for child in root:
-                    if _ltag(child) == 'rect':
-                        child.set('x', f'{new_x:.2f}')
-                        child.set('y', f'{new_y:.2f}')
-                        child.set('width', f'{new_w:.2f}')
-                        child.set('height', f'{new_h:.2f}')
+                # Find or create figure background rect
+                bg_rect = None
+                for elem in root.iter():
+                    if _ltag(elem) == 'rect' and elem.get('id', '') == 'figure_bg_':
+                        bg_rect = elem
                         break
+                if bg_rect is None:
+                    bg_color = self._detect_bg_color(root)
+                    bg_rect = _ET.SubElement(root, self._ns('rect'))
+                    bg_rect.set('id', 'figure_bg_')
+                    bg_rect.set('style', f'fill:{bg_color};stroke:none')
+                    root.remove(bg_rect)
+                    root.insert(0, bg_rect)
+                    print(f"[padding] created figure bg rect (color={bg_color})")
+                bg_rect.set('x', f'{new_x:.2f}')
+                bg_rect.set('y', f'{new_y:.2f}')
+                bg_rect.set('width', f'{new_w:.2f}')
+                bg_rect.set('height', f'{new_h:.2f}')
+                print(f"[padding] bg rect set to: {new_x:.0f},{new_y:.0f} {new_w:.0f}x{new_h:.0f}")
 
                 # Reset spinboxes after applying
                 self._pad_top.setValue(0)
@@ -2301,9 +2409,75 @@ class NodeSvgEditorWidget(object):
                     self._info.setText(f"{n} element(s)")
                     self.svg_modified.emit(
                         new_bytes.decode('utf-8', errors='replace'))
+                    self._refresh_legend_checkboxes()
                 except Exception as ex:
                     print(f'NodeSvgEditorWidget: rerender error: {ex}')
                     import traceback; traceback.print_exc()
+
+            def _refresh_legend_checkboxes(self):
+                """Parse SVG legend group and create checkboxes for each entry."""
+                # Clear old checkboxes
+                for cb, _, _ in self._legend_cbs:
+                    cb.setParent(None)
+                    cb.deleteLater()
+                self._legend_cbs.clear()
+
+                root = self._view.svg_root
+                if root is None:
+                    return
+
+                # Find legend group
+                legend_g = None
+                for elem in root.iter():
+                    eid = elem.get('id', '')
+                    if eid.startswith('legend'):
+                        legend_g = elem
+                        break
+                if legend_g is None:
+                    return
+
+                # Parse legend entries: pairs of (patch/line, text)
+                children = list(legend_g)
+                # First child is the background box, skip it
+                entries = []
+                i = 1  # skip background patch
+                while i < len(children) - 1:
+                    patch_elem = children[i]
+                    text_elem = children[i + 1]
+                    # Extract label text
+                    label = ''
+                    for sub in text_elem.iter():
+                        if sub.text and sub.text.strip():
+                            label = sub.text.strip()
+                            break
+                    if label:
+                        entries.append((label, patch_elem, text_elem))
+                    i += 2
+
+                for label, patch_el, text_el in entries:
+                    cb = QtWidgets.QCheckBox(label)
+                    cb.setStyleSheet("color: #ccc; font-size: 8pt;")
+                    # Check current visibility
+                    patch_style = patch_el.get('style', '')
+                    is_hidden = 'display:none' in patch_style.replace(' ', '')
+                    cb.setChecked(not is_hidden)
+                    cb.stateChanged.connect(
+                        lambda state, pe=patch_el, te=text_el:
+                            self._on_legend_toggle(state, pe, te))
+                    self._legend_layout.addWidget(cb)
+                    self._legend_cbs.append((cb, patch_el, text_el))
+
+            def _on_legend_toggle(self, state, patch_elem, text_elem):
+                """Show/hide a legend entry."""
+                self._snapshot()
+                for elem in (patch_elem, text_elem):
+                    css = _css_parse(elem.get('style', ''))
+                    if state == QtCore.Qt.CheckState.Checked.value or state == 2:
+                        css.pop('display', None)
+                    else:
+                        css['display'] = 'none'
+                    elem.set('style', _css_ser(css))
+                self._reserialize()
 
             # ── NodeBaseWidget interface ───────────────────────────────────
             def get_value(self):  return ''

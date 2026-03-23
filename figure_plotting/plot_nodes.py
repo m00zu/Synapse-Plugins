@@ -1883,7 +1883,7 @@ class PlotToolboxMixin:
             "QToolButton:hover { background: #444; }")
         btn._columns = []
 
-        def _show_menu(b=btn, e=edit, n=name):
+        def _show_menu(_checked=False, b=btn, e=edit, n=name):
             menu = QtWidgets.QMenu()
             for col in b._columns:
                 action = menu.addAction(str(col))
@@ -3176,9 +3176,13 @@ def _draw_stat_brackets(ax, stat_df, group_to_x_idx: dict, y_max_per_group: dict
         curr_h   = base_h + h_step
 
         _stat_lbl = f"{g1}–{g2}"
-        ax.plot([i1, i2], [curr_h, curr_h], lw=line_width, c=line_color, label=_stat_lbl)
+        line, = ax.plot([i1, i2], [curr_h, curr_h], lw=line_width, c=line_color)
+        line.set_label(_stat_lbl)
+        line.set_gid(f'stat_line:{_stat_lbl}')
+        # Mark as stat bracket so legend can exclude it
+        line._is_stat_bracket = True
         ax.text((i1 + i2) / 2, curr_h, lbl, ha='center', va='bottom',
-                fontsize=text_size, fontweight='bold', color=text_color,
+                fontsize=text_size, color=text_color,
                 gid=f'stat_text:{_stat_lbl}')
 
         for g in heights:
@@ -3187,6 +3191,17 @@ def _draw_stat_brackets(ax, stat_df, group_to_x_idx: dict, y_max_per_group: dict
 
     if heights:
         ax.set_ylim(ax.get_ylim()[0], max(heights.values()) + h_step * 1.5)
+
+    # Rebuild legend excluding stat bracket lines
+    legend = ax.get_legend()
+    if legend is not None:
+        handles, labels = ax.get_legend_handles_labels()
+        clean = [(h, l) for h, l in zip(handles, labels)
+                 if not getattr(h, '_is_stat_bracket', False)]
+        if clean:
+            ax.legend(*zip(*clean))
+        else:
+            legend.remove()
 
 
 def _check_group_stat_df(df) -> "str | None":

@@ -48,6 +48,7 @@ jobs:
           python package_plugin.py figure_plotting --slim -o dist/
           python package_plugin.py filopodia_nodes --slim -o dist/
           python package_plugin.py volume_nodes --slim -o dist/
+          python package_plugin.py data_processing --slim -o dist/
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2

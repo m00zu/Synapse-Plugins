@@ -974,8 +974,14 @@ class PairwiseComparisonNode(BaseExecutionNode):
         self.add_custom_widget(self._matrix_widget, tab='Parameters')
         self._fix_widget_z_order()
 
+    _evaluating = False
+
     def _on_pairs_changed(self, pairs_str: str):
-        self.set_property('selected_pairs', pairs_str)
+        if self._evaluating:
+            return  # block signal during evaluate to prevent dirty loop
+        current = str(self.get_property('selected_pairs') or '').strip()
+        if pairs_str.strip() != current:
+            self.set_property('selected_pairs', pairs_str)
 
     def _detect_groups_and_populate(self, df):
         """Detect unique groups from input data and populate the matrix widget."""
@@ -995,6 +1001,13 @@ class PairwiseComparisonNode(BaseExecutionNode):
                 self._matrix_widget.update_groups_signal.emit(groups)
         
     def evaluate(self):
+        self._evaluating = True
+        try:
+            return self._do_evaluate()
+        finally:
+            self._evaluating = False
+
+    def _do_evaluate(self):
         self.reset_progress()
         from scipy.stats import ttest_ind, mannwhitneyu, tukey_hsd
         from statsmodels.stats.multitest import multipletests
