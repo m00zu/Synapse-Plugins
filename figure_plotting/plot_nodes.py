@@ -1824,7 +1824,17 @@ class PlotToolboxMixin:
         self._toolbox_widgets = {}
         self.toolbox = NodeToolBoxWidget(self.view, name='plot_toolbox', label='Plot Settings')
         self.toolbox._toolbox.setFixedHeight(height)
+        self.toolbox._toolbox.setMinimumWidth(280)
         self.add_custom_widget(self.toolbox)
+
+        # Patch proxy mode to restore node size after zoom in/out
+        _original_set_proxy = self.view.set_proxy_mode
+        _node_ref = self
+        def _patched_set_proxy(mode):
+            _original_set_proxy(mode)
+            if not mode and hasattr(_node_ref, 'view'):
+                _node_ref.view.draw_node()
+        self.view.set_proxy_mode = _patched_set_proxy
 
     def _tb_text(self, name, label, page, default=''):
         container = QtWidgets.QWidget()
@@ -3622,6 +3632,7 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('bar_value_fontsize',   9,       widget_type=H)
         self.create_property('bar_value_color',      [0, 0, 0, 255], widget_type=H)
         self.create_property('bar_value_fontweight', 'normal',widget_type=H)
+        self.create_property('bar_value_offset',    8,       widget_type=H)
         self.create_property('capsize',     0.1,     widget_type=H)
         self.create_property('show_points', False,   widget_type=H)
         self.create_property('point_style', 'Strip', widget_type=H)
@@ -3647,6 +3658,7 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_color('bar_value_color', 'Label Color', 'Data')
         self._tb_combo('bar_value_fontweight', 'Label Font Weight', 'Data',
                        ['normal', 'bold', 'semibold', 'light'])
+        self._tb_spinbox('bar_value_offset', 'Label Offset (pt)', 'Data', 4, 0, 50)
         self._tb_text('x_label',     'X Label',         'Data', '')
         self._tb_text('y_label',     'Y Label',         'Data', '')
         self._tb_text('plot_title',  'Title',            'Data', '')
@@ -3727,20 +3739,47 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
             if isinstance(_fc_raw, (list, tuple)):
                 fcolor = tuple(c / 255 for c in _fc_raw[:4])
             else:
-                fcolor = str(_fc_raw).strip() or 'black'  # legacy string value
+                fcolor = str(_fc_raw).strip() or 'black'
             fweight= str(self.get_property('bar_value_fontweight') or 'normal').strip()
+            foffset= int(self.get_property('bar_value_offset') or 4)
+
+            # Compute error bar tops from data (more reliable than parsing plot lines)
+            err_tops = {}
+            error_type = str(self.get_property('error_type') or 'se').strip()
+            for i, g in enumerate(groups):
+                vals = df[df[x_col].astype(str).str.strip() == str(g)][y_col].dropna().values
+                if len(vals) == 0:
+                    continue
+                mean = np.mean(vals)
+                if error_type == 'sd':
+                    err = np.std(vals, ddof=1) if len(vals) > 1 else 0
+                elif error_type == 'se':
+                    err = np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0
+                elif error_type == 'ci':
+                    from scipy.stats import sem, t as t_dist
+                    se = sem(vals)
+                    ci_val = t_dist.ppf(0.975, len(vals) - 1) * se if len(vals) > 1 else 0
+                    err = ci_val
+                else:
+                    err = np.std(vals, ddof=1) if len(vals) > 1 else 0
+                err_tops[i] = mean + err
+
             for patch in ax.patches:
                 h = patch.get_height()
                 if h == 0:
                     continue
+                bar_x = patch.get_x() + patch.get_width() / 2
+                # Find closest group index
+                bar_idx = int(round(bar_x))
+                label_y = err_tops.get(bar_idx, h)
                 try:
                     label = f'{h:{fmt}}'
                 except (ValueError, TypeError):
                     label = str(round(h, 2))
                 ax.annotate(
                     label,
-                    xy=(patch.get_x() + patch.get_width() / 2, h),
-                    xytext=(0, 4),
+                    xy=(bar_x, label_y),
+                    xytext=(0, foffset),
                     textcoords='offset points',
                     ha='center', va='bottom',
                     fontsize=fsize,

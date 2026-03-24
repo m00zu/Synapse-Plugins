@@ -1499,6 +1499,7 @@ class BrightnessContrastNode(BaseImageProcessNode):
     # ── Node evaluation ───────────────────────────────────────────────────────
 
     def evaluate(self):
+        self._eval_version_at_start = self._eval_version
         self.reset_progress()
         in_port = self.inputs().get('image')
         if not in_port or not in_port.connected_ports():
@@ -2026,6 +2027,7 @@ class BinaryThresholdNode(BaseImageProcessNode):
     # ── Node evaluation ───────────────────────────────────────────────────────
 
     def evaluate(self):
+        self._eval_version_at_start = self._eval_version
         self.reset_progress()
         in_port = self.inputs().get('image')
         if not in_port or not in_port.connected_ports():
@@ -4033,6 +4035,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
                         dn.mark_dirty()
 
     def evaluate(self):
+        self._eval_version_at_start = self._eval_version
         self.reset_progress()
 
         # ── Collect channels ─────────────────────────────────────────
@@ -4165,6 +4168,8 @@ class MultiChannelBCNode(BaseImageProcessNode):
             first_eval: if True, use full range per channel when the widget
                         hasn't been updated yet (first evaluate).
         """
+        if self._is_eval_stale():
+            return  # parameters changed during evaluation, skip stale output
         channels = self._cached_channels
         bds = self._cached_bit_depths
         n_active = sum(1 for c in channels if c is not None)
