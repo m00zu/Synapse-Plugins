@@ -1,7 +1,7 @@
 {
     "data_processing": {
-        "name": "Dataframe Processing",
-        "description": "Dataframe processing"
+        "name": "Data Processing",
+        "description": "Table operations: filter, sort, math, aggregate, join, concat, blank subtract, string ops"
     },
     "image_analysis": {
         "name": "Image Analysis",

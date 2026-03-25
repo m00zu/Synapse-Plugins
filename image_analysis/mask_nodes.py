@@ -1217,6 +1217,7 @@ class _ParticleSelectGraphicsView(QGraphicsView):
 
         self._scale: float = 1.0
         self._pan_start: QtCore.QPoint | None = None
+        self._overlay_alpha: float = 0.45
 
     # ── data loading ─────────────────────────────────────────────────────
 
@@ -1252,7 +1253,7 @@ class _ParticleSelectGraphicsView(QGraphicsView):
             for lbl, color in self._palette.items():
                 if lbl in self._selected:
                     lut_color[lbl] = color
-                    lut_alpha[lbl] = 0.45       # overlay strength
+                    lut_alpha[lbl] = self._overlay_alpha
                 else:
                     lut_alpha[lbl] = -1.0       # sentinel: dim
             overlay = lut_color[self._label_arr]    # (H,W,3)
@@ -1382,6 +1383,17 @@ class _InteractiveParticleSelectWidget(NodeBaseWidget):
         tb.addWidget(self._btn_all)
         tb.addWidget(self._btn_none)
         tb.addWidget(self._btn_fit)
+        tb.addSpacing(8)
+        lbl_op = QtWidgets.QLabel("Opacity:")
+        lbl_op.setStyleSheet("color:#ccc; font-size:9px;")
+        tb.addWidget(lbl_op)
+        self._opacity_spin = QtWidgets.QSpinBox()
+        self._opacity_spin.setRange(0, 100)
+        self._opacity_spin.setValue(45)
+        self._opacity_spin.setSuffix("%")
+        self._opacity_spin.setFixedWidth(58)
+        self._opacity_spin.setFixedHeight(22)
+        tb.addWidget(self._opacity_spin)
         tb.addStretch()
         vlay.addLayout(tb)
 
@@ -1431,6 +1443,7 @@ class _InteractiveParticleSelectWidget(NodeBaseWidget):
         self._btn_fit.clicked.connect(self._fit_view)
         self._min_spin.valueChanged.connect(self._on_filter_changed)
         self._max_spin.valueChanged.connect(self._on_filter_changed)
+        self._opacity_spin.valueChanged.connect(self._on_opacity_changed)
         self._img_signal.connect(self._apply_label_data,
                                  Qt.ConnectionType.QueuedConnection)
 
@@ -1503,6 +1516,10 @@ class _InteractiveParticleSelectWidget(NodeBaseWidget):
         self._view._update_display()
         self._update_status()
         self._emit()
+
+    def _on_opacity_changed(self, val):
+        self._view._overlay_alpha = val / 100.0
+        self._view._update_display()
 
     # ── selection feedback ───────────────────────────────────────────────
 
