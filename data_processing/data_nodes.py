@@ -38,7 +38,7 @@ class BlankSubtractNode(BaseExecutionNode):
 
     Keywords: blank, subtract, background, correction, normalize, baseline, 空白, 扣除, 背景校正
     """
-    __identifier__ = 'plugins.Plugins.data_processing'
+    __identifier__ = 'nodes.dataframe.Compute'
     NODE_NAME = 'Blank Subtract'
     PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
     _collection_aware = True
@@ -126,7 +126,7 @@ class RowNormalizeNode(BaseExecutionNode):
 
     Keywords: normalize, fold change, ratio, reference, control, 正規化, 倍數變化
     """
-    __identifier__ = 'plugins.Plugins.data_processing'
+    __identifier__ = 'nodes.dataframe.Compute'
     NODE_NAME = 'Row Normalize'
     PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
     _collection_aware = True
@@ -207,7 +207,7 @@ class DropRowsNode(BaseExecutionNode):
 
     Keywords: drop, remove, filter, exclude, delete rows, 刪除, 移除, 過濾
     """
-    __identifier__ = 'plugins.Plugins.data_processing'
+    __identifier__ = 'nodes.dataframe.Transform'
     NODE_NAME = 'Drop Rows'
     PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
     _collection_aware = True

@@ -1,4 +1,8 @@
 {
+    "data_processing": {
+        "name": "Dataframe Processing",
+        "description": "Dataframe processing"
+    },
     "image_analysis": {
         "name": "Image Analysis",
         "description": "Filters, thresholding, morphology, segmentation, measurements, ROI"
@@ -26,9 +30,5 @@
     "filopodia_nodes": {
         "name": "Filopodia Analysis",
         "description": "Cell protrusion detection and measurement"
-    },
-    "data_processing": {
-        "name": "Data Processing",
-        "description": "Additional dataframe processing"
     }
 }
