@@ -2796,6 +2796,117 @@ class CropNode(BaseExecutionNode):
         return True, None
 
 
+class MaskCropNode(BaseImageProcessNode):
+    """
+    Crops an image to a mask's bounding box.
+
+    When **Black outside** is checked, pixels outside the mask are set to zero.
+    When unchecked, all pixels within the bounding box are kept.
+    **Padding** adds extra pixels around the bounding box.
+
+    Keywords: mask crop, bounding box, extract region, cut out, trim, 遮罩裁切, 邊界框
+    """
+    __identifier__ = 'nodes.image_process.Transform'
+    NODE_NAME      = 'Mask Crop'
+    PORT_SPEC      = {'inputs': ['image', 'mask'], 'outputs': ['image']}
+    _collection_aware = True
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_input('mask',  color=PORT_COLORS['mask'])
+        self.add_output('image', color=PORT_COLORS['image'])
+
+        self.create_property('black_outside', True)
+        self.create_property('padding', 0)
+
+        from NodeGraphQt.widgets.node_widgets import NodeBaseWidget as _NBW
+
+        class _MaskCropWidget(_NBW):
+            def __init__(self, parent):
+                super().__init__(parent, name='_mask_crop_opts', label='')
+                w = QtWidgets.QWidget()
+                lay = QtWidgets.QHBoxLayout(w)
+                lay.setContentsMargins(4, 2, 4, 2)
+                self._chk = QtWidgets.QCheckBox('Black outside mask')
+                self._chk.setChecked(True)
+                self._chk.setStyleSheet('color:#ccc; font-size:9px;')
+                lbl = QtWidgets.QLabel('Padding:')
+                lbl.setStyleSheet('color:#ccc; font-size:9px;')
+                self._spin = QtWidgets.QSpinBox()
+                self._spin.setRange(0, 500)
+                self._spin.setValue(0)
+                self._spin.setSuffix(' px')
+                self._spin.setFixedWidth(70)
+                lay.addWidget(self._chk)
+                lay.addStretch()
+                lay.addWidget(lbl)
+                lay.addWidget(self._spin)
+                self.set_custom_widget(w)
+            def get_value(self): return None
+            def set_value(self, v): pass
+
+        self._mc_w = _MaskCropWidget(self.view)
+        self._mc_w._chk.toggled.connect(lambda v: self.set_property('black_outside', v))
+        self._mc_w._spin.valueChanged.connect(lambda v: self.set_property('padding', v))
+        self.add_custom_widget(self._mc_w)
+        self.create_preview_widgets()
+
+    def evaluate(self):
+        self.reset_progress()
+
+        img_data = self._get_input_image_data()
+        if img_data is None:
+            return False, "No image input"
+        arr_in = img_data.payload
+
+        mask_port = self.inputs().get('mask')
+        if not mask_port or not mask_port.connected_ports():
+            self._make_image_output(arr_in)
+            self.set_display(arr_in)
+            self.set_progress(100)
+            return True, None
+
+        cp = mask_port.connected_ports()[0]
+        mdata = cp.node().output_values.get(cp.name())
+        if not isinstance(mdata, MaskData) or mdata.payload is None:
+            return False, "Mask input required"
+
+        mask_arr = mdata.payload
+        binary = mask_arr > 0
+
+        if not binary.any():
+            return False, "Mask is empty"
+
+        self.set_progress(30)
+
+        rows = np.any(binary, axis=1)
+        cols = np.any(binary, axis=0)
+        top, bottom = int(np.where(rows)[0][0]), int(np.where(rows)[0][-1]) + 1
+        left, right = int(np.where(cols)[0][0]), int(np.where(cols)[0][-1]) + 1
+
+        pad = int(self.get_property('padding') or 0)
+        H, W = arr_in.shape[:2]
+        top    = max(0, top - pad)
+        left   = max(0, left - pad)
+        bottom = min(H, bottom + pad)
+        right  = min(W, right + pad)
+
+        self.set_progress(60)
+
+        cropped = arr_in[top:bottom, left:right].copy()
+
+        if self.get_property('black_outside'):
+            mask_crop = binary[top:bottom, left:right]
+            cropped[~mask_crop] = 0
+
+        self.set_progress(90)
+        self._make_image_output(cropped)
+        self.set_display(cropped)
+        self.set_progress(100)
+        return True, None
+
+
 class NodeMultiShapeWidget(NodeBaseWidget):
     """
     Embeds a multi-shape drawing canvas over an image on the node surface.
