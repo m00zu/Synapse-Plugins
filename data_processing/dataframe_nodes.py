@@ -9,8 +9,8 @@ import numpy as np
 import NodeGraphQt, json
 from PySide6 import QtWidgets, QtCore, QtGui
 
-from ..data_models import TableData
-from .base import (
+from data_models import TableData
+from nodes.base import (
     BaseExecutionNode, PORT_COLORS,
     NodeBaseWidget
 )
