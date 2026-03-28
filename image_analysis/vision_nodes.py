@@ -2278,6 +2278,12 @@ class ImageHistogramNode(BaseExecutionNode):
         if log_y:
             ax.set_yscale('log')
             ax.set_ylim(bottom=0.8)
+            import matplotlib.ticker as mticker
+            _sup = str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')
+            ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+                lambda v, _: ('10' + str(int(np.log10(v))).translate(_sup))
+                if v > 0 and np.log10(v) == int(np.log10(v)) else ''
+            ))
         else:
             ax.set_ylim(bottom=0)
         ax.set_xlabel('Pixel Value')

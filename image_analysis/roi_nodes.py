@@ -5,7 +5,7 @@ ROIMaskNode – draw an ROI (ellipse, rectangle, or polygon) directly on the
 node surface and output it as a binary MaskData mask.
 
 Adapted from PyQt5 FRAP tool (PyQt_ROI_try_2.py) and ported to PySide6 /
-NodeGraphQt conventions.  cv2 is NOT required – mask rasterisation uses
+NodeGraphQt conventions. cv2 is NOT required – mask rasterisation uses
 PIL.ImageDraw only.
 """
 
@@ -943,6 +943,17 @@ class ROIGraphicsView(QGraphicsView):
                 return          # don't pass event (avoids node-graph selection)
             # else: let super handle (forwards to item's mousePressEvent)
 
+        elif self._curr_shape == 'lasso':
+            if self._shape_item is None:
+                self._poly_pts = QPolygonF()
+                self._poly_pts.append(scene_pos)
+                item = QGraphicsPolygonItem(QPolygonF(self._poly_pts))
+                self._style(item)
+                self.scene().addItem(item)
+                self._shape_item = item
+                self._drawing = True
+                return
+
         elif self._curr_shape == 'polygon':
             if self._shape_item is None:
                 # First vertex
@@ -973,10 +984,25 @@ class ROIGraphicsView(QGraphicsView):
             event.accept()
             return
         scene_pos = self.mapToScene(_mouse_pos_qpoint(event))
+        if self._drawing and self._curr_shape == 'lasso':
+            self._poly_pts.append(scene_pos)
+            self._shape_item.setPolygon(self._poly_pts)
+            return
         if self._drawing:
             if self._curr_shape in ('ellipse', 'rectangle'):
-                self._shape_item.setRect(
-                    QRectF(self._start_pt, scene_pos).normalized())
+                rect = QRectF(self._start_pt, scene_pos).normalized()
+                # Shift-constrain: force square / circle
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    side = max(rect.width(), rect.height())
+                    if scene_pos.x() < self._start_pt.x():
+                        rect.setLeft(rect.right() - side)
+                    else:
+                        rect.setRight(rect.left() + side)
+                    if scene_pos.y() < self._start_pt.y():
+                        rect.setTop(rect.bottom() - side)
+                    else:
+                        rect.setBottom(rect.top() + side)
+                self._shape_item.setRect(rect)
             elif self._curr_shape == 'arrow' and isinstance(self._shape_item, QGraphicsLineItem):
                 self._shape_item.setLine(self._start_pt.x(), self._start_pt.y(),
                                          scene_pos.x(), scene_pos.y())
@@ -993,6 +1019,20 @@ class ROIGraphicsView(QGraphicsView):
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton:
+            if self._drawing and self._curr_shape == 'lasso':
+                self._drawing = False
+                if len(self._poly_pts) >= 3:
+                    self._shape_item.setPolygon(self._poly_pts)
+                    self._shape_item.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                    self._shape_item.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                    self.shape_committed.emit()
+                else:
+                    self.scene().removeItem(self._shape_item)
+                    self._shape_item = None
+                self._poly_pts = QPolygonF()
+                return
             if self._drawing:
                 # Initial shape creation by drag
                 self._drawing = False
@@ -2207,6 +2247,7 @@ class NodeROIViewWidget(NodeBaseWidget):
                 ('Ellipse',    'ellipse'),
                 ('Rectangle',  'rectangle'),
                 ('Polygon',    'polygon'),
+                ('Lasso',      'lasso'),
         ]):
             btn = QtWidgets.QPushButton(label)
             btn.setCheckable(True)
@@ -2414,6 +2455,7 @@ class NodeROIViewWidget(NodeBaseWidget):
             'ellipse':    'Drag to draw  ·  drag edges to resize  ·  drag body to move',
             'rectangle':  'Drag to draw  ·  drag edges to resize  ·  drag body to move',
             'polygon':    'Click to add vertices  ·  Enter = close  ·  Backspace = undo  ·  Del = clear',
+            'lasso':      'Click and drag to draw freehand  ·  Del = clear',
         }
         self._tip.setText(tips.get(key, ''))
 
@@ -2423,7 +2465,7 @@ class NodeROIViewWidget(NodeBaseWidget):
         roi = self._view.get_roi_data()
         # Show rotation only for ellipse/rect shape types AND only when an
         # ellipse/rect item is actually drawn
-        show = (key != 'polygon' and
+        show = (key not in ('polygon', 'lasso') and
                 roi is not None and
                 roi.get('shape') in ('ellipse', 'rectangle'))
         self._rot_row_widget.setVisible(show)
@@ -2438,7 +2480,7 @@ class NodeROIViewWidget(NodeBaseWidget):
 
 class ROIMaskNode(BaseExecutionNode):
     """
-    Draws an ROI (ellipse, rectangle, or polygon) directly on the node surface and outputs a binary mask plus a cropped image.
+    Draws an ROI (ellipse, rectangle, polygon, or lasso) directly on the node surface and outputs a binary mask plus a cropped image.
 
     Inputs:
     - **image** — the image to draw on (sets the background)
