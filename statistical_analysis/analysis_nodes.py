@@ -679,6 +679,65 @@ class _RotatedHeaderView(QtWidgets.QHeaderView):
         painter.restore()
 
 
+class _PairMatrixModel(QtCore.QAbstractTableModel):
+    """Lightweight model for the pair-selection matrix (avoids QTableWidgetItem overhead)."""
+
+    _SEL_COLOR   = QtGui.QColor(70, 160, 255, 180)
+    _UNSEL_COLOR = QtGui.QColor(40, 40, 40)
+    _DIAG_COLOR  = QtGui.QColor(30, 30, 30)
+    _SEL_LOWER   = QtGui.QColor(70, 160, 255, 60)
+
+    def __init__(self, widget):
+        super().__init__()
+        self._widget = widget  # back-ref to PairwiseMatrixWidget for groups/selected
+
+    def rowCount(self, parent=None):
+        return len(self._widget._groups)
+
+    def columnCount(self, parent=None):
+        return len(self._widget._groups)
+
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        r, c = index.row(), index.column()
+        groups = self._widget._groups
+        if r >= len(groups) or c >= len(groups):
+            return None
+        if role == QtCore.Qt.ItemDataRole.DisplayRole:
+            if r == c:
+                return '—'
+            if r < c:
+                pair = tuple(sorted((groups[r], groups[c])))
+                return '✓' if pair in self._widget._selected else ''
+            return ''
+        if role == QtCore.Qt.ItemDataRole.BackgroundRole:
+            if r == c:
+                return self._DIAG_COLOR
+            pair = tuple(sorted((groups[r], groups[c])))
+            sel = pair in self._widget._selected
+            if r < c:
+                return self._SEL_COLOR if sel else self._UNSEL_COLOR
+            return self._SEL_LOWER if sel else self._DIAG_COLOR
+        if role == QtCore.Qt.ItemDataRole.TextAlignmentRole:
+            return int(QtCore.Qt.AlignmentFlag.AlignCenter)
+        if role == QtCore.Qt.ItemDataRole.ToolTipRole:
+            if r != c:
+                a, b = (groups[r], groups[c]) if r < c else (groups[c], groups[r])
+                return f'{a}  vs  {b}'
+        return None
+
+    def headerData(self, section, orientation, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if role == QtCore.Qt.ItemDataRole.DisplayRole and section < len(self._widget._groups):
+            return self._widget._groups[section]
+        return None
+
+    def flags(self, index):
+        return QtCore.Qt.ItemFlag.ItemIsEnabled
+
+    def refresh(self):
+        """Notify views that all data changed."""
+        self.layoutChanged.emit()
+
+
 class PairwiseMatrixWidget(NodeBaseWidget):
     """
     Interactive NxN matrix grid for selecting which group pairs to compare.
@@ -691,10 +750,6 @@ class PairwiseMatrixWidget(NodeBaseWidget):
     pairs_changed = QtCore.Signal(str)        # emits "A|B, C|D" string
     update_groups_signal = QtCore.Signal(list) # receives list[str] of group names
 
-    _SEL_COLOR   = QtGui.QColor(70, 160, 255, 180)
-    _UNSEL_COLOR = QtGui.QColor(40, 40, 40)
-    _DIAG_COLOR  = QtGui.QColor(30, 30, 30)
-    _REF_COLOR   = QtGui.QColor(255, 180, 60, 180)
 
     def __init__(self, parent=None, name='', label=''):
         super().__init__(parent, name, label)
@@ -708,7 +763,10 @@ class PairwiseMatrixWidget(NodeBaseWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
 
-        self._table = QtWidgets.QTableWidget()
+        # Use QTableView + model (much lighter than QTableWidget in a proxy)
+        self._model = _PairMatrixModel(self)
+        self._table = QtWidgets.QTableView()
+        self._table.setModel(self._model)
         self._table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
         self._table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
 
@@ -717,15 +775,14 @@ class PairwiseMatrixWidget(NodeBaseWidget):
         self._table.setHorizontalHeader(self._col_header)
         self._col_header.section_clicked_signal.connect(self._on_header_clicked)
 
-        # Row headers — click to toggle all pairs for that group
+        # Row headers
         self._table.verticalHeader().setDefaultSectionSize(22)
         self._table.verticalHeader().setMinimumSectionSize(20)
         self._table.verticalHeader().setSectionsClickable(True)
         self._table.verticalHeader().sectionClicked.connect(self._on_header_clicked)
 
-        self._table.setFixedHeight(140)
         self._table.setStyleSheet("""
-            QTableWidget {
+            QTableView {
                 background-color: #1e1e1e; color: #d4d4d4;
                 gridline-color: #3a3a3a; border: 1px solid #3a3a3a;
                 font-size: 10px;
@@ -735,11 +792,13 @@ class PairwiseMatrixWidget(NodeBaseWidget):
                 border: 1px solid #3a3a3a; padding: 2px; font-size: 10px;
             }
         """)
-        self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.clicked.connect(lambda idx: self._on_cell_clicked(idx.row(), idx.column()))
         layout.addWidget(self._table)
 
         # quick-action buttons
-        btn_row = QtWidgets.QHBoxLayout()
+        self._btn_row_widget = QtWidgets.QWidget()
+        btn_row = QtWidgets.QHBoxLayout(self._btn_row_widget)
+        btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.setSpacing(4)
         btn_all = QtWidgets.QPushButton('All')
         btn_none = QtWidgets.QPushButton('None')
@@ -750,7 +809,11 @@ class PairwiseMatrixWidget(NodeBaseWidget):
         btn_row.addWidget(btn_all)
         btn_row.addWidget(btn_none)
         btn_row.addStretch()
-        layout.addLayout(btn_row)
+        layout.addWidget(self._btn_row_widget)
+
+        # Hide until groups are populated
+        self._table.hide()
+        self._btn_row_widget.hide()
 
         self.set_custom_widget(container)
         self.update_groups_signal.connect(self._rebuild_grid)
@@ -771,51 +834,20 @@ class PairwiseMatrixWidget(NodeBaseWidget):
             parts = [p.strip() for p in tok.split('|')]
             if len(parts) == 2 and all(parts):
                 self._selected.add(tuple(sorted(parts)))
-        self._repaint_cells()
+        self._model.refresh()
 
     # ── grid management ───────────────────────────────────────────────
     def _rebuild_grid(self, groups: list[str]):
         self._is_updating = True
         self._groups = list(groups)
         n = len(groups)
-        self._table.setRowCount(n)
-        self._table.setColumnCount(n)
+        self._table.show()
+        self._btn_row_widget.show()
 
-        self._table.setVerticalHeaderLabels(groups)
-        self._table.setHorizontalHeaderLabels(groups)
+        # Model handles all data/colors — just notify it changed
+        self._model.refresh()
 
-        for r in range(n):
-            for c in range(n):
-                item = QtWidgets.QTableWidgetItem()
-                item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
-                if r == c:
-                    item.setBackground(self._DIAG_COLOR)
-                    item.setText('—')
-                    item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                elif r < c:
-                    pair = tuple(sorted((groups[r], groups[c])))
-                    if pair in self._selected:
-                        item.setBackground(self._SEL_COLOR)
-                        item.setText('✓')
-                    else:
-                        item.setBackground(self._UNSEL_COLOR)
-                        item.setText('')
-                    item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                    item.setToolTip(f'{groups[r]}  vs  {groups[c]}')
-                else:
-                    pair = tuple(sorted((groups[r], groups[c])))
-                    if pair in self._selected:
-                        item.setBackground(
-                            QtGui.QColor(self._SEL_COLOR.red(),
-                                         self._SEL_COLOR.green(),
-                                         self._SEL_COLOR.blue(), 60))
-                    else:
-                        item.setBackground(self._DIAG_COLOR)
-                    item.setText('')
-                    item.setToolTip(f'{groups[c]}  vs  {groups[r]}')
-                self._table.setItem(r, c, item)
-
-        # Column width: fixed narrow cells (just enough for ✓)
+        # Column width: fixed narrow cells
         cell_w = 26
         for c in range(n):
             self._table.setColumnWidth(c, cell_w)
@@ -841,27 +873,6 @@ class PairwiseMatrixWidget(NodeBaseWidget):
             self.widget().adjustSize()
             self.node.view.draw_node()
 
-    def _repaint_cells(self):
-        n = len(self._groups)
-        for r in range(n):
-            for c in range(n):
-                if r == c:
-                    continue
-                item = self._table.item(r, c)
-                if not item:
-                    continue
-                pair = tuple(sorted((self._groups[r], self._groups[c])))
-                sel = pair in self._selected
-                if r < c:
-                    item.setBackground(self._SEL_COLOR if sel else self._UNSEL_COLOR)
-                    item.setText('✓' if sel else '')
-                else:
-                    item.setBackground(
-                        QtGui.QColor(self._SEL_COLOR.red(),
-                                     self._SEL_COLOR.green(),
-                                     self._SEL_COLOR.blue(), 60)
-                        if sel else self._DIAG_COLOR)
-
     # ── interaction ───────────────────────────────────────────────────
     def _on_header_clicked(self, index):
         """Toggle all pairs involving the group at `index`."""
@@ -878,7 +889,7 @@ class PairwiseMatrixWidget(NodeBaseWidget):
             self._selected -= all_pairs
         else:
             self._selected |= all_pairs
-        self._repaint_cells()
+        self._model.refresh()
         self.pairs_changed.emit(self.selected_pairs_str())
 
     def _on_cell_clicked(self, row, col):
@@ -890,7 +901,7 @@ class PairwiseMatrixWidget(NodeBaseWidget):
             self._selected.discard(pair)
         else:
             self._selected.add(pair)
-        self._repaint_cells()
+        self._model.refresh()
         self.pairs_changed.emit(self.selected_pairs_str())
 
     def _select_all(self):
@@ -898,12 +909,12 @@ class PairwiseMatrixWidget(NodeBaseWidget):
         for i in range(len(self._groups)):
             for j in range(i + 1, len(self._groups)):
                 self._selected.add(tuple(sorted((self._groups[i], self._groups[j]))))
-        self._repaint_cells()
+        self._model.refresh()
         self.pairs_changed.emit(self.selected_pairs_str())
 
     def _select_none(self):
         self._selected.clear()
-        self._repaint_cells()
+        self._model.refresh()
         self.pairs_changed.emit(self.selected_pairs_str())
 
     # ── NodeBaseWidget interface ──────────────────────────────────────

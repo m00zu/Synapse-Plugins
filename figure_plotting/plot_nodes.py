@@ -2614,10 +2614,10 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
                         sns.stripplot(data=df_long, x='Group', y='Value', order=plot_order, color=mpl_color, ax=ax, **swarm_kws)
                     else:
                         sns.swarmplot(data=df_long, x='Group', y='Value', order=plot_order, color=mpl_color, ax=ax, **swarm_kws)
-                    # Single-color: one collection for all dots
+                    # Single-color: no legend needed — groups are on the x-axis
                     _new_colls = [c for c in ax.collections if id(c) not in _colls_before]
-                    for _ci, _c in enumerate(_new_colls):
-                        _c.set_label(plot_order[_ci] if _ci < len(plot_order) else 'All')
+                    for _c in _new_colls:
+                        _c.set_label('_nolegend_')
                         
                 # After seaborn plot, collections contains one PathCollection per hue or group (usually)
                 m_cycle_str = str(self.get_property('marker_cycle')).strip()
@@ -2687,14 +2687,10 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
                               estimator='mean', errorbar=err_bar_arg, 
                               markers='_', capsize=cap, color=err_mpl_color, 
                               err_kws={'linewidth': lwidth, 'zorder': 10}, linestyles='none', markersize=msize, ax=ax, zorder=10)
-                # Label newly added lines per-group so FigureEditNode names them
+                # Hide error bar lines from legend
                 _new_lines = [l for l in ax.get_lines() if id(l) not in _lines_before]
-                for _li, _line in enumerate(_new_lines):
-                    if _li == 0:
-                        _line.set_label('Mean marker')
-                    else:
-                        gname = plot_order[_li - 1] if (_li - 1) < len(plot_order) else f'G{_li}'
-                        _line.set_label(f'Error: {gname}')
+                for _line in _new_lines:
+                    _line.set_label('_nolegend_')
 
             ctrl_group = str(self.get_property('control_group') or '').strip()
             if ctrl_group and ctrl_group in plot_order:
@@ -3408,7 +3404,7 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
 
         fig, ax = _make_fig(self)
         sns.violinplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
-                       palette=palette, inner=inner, legend=False, ax=ax)
+                       palette=palette, inner=inner, cut=0, legend=False, ax=ax)
         if bool(self.get_property('show_points')):
             pt_style = str(self.get_property('point_style') or 'Strip')
             pt_size = int(self.get_property('point_size') or 3)
