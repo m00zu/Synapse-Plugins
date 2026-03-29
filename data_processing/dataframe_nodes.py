@@ -2530,3 +2530,83 @@ class GroupNormalizationNode(BaseExecutionNode):
             return True, None
         except Exception as e:
             return False, str(e)
+
+
+# ── Save Table Node ──────────────────────────────────────────────────────────
+
+class SaveTableNode(BaseExecutionNode):
+    """
+    Saves a table to disk. Click Browse to choose file location and format.
+
+    Inputs:
+    - **table** — TableData to save
+
+    Supported formats: CSV, TSV, Excel (.xlsx), GraphPad Prism (.pzfx).
+    Users can also type any path with a custom extension directly.
+
+    Keywords: save, export, csv, tsv, excel, xlsx, pzfx, table, write, 儲存, 匯出, 表格
+    """
+    __identifier__ = 'nodes.dataframe.IO'
+    NODE_NAME = 'Save Table'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': []}
+    _collection_aware = True
+
+    _EXT_FILTER = (
+        'CSV Files (*.csv);;'
+        'TSV Files (*.tsv);;'
+        'Excel Files (*.xlsx);;'
+        'GraphPad Prism (*.pzfx);;'
+        'All Files (*)'
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('table', color=PORT_COLORS['table'])
+
+        from nodes.base import NodeFileSaver
+        saver = NodeFileSaver(self.view, name='file_path', label='Save Path',
+                              ext_filter=self._EXT_FILTER)
+        self.add_custom_widget(saver,
+                               widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value)
+
+    def evaluate(self):
+        self.reset_progress()
+
+        port = self.inputs().get('table')
+        if not port or not port.connected_ports():
+            self.mark_error()
+            return False, "No input connected"
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if not isinstance(data, TableData):
+            self.mark_error()
+            return False, "Input must be TableData"
+
+        file_path = str(self.get_property('file_path') or '').strip()
+        if not file_path:
+            self.mark_error()
+            return False, "No file path specified"
+
+        import os
+        os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
+        ext = os.path.splitext(file_path)[1].lower()
+        df = data.df
+
+        self.set_progress(30)
+        try:
+            if ext == '.xlsx':
+                df.to_excel(file_path, index=False)
+            elif ext == '.tsv':
+                df.to_csv(file_path, sep='\t', index=False)
+            elif ext == '.pzfx':
+                from nodes.io_nodes import write_pzfx
+                write_pzfx({"Data 1": df}, file_path)
+            else:
+                df.to_csv(file_path, index=False)
+
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+        except Exception as e:
+            self.mark_error()
+            return False, str(e)

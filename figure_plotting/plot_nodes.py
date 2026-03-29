@@ -5304,3 +5304,76 @@ class AnglePlotNode(PlotToolboxMixin, BaseExecutionNode):
             import traceback
             self.mark_error()
             return False, traceback.format_exc()
+
+
+# ── Save Figure Node ─────────────────────────────────────────────────────────
+
+class SaveFigureNode(BaseExecutionNode):
+    """
+    Saves a matplotlib figure to disk. Click Browse to choose file location and format.
+
+    Inputs:
+    - **figure** — FigureData to save
+
+    Supported formats: PNG, SVG, TIFF, JPEG.
+    Users can also type any path with a custom extension directly.
+
+    Keywords: save, export, figure, plot, png, svg, tiff, write, 儲存, 匯出, 圖表
+    """
+    __identifier__ = 'nodes.plotting'
+    NODE_NAME = 'Save Figure'
+    PORT_SPEC = {'inputs': ['figure'], 'outputs': []}
+    _collection_aware = True
+
+    _EXT_FILTER = (
+        'PNG Files (*.png);;'
+        'SVG Files (*.svg);;'
+        'TIFF Files (*.tif *.tiff);;'
+        'JPEG Files (*.jpg *.jpeg);;'
+        'All Files (*)'
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('figure', color=PORT_COLORS['figure'])
+
+        from nodes.base import NodeFileSaver
+        saver = NodeFileSaver(self.view, name='file_path', label='Save Path',
+                              ext_filter=self._EXT_FILTER)
+        self.add_custom_widget(saver,
+                               widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value)
+
+        self._add_int_spinbox('dpi', 'DPI', value=300, min_val=72, max_val=1200)
+
+    def evaluate(self):
+        self.reset_progress()
+
+        port = self.inputs().get('figure')
+        if not port or not port.connected_ports():
+            self.mark_error()
+            return False, "No input connected"
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if not isinstance(data, FigureData) or data.payload is None:
+            self.mark_error()
+            return False, "Input must be FigureData"
+
+        file_path = str(self.get_property('file_path') or '').strip()
+        if not file_path:
+            self.mark_error()
+            return False, "No file path specified"
+
+        import os
+        os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
+        dpi = int(self.get_property('dpi') or 300)
+        fig = data.payload
+
+        self.set_progress(30)
+        try:
+            fig.savefig(file_path, bbox_inches='tight', dpi=dpi)
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+        except Exception as e:
+            self.mark_error()
+            return False, str(e)

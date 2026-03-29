@@ -2301,3 +2301,104 @@ class ImageHistogramNode(BaseExecutionNode):
         self.set_progress(100)
         self.mark_clean()
         return True, None
+
+
+# ── Save Image Node ──────────────────────────────────────────────────────────
+
+class SaveImageNode(BaseExecutionNode):
+    """
+    Saves an image to disk. Click Browse to choose file location and format.
+
+    Inputs:
+    - **image** — ImageData to save
+
+    Supported formats: PNG, TIFF (16-bit preserved), JPEG.
+    Users can also type any path with a custom extension directly.
+    TIFF preserves bit depth and scale metadata when available.
+
+    Keywords: save, export, image, png, tiff, jpeg, write, 儲存, 匯出, 影像
+    """
+    __identifier__ = 'nodes.image_process.IO'
+    NODE_NAME = 'Save Image'
+    PORT_SPEC = {'inputs': ['image'], 'outputs': []}
+    _collection_aware = True
+
+    _EXT_FILTER = (
+        'PNG Files (*.png);;'
+        'TIFF Files (*.tif *.tiff);;'
+        'JPEG Files (*.jpg *.jpeg);;'
+        'All Files (*)'
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+
+        from nodes.base import NodeFileSaver
+        saver = NodeFileSaver(self.view, name='file_path', label='Save Path',
+                              ext_filter=self._EXT_FILTER)
+        self.add_custom_widget(saver,
+                               widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value)
+
+    def evaluate(self):
+        self.reset_progress()
+
+        port = self.inputs().get('image')
+        if not port or not port.connected_ports():
+            self.mark_error()
+            return False, "No input connected"
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if not isinstance(data, ImageData):
+            self.mark_error()
+            return False, "Input must be ImageData"
+
+        file_path = str(self.get_property('file_path') or '').strip()
+        if not file_path:
+            self.mark_error()
+            return False, "No file path specified"
+
+        import os
+        os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
+        ext = os.path.splitext(file_path)[1].lower()
+        arr = data.payload
+
+        self.set_progress(30)
+        try:
+            bit_depth = getattr(data, 'bit_depth', 8) or 8
+            scale_um = getattr(data, 'scale_um', None)
+
+            if ext in ('.tif', '.tiff'):
+                import tifffile
+                if arr.dtype == np.float32 or arr.dtype == np.float64:
+                    if bit_depth == 16:
+                        out = (np.clip(arr, 0, 1) * 65535).astype(np.uint16)
+                    else:
+                        out = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+                else:
+                    out = arr
+                kw = {}
+                if scale_um and scale_um > 0:
+                    px_per_cm = 10000.0 / scale_um
+                    kw = {'resolution': (px_per_cm, px_per_cm), 'resolutionunit': 3}
+                tifffile.imwrite(file_path, out, **kw)
+            else:
+                if arr.dtype == np.float32 or arr.dtype == np.float64:
+                    out = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+                else:
+                    out = arr
+                pil = Image.fromarray(out)
+                save_kw = {}
+                if scale_um and scale_um > 0:
+                    ppi = int(1_000_000.0 / scale_um / 39.3701)
+                    save_kw['dpi'] = (ppi, ppi)
+                if ext in ('.jpg', '.jpeg'):
+                    save_kw['quality'] = 95
+                pil.save(file_path, **save_kw)
+
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+        except Exception as e:
+            self.mark_error()
+            return False, str(e)
