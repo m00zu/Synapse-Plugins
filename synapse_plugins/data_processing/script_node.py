@@ -109,6 +109,26 @@ class _CodePreviewWidget(NodeBaseWidget):
             self.on_value_changed(code)
 
 
+class _ScriptOutputHelper(QtCore.QObject):
+    """Main-thread helper that shows print() output as a popup."""
+    _show = QtCore.Signal(str, str)
+
+    def __init__(self):
+        super().__init__()
+        self._show.connect(self._on_show)
+
+    def _on_show(self, title, text):
+        QtWidgets.QMessageBox.information(
+            QtWidgets.QApplication.activeWindow(), title, text)
+
+_output_helper = _ScriptOutputHelper()
+
+
+def _show_script_output(node_name: str, text: str):
+    """Thread-safe: emit signal to show popup on main thread."""
+    _output_helper._show.emit(f'Python Script — {node_name}', text)
+
+
 class PythonScriptNode(BaseExecutionNode):
     """
     Run custom Python code with dynamic input and output ports.
@@ -117,78 +137,68 @@ class PythonScriptNode(BaseExecutionNode):
     formulas, advanced scipy/skimage functions, string parsing, conditional
     logic, or any one-off data transformation.
 
-    Setup
-    -----
+    ### Setup
+
     - **Inputs / Outputs** spinboxes control how many ports the node has.
     - Click **Edit Script…** to open the full code editor (dark theme).
     - The inline preview on the node card shows the current script.
+    - `print()` output is shown as a popup after execution.
 
-    Variables available inside the script
-    -------------------------------------
-    ==================  ====================================================
-    ``in_1``, ``in_2``  Data from each input port (DataFrame, ndarray, or
-                        raw value).  Unconnected ports are ``None``.
-    ``out_1``, …        Assign your results here to send them downstream.
-    ``pd``              pandas
-    ``np``              numpy
-    ``scipy``           scipy  (use ``scipy.stats``, ``scipy.ndimage``, etc.)
-    ``skimage``         scikit-image  (use ``skimage.filters``, etc.)
-    ``cv2``             OpenCV
-    ``PIL``             Pillow
-    ``plt``             matplotlib.pyplot
-    ==================  ====================================================
+    ### Variables
 
-    Users can import additional submodules in their script as needed::
+    | Variable | Description |
+    |----------|-------------|
+    | `in_1`, `in_2`, … | Data from each input port (DataFrame, ndarray, or raw value). Unconnected = `None`. |
+    | `out_1`, `out_2`, … | Assign results here to send downstream. |
+    | `pd` | pandas |
+    | `np` | numpy |
+    | `scipy` | scipy (use `scipy.stats`, `scipy.ndimage`, etc.) |
+    | `skimage` | scikit-image (use `skimage.filters`, etc.) |
+    | `cv2` | OpenCV |
+    | `PIL` | Pillow |
+    | `plt` | matplotlib.pyplot |
 
-        from scipy.stats import mannwhitneyu
-        from skimage.morphology import disk, binary_erosion
+    You can `import` any additional module installed in your environment.
 
-    Output type detection
-    ---------------------
-    Results are auto-wrapped: DataFrame → TableData, 2-D ndarray → ImageData,
-    matplotlib Figure → FigureData, scalar → single-cell TableData.
+    ### Output types
 
-    To force a specific type, wrap explicitly::
+    Results are auto-wrapped: DataFrame → TableData, 2D ndarray → ImageData,
+    Figure → FigureData, scalar → single-cell TableData.
+    To force a type, use: `out_1 = MaskData(payload=arr)` or `ImageData(payload=arr, bit_depth=16)`.
 
-        out_1 = MaskData(payload=binary_array)
-        out_1 = ImageData(payload=arr, bit_depth=16)
-        out_1 = StatData(payload=results_df)
+    ### Examples
 
-    Examples
-    --------
-    **Fold-change from delta-delta Ct** (qPCR)::
+    **Fold-change** (qPCR) — `df['fold_change'] = 2 ** (-df['ddCt'])`:
 
-        df = in_1.copy()
-        df['fold_change'] = 2 ** (-df['ddCt'])
-        out_1 = df
+    - `df = in_1.copy()`
+    - `df['fold_change'] = 2 ** (-df['ddCt'])`
+    - `out_1 = df`
 
-    **Column ratio**::
+    **Column ratio** — `df['ratio'] = df['intensity'] / df['area']`:
 
-        df = in_1.copy()
-        df['ratio'] = df['intensity'] / df['area']
-        out_1 = df
+    - `df = in_1.copy()`
+    - `df['ratio'] = df['intensity'] / df['area']`
+    - `out_1 = df`
 
-    **Split by median (2 outputs)**::
+    **Split by median** (set Outputs to 2):
 
-        med = in_1['value'].median()
-        out_1 = in_1[in_1['value'] > med]
-        out_2 = in_1[in_1['value'] <= med]
+    - `med = in_1['value'].median()`
+    - `out_1 = in_1[in_1['value'] > med]`
+    - `out_2 = in_1[in_1['value'] <= med]`
 
-    **Custom scipy test**::
+    **Custom scipy test**:
 
-        from scipy.stats import mannwhitneyu
-        u, p = mannwhitneyu(
-            in_1[in_1['group']=='A']['value'],
-            in_1[in_1['group']=='B']['value'])
-        out_1 = pd.DataFrame({'U': [u], 'p': [p]})
+    - `from scipy.stats import mannwhitneyu`
+    - `g1 = in_1[in_1['group']=='A']['value']`
+    - `u, p = mannwhitneyu(g1, g2)`
+    - `out_1 = pd.DataFrame({'U': [u], 'p': [p]})`
 
-    **Image: apply custom filter**::
+    **Image filter**:
 
-        from scipy.ndimage import gaussian_filter
-        out_1 = gaussian_filter(in_1, sigma=3)
+    - `from scipy.ndimage import gaussian_filter`
+    - `out_1 = gaussian_filter(in_1, sigma=3)`
 
-    Keywords: python, script, code, custom, formula, expression, exec,
-              compute, 自定義, 腳本, 程式, 自訂公式
+    Keywords: python, script, code, custom, formula, expression, exec, compute, 自定義, 腳本, 程式, 自訂公式
     """
     __identifier__ = 'nodes.utility'
     NODE_NAME = 'Python Script'
@@ -334,12 +344,20 @@ class PythonScriptNode(BaseExecutionNode):
         for port_name in self.outputs():
             env[port_name] = None
 
-        # Execute
+        # Execute — capture print() output via StringIO
+        import io, contextlib
+        _stdout_capture = io.StringIO()
         try:
-            exec(code, {'__builtins__': __builtins__}, env)
+            with contextlib.redirect_stdout(_stdout_capture):
+                exec(code, {'__builtins__': __builtins__}, env)
         except Exception as e:
+            printed = _stdout_capture.getvalue().strip()
+            err_msg = f'Script error: {e}'
+            if printed:
+                err_msg += f'\n\nPrint output:\n{printed}'
             self.mark_error()
-            return False, f'Script error: {e}'
+            return False, err_msg
+        self._print_output = _stdout_capture.getvalue().strip()
 
         # Collect outputs and check for mismatched port names
         any_output = False
@@ -359,6 +377,10 @@ class PythonScriptNode(BaseExecutionNode):
                 f"Assigned to {', '.join(sorted(assigned_outs))} but port(s) don't exist. "
                 f"Increase Outputs to {max(int(n.split('_')[1]) for n in assigned_outs)}."
             )
+
+        if self._print_output:
+            # Store for retrieval; show popup via main-thread signal
+            _show_script_output(self.name(), self._print_output)
 
         if not any_output:
             self.mark_error()
