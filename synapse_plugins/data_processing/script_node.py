@@ -157,6 +157,7 @@ class PythonScriptNode(BaseExecutionNode):
     | `cv2` | OpenCV |
     | `PIL` | Pillow |
     | `plt` | matplotlib.pyplot |
+    | `set_progress(0-100)` | Update the node's progress bar during long operations |
 
     You can `import` any additional module installed in your environment.
 
@@ -210,7 +211,7 @@ class PythonScriptNode(BaseExecutionNode):
     })
 
     def __init__(self):
-        super().__init__(use_progress=False)
+        super().__init__(use_progress=True)
         self.set_port_deletion_allowed(True)
 
         # Start with 1 input, 1 output
@@ -317,6 +318,7 @@ class PythonScriptNode(BaseExecutionNode):
             'TableData': TableData, 'ImageData': ImageData,
             'MaskData': MaskData, 'FigureData': FigureData,
             'StatData': StatData,
+            'set_progress': self.set_progress,
         }
         for mod_name, alias in [
             ('scipy', 'scipy'),
@@ -389,6 +391,7 @@ class PythonScriptNode(BaseExecutionNode):
                 msg += '\n' + '\n'.join(warnings)
             return False, msg
 
+        self.set_progress(100)
         self.mark_clean()
         if warnings:
             return True, '\n'.join(warnings)
