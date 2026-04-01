@@ -3350,6 +3350,8 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('y_label',     '',      widget_type=H)
         self.create_property('plot_title',  '',      widget_type=H)
         self.create_property('inner_box',   True,    widget_type=H)
+        self.create_property('bw_adjust',  1.0,     widget_type=H)
+        self.create_property('violin_scale', 'area', widget_type=H)
         self.create_property('show_points', False,   widget_type=H)
         self.create_property('point_style', 'Strip', widget_type=H)
         self.create_property('point_size',  3,       widget_type=H)
@@ -3369,6 +3371,8 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_text('y_label',    'Y Label',        'Data', '')
         self._tb_text('plot_title', 'Title',           'Data', '')
         self._tb_checkbox('inner_box', 'Inner Box',   'Data', True)
+        self._tb_spinbox('bw_adjust', 'Bandwidth Adjust', 'Data', 1.0, 0.1, 3.0, 0.1, 1)
+        self._tb_combo('violin_scale', 'Violin Scale', 'Data', ['area', 'count', 'width'])
         self._tb_checkbox('show_points', 'Show Data Points', 'Data', False)
         self._tb_combo('point_style', 'Point Style',   'Data', ['Strip', 'Swarm'])
         self._tb_spinbox('point_size', 'Point Size',    'Data', 3, 1, 20)
@@ -3403,8 +3407,11 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
         g2idx  = {g: i for i, g in enumerate(groups)}
 
         fig, ax = _make_fig(self)
+        _bw  = float(self.get_property('bw_adjust') or 1.0)
+        _vsc = str(self.get_property('violin_scale') or 'area')
         sns.violinplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
-                       palette=palette, inner=inner, cut=0, legend=False, ax=ax)
+                       palette=palette, inner=inner, cut=0, bw_adjust=_bw,
+                       scale=_vsc, legend=False, ax=ax)
         if bool(self.get_property('show_points')):
             pt_style = str(self.get_property('point_style') or 'Strip')
             pt_size = int(self.get_property('point_size') or 3)
@@ -3489,6 +3496,8 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('point_style', 'Strip', widget_type=H)
         self.create_property('point_size',  3,       widget_type=H)
         self.create_property('point_color', 'match', widget_type=H)
+        self.create_property('box_width',   0.8,     widget_type=H)
+        self.create_property('show_mean',   False,   widget_type=H)
         self.create_property('fig_width',    8.0,     widget_type=H)
         self.create_property('fig_height',   6.0,     widget_type=H)
         self.create_property('tick_rotation', 0.0,    widget_type=H)
@@ -3500,6 +3509,8 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_order_list('order', 'X-Axis Order', 'Data')
         self._tb_combo('palette',    'Palette',          'Data',
                        ['Set2', 'husl', 'colorblind', 'pastel', 'muted', 'None'])
+        self._tb_spinbox('box_width', 'Box Width', 'Data', 0.8, 0.1, 1.0, 0.05, 2)
+        self._tb_checkbox('show_mean', 'Show Mean Marker', 'Data', False)
         self._tb_text('x_label',     'X Label',         'Data', '')
         self._tb_text('y_label',     'Y Label',         'Data', '')
         self._tb_text('plot_title',  'Title',            'Data', '')
@@ -3536,8 +3547,15 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
         g2idx   = {g: i for i, g in enumerate(groups)}
         fig, ax = _make_fig(self)
 
+        _bw = float(self.get_property('box_width') or 0.8)
         sns.boxplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
-                    palette=palette, legend=False, ax=ax)
+                    palette=palette, width=_bw, legend=False, ax=ax)
+        if bool(self.get_property('show_mean')):
+            for gi, grp in enumerate(groups):
+                vals = df[df[x_col] == grp][y_col].dropna()
+                if len(vals):
+                    ax.scatter([gi], [vals.mean()], marker='D', color='white',
+                               edgecolors='black', s=40, zorder=5, linewidths=1.2)
         if bool(self.get_property('show_points')):
             pt_style = str(self.get_property('point_style') or 'Strip')
             pt_size = int(self.get_property('point_size') or 3)
@@ -3850,6 +3868,10 @@ class ScatterPlotNode(BaseExecutionNode):
         self.add_combo_menu('palette',     'Palette',
                             items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
         self.add_checkbox('regression',    '', text='Regression line', state=False)
+        self._add_int_spinbox('marker_size', 'Marker Size', value=25, min_val=1, max_val=200, step=1)
+        self._add_float_spinbox('alpha', 'Opacity', value=0.7, min_val=0.05, max_val=1.0, step=0.05, decimals=2)
+        self.add_combo_menu('marker', 'Marker Style',
+                            items=['o', 's', '^', 'D', 'v', 'X', '+', '*'])
         self.add_text_input('x_label',    'X Label',  text='')
         self.add_text_input('y_label',    'Y Label',  text='')
         self.add_text_input('plot_title', 'Title',    text='')
@@ -3882,13 +3904,19 @@ class ScatterPlotNode(BaseExecutionNode):
             self.mark_error()
             return False, f"Columns '{x_col}' or '{y_col}' not found"
 
+        m_size  = int(self.get_property('marker_size') or 25)
+        m_alpha = float(self.get_property('alpha') or 0.7)
+        m_style = str(self.get_property('marker') or 'o')
+
         fig, ax = _make_fig(self)
         if reg and hue_col is None:
             sns.regplot(data=df, x=x_col, y=y_col,
-                        scatter_kws={'alpha': 0.6, 's': 20}, ax=ax)
+                        scatter_kws={'alpha': m_alpha, 's': m_size, 'marker': m_style},
+                        ax=ax)
         else:
             sns.scatterplot(data=df, x=x_col, y=y_col,
-                            hue=hue_col, palette=palette, alpha=0.7, s=25, ax=ax)
+                            hue=hue_col, palette=palette, alpha=m_alpha,
+                            s=m_size, marker=m_style, ax=ax)
         self.set_progress(70)
         _finalize_ax(ax, self)
         fig.tight_layout()
@@ -3934,8 +3962,11 @@ class HistogramNode(BaseExecutionNode):
         self.add_combo_menu('palette',     'Palette',
                             items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
         self.add_checkbox('kde',           '', text='KDE overlay', state=True)
+        self.add_combo_menu('stat', 'Stat Type',
+                            items=['count', 'frequency', 'density', 'percent', 'probability'])
+        self._add_float_spinbox('hist_alpha', 'Bar Opacity', value=0.7, min_val=0.1, max_val=1.0, step=0.05, decimals=2)
         self.add_text_input('x_label',    'X Label',  text='')
-        self.add_text_input('y_label',    'Y Label',  text='Count')
+        self.add_text_input('y_label',    'Y Label',  text='')
         self.add_text_input('plot_title', 'Title',    text='')
 
         import NodeGraphQt
@@ -3977,8 +4008,11 @@ class HistogramNode(BaseExecutionNode):
         
         hue = grp_col if grp_col and grp_col in df.columns else None
         fig, ax = _make_fig(self)
+        _stat  = str(self.get_property('stat') or 'count')
+        _alpha = float(self.get_property('hist_alpha') or 0.7)
         sns.histplot(data=df, x=val_col, hue=hue, palette=palette,
-                     bins=bins, binwidth=binwidth, kde=kde, ax=ax)
+                     bins=bins, binwidth=binwidth, kde=kde,
+                     stat=_stat, alpha=_alpha, ax=ax)
         self.set_progress(70)
         _finalize_ax(ax, self)
         fig.tight_layout()
@@ -4233,6 +4267,13 @@ class XYLinePlotNode(BaseExecutionNode):
                             items=['SEM', 'SD', '95% CI', 'None'])
         self.add_text_input('x_order',   'X Order (comma-sep, opt.)', text='')
         self.add_checkbox('show_points', '', text='Show Individual Points', state=True)
+        self._add_float_spinbox('line_width', 'Line Width', value=1.8, min_val=0.5, max_val=10.0, step=0.2, decimals=1)
+        self.add_combo_menu('line_style', 'Line Style',
+                            items=['-', '--', '-.', ':'])
+        self._add_int_spinbox('marker_size', 'Marker Size', value=5, min_val=1, max_val=30, step=1)
+        self.add_combo_menu('marker', 'Marker Style',
+                            items=['o', 's', '^', 'D', 'v', 'X', '+', '*', 'None'])
+        self._add_float_spinbox('capsize', 'Error Cap Size', value=4.0, min_val=0.0, max_val=15.0, step=0.5, decimals=1)
         self.add_combo_menu('palette', 'Color Palette',
                             items=['Set2', 'tab10', 'colorblind', 'husl', 'dark', 'None'])
         self.add_text_input('x_label',    'X Label',    text='')
@@ -4349,13 +4390,21 @@ class XYLinePlotNode(BaseExecutionNode):
                                        color=color, alpha=0.35, s=18, zorder=2)
                     numeric_x = False
 
+                _lw  = float(self.get_property('line_width') or 1.8)
+                _ls  = str(self.get_property('line_style') or '-')
+                _ms  = int(self.get_property('marker_size') or 5)
+                _mk  = str(self.get_property('marker') or 'o')
+                _mk  = _mk if _mk != 'None' else ''
+                _cap = float(self.get_property('capsize') or 4.0)
                 if ep is not None:
                     ax.errorbar(xs_p, ys_p, yerr=ep, color=color, label=label,
-                                marker='o', markersize=5, linewidth=1.8,
-                                capsize=4, capthick=1.5, elinewidth=1.5, zorder=3)
+                                marker=_mk, markersize=_ms, linewidth=_lw,
+                                linestyle=_ls, capsize=_cap, capthick=max(1, _lw * 0.8),
+                                elinewidth=max(1, _lw * 0.8), zorder=3)
                 else:
                     ax.plot(xs_p, ys_p, color=color, label=label,
-                            marker='o', markersize=5, linewidth=1.8, zorder=3)
+                            marker=_mk, markersize=_ms, linewidth=_lw,
+                            linestyle=_ls, zorder=3)
 
                 if not numeric_x:
                     for xi, xv in enumerate(xs):
@@ -4433,6 +4482,7 @@ class HeatmapNode(BaseExecutionNode):
         self.add_checkbox('cluster_rows', '', text='Cluster Rows',    state=False)
         self.add_checkbox('cluster_cols', '', text='Cluster Columns', state=False)
         self.add_checkbox('annotate',     '', text='Show Values',     state=True)
+        self.add_text_input('annot_fmt',  'Value Format',          text='.2f')
         self.add_text_input('vmin',       'Color Min (blank=auto)', text='')
         self.add_text_input('vmax',       'Color Max (blank=auto)', text='')
         self.add_text_input('plot_title', 'Title',                  text='')
@@ -4482,7 +4532,7 @@ class HeatmapNode(BaseExecutionNode):
 
             vmin = float(vmin_s) if vmin_s else None
             vmax = float(vmax_s) if vmax_s else None
-            fmt  = '.2f' if annotate else ''
+            fmt  = str(self.get_property('annot_fmt') or '.2f').strip() if annotate else ''
 
             self.set_progress(40)
             if clust_r or clust_c:
