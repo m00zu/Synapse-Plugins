@@ -17,11 +17,11 @@
     },
     "sam2_nodes": {
         "name": "SAM2 Segmentation",
-        "description": "Interactive click-to-segment with Meta SAM2 (ONNX, no PyTorch)"
+        "description": "Interactive click-to-segment with Meta SAM2"
     },
     "rdkit_nodes": {
         "name": "Cheminformatics",
-        "description": "RDKit molecule editing, docking, protein prep (fully vendored)"
+        "description": "RDKit molecule editing, docking, protein prep"
     },
     "volume_nodes": {
         "name": "3D Volume",

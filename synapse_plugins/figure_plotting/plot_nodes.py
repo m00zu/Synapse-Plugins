@@ -3629,6 +3629,7 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('bar_value_color',      [0, 0, 0, 255], widget_type=H)
         self.create_property('bar_value_fontweight', 'normal',widget_type=H)
         self.create_property('bar_value_offset',    8,       widget_type=H)
+        self.create_property('bar_width',   0.8,     widget_type=H)
         self.create_property('capsize',     0.1,     widget_type=H)
         self.create_property('show_points', False,   widget_type=H)
         self.create_property('point_style', 'Strip', widget_type=H)
@@ -3643,6 +3644,7 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_combo('palette',    'Palette',          'Data',
                        ['Set2', 'husl', 'colorblind', 'pastel', 'muted', 'None'])
         self._tb_combo('error_type', 'Error Bars',       'Data', ['se', 'sd', 'ci', 'pi'])
+        self._tb_spinbox('bar_width', 'Bar Width', 'Data', 0.8, 0.1, 1.0, 0.05, 2)
         self._tb_spinbox('capsize', 'Error Bar Cap', 'Data', 0.1, 0.0, 0.5, 0.02, 2)
         self._tb_checkbox('show_points', 'Show Data Points', 'Data', False)
         self._tb_combo('point_style', 'Point Style',     'Data', ['Strip', 'Swarm'])
@@ -3687,17 +3689,19 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         g2idx   = {g: i for i, g in enumerate(groups)}
         fig, ax = _make_fig(self)
 
-        capsize = float(self.get_property('capsize') or 0.1)
+        capsize   = float(self.get_property('capsize') or 0.1)
+        bar_width = float(self.get_property('bar_width') or 0.8)
         try:
             # seaborn ≥ 0.12: errorbar kwarg
             sns.barplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
                         palette=palette, errorbar=error_type, capsize=capsize,
-                        legend=False, ax=ax)
+                        width=bar_width, legend=False, ax=ax)
         except TypeError:
             # older seaborn: ci kwarg
             ci = 68 if error_type == 'se' else 95
             sns.barplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
-                        palette=palette, legend=False, ci=ci, capsize=capsize, ax=ax)
+                        palette=palette, legend=False, ci=ci, capsize=capsize,
+                        width=bar_width, ax=ax)
 
         # legend=False skips patch labelling; assign group names explicitly so
         # _extract_params can expose per-bar coloring in the figure editor.
