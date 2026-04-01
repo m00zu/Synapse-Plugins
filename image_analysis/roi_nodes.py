@@ -4,9 +4,8 @@ nodes/roi_nodes.py
 ROIMaskNode – draw an ROI (ellipse, rectangle, or polygon) directly on the
 node surface and output it as a binary MaskData mask.
 
-Adapted from PyQt5 FRAP tool (PyQt_ROI_try_2.py) and ported to PySide6 /
-NodeGraphQt conventions. cv2 is NOT required – mask rasterisation uses
-PIL.ImageDraw only.
+Adapted from PyQt5 FRAP tool (FRAPy) and ported to PySide6 /
+NodeGraphQt conventions.
 """
 
 from __future__ import annotations

@@ -1696,3 +1696,646 @@ class InteractiveParticleSelectNode(BaseImageProcessNode):
 
         self.set_progress(100)
         return True, None
+
+
+# ===========================================================================
+# Particle Classify Node — assign labels to named groups via lasso/rect
+# ===========================================================================
+
+def _mouse_pos_qpoint_classify(event):
+    """Qt6-safe mouse position extraction."""
+    return event.position().toPoint() if hasattr(event, 'position') else event.pos()
+
+
+class _ClassifyGraphicsView(QGraphicsView):
+    """Displays label image with group colors. Supports rect/lasso drawing
+    to select labels and assign them to the active group."""
+
+    labels_assigned = Signal(set)   # emits set of label IDs covered by drawn shape
+
+    def __init__(self, scene: QGraphicsScene):
+        super().__init__(scene)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+
+        self._label_arr: np.ndarray | None = None
+        self._bg_rgb: np.ndarray | None = None
+        self._group_map: dict[int, int] = {}   # label_id → group_idx (0=ungrouped)
+        self._group_colors: list[tuple] = []
+        self._all_labels: set[int] = set()
+        self._pixmap_item: QGraphicsPixmapItem | None = None
+        self._overlay_alpha: float = 0.5
+
+        # Drawing state
+        self._tool = 'rect'   # 'rect' or 'lasso'
+        self._drawing = False
+        self._draw_start = None
+        self._lasso_points: list[tuple] = []
+        self._rubber_item = None
+
+        self._scale: float = 1.0
+        self._pan_start = None
+
+    def set_tool(self, tool: str):
+        self._tool = tool
+
+    def load_label_data(self, label_arr, bg_rgb=None):
+        self._label_arr = label_arr
+        self._bg_rgb = bg_rgb
+        self._all_labels = set(int(l) for l in np.unique(label_arr) if l > 0)
+        # Keep existing group_map, prune stale
+        self._group_map = {k: v for k, v in self._group_map.items()
+                           if k in self._all_labels}
+        self._update_display()
+
+    def set_group_colors(self, colors: list[tuple]):
+        self._group_colors = colors
+        self._update_display()
+
+    def set_group_map(self, gmap: dict[int, int]):
+        self._group_map = dict(gmap)
+        self._update_display()
+
+    def _update_display(self):
+        if self._label_arr is None:
+            return
+        h, w = self._label_arr.shape
+        max_label = int(self._label_arr.max())
+
+        # Build LUT: label → RGB color
+        ungrouped_color = np.array([100, 100, 100], dtype=np.float32)
+        lut = np.zeros((max_label + 1, 3), dtype=np.float32)
+        for lbl in self._all_labels:
+            gidx = self._group_map.get(lbl, 0)
+            if gidx > 0 and gidx <= len(self._group_colors):
+                lut[lbl] = self._group_colors[gidx - 1]
+            else:
+                lut[lbl] = ungrouped_color
+
+        if self._bg_rgb is not None:
+            rgb = self._bg_rgb.astype(np.float32).copy()
+            overlay = lut[self._label_arr]
+            mask = self._label_arr > 0
+            a = self._overlay_alpha
+            rgb[mask] = rgb[mask] * (1 - a) + overlay[mask] * a
+            rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+        else:
+            rgb = lut[self._label_arr].astype(np.uint8)
+
+        qimg = QImage(rgb.data.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg)
+        if self._pixmap_item is None:
+            self._pixmap_item = QGraphicsPixmapItem(pixmap)
+            self._pixmap_item.setZValue(-1)
+            self.scene().addItem(self._pixmap_item)
+            self.scene().setSceneRect(QRectF(0, 0, w, h))
+            self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+        else:
+            self._pixmap_item.setPixmap(pixmap)
+
+    # ── drawing ──────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._pan_start = _mouse_pos_qpoint_classify(event)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(event)
+
+        scene_pos = self.mapToScene(_mouse_pos_qpoint_classify(event))
+        if self._tool == 'rect':
+            self._drawing = True
+            self._draw_start = scene_pos
+            # Visual rubber band
+            from PySide6.QtWidgets import QGraphicsRectItem
+            from PySide6.QtGui import QPen, QColor
+            self._rubber_item = QGraphicsRectItem()
+            self._rubber_item.setPen(QPen(QColor(255, 255, 0, 180), 1.5,
+                                          Qt.PenStyle.DashLine))
+            self._rubber_item.setBrush(QColor(255, 255, 0, 30))
+            self._rubber_item.setZValue(10)
+            self.scene().addItem(self._rubber_item)
+        elif self._tool == 'lasso':
+            self._drawing = True
+            self._lasso_points = [(scene_pos.x(), scene_pos.y())]
+            from PySide6.QtWidgets import QGraphicsPathItem
+            from PySide6.QtGui import QPen, QColor, QPainterPath
+            self._rubber_item = QGraphicsPathItem()
+            self._rubber_item.setPen(QPen(QColor(255, 255, 0, 180), 1.5,
+                                          Qt.PenStyle.DashLine))
+            self._rubber_item.setZValue(10)
+            self.scene().addItem(self._rubber_item)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._pan_start is not None:
+            delta = _mouse_pos_qpoint_classify(event) - self._pan_start
+            self._pan_start = _mouse_pos_qpoint_classify(event)
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - delta.y())
+            event.accept()
+            return
+        if self._drawing and self._rubber_item:
+            scene_pos = self.mapToScene(_mouse_pos_qpoint_classify(event))
+            if self._tool == 'rect' and self._draw_start:
+                x0, y0 = self._draw_start.x(), self._draw_start.y()
+                x1, y1 = scene_pos.x(), scene_pos.y()
+                self._rubber_item.setRect(QRectF(
+                    min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0)))
+            elif self._tool == 'lasso':
+                self._lasso_points.append((scene_pos.x(), scene_pos.y()))
+                from PySide6.QtGui import QPainterPath
+                path = QPainterPath()
+                path.moveTo(*self._lasso_points[0])
+                for pt in self._lasso_points[1:]:
+                    path.lineTo(*pt)
+                self._rubber_item.setPath(path)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton and self._pan_start:
+            self._pan_start = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self._drawing:
+            self._drawing = False
+            covered = self._find_covered_labels()
+            # Clean up rubber band
+            if self._rubber_item:
+                self.scene().removeItem(self._rubber_item)
+                self._rubber_item = None
+            if covered:
+                self.labels_assigned.emit(covered)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _find_covered_labels(self) -> set[int]:
+        """Find all label IDs whose bounding boxes are fully inside the drawn shape."""
+        if self._label_arr is None:
+            return set()
+        from skimage.measure import regionprops
+
+        if self._tool == 'rect' and self._draw_start:
+            scene_pos = self.mapToScene(_mouse_pos_qpoint_classify(
+                type('E', (), {'position': lambda s: self.mapFromScene(
+                    self._draw_start)})()))
+            # Use the rubber rect
+            r = self._rubber_item.rect() if self._rubber_item else QRectF()
+            x0, y0 = int(r.left()), int(r.top())
+            x1, y1 = int(r.right()), int(r.bottom())
+            # Check each label: fully inside rect?
+            covered = set()
+            for prop in regionprops(self._label_arr):
+                minr, minc, maxr, maxc = prop.bbox
+                if minr >= y0 and maxr <= y1 and minc >= x0 and maxc <= x1:
+                    covered.add(prop.label)
+            return covered
+
+        elif self._tool == 'lasso' and len(self._lasso_points) >= 3:
+            # Rasterize lasso polygon to a mask, then check which labels are fully inside
+            h, w = self._label_arr.shape
+            from PIL import Image as _PILImage, ImageDraw as _PILDraw
+            lasso_mask = _PILImage.new('L', (w, h), 0)
+            draw = _PILDraw.Draw(lasso_mask)
+            pts = [(int(x), int(y)) for x, y in self._lasso_points]
+            draw.polygon(pts, fill=255)
+            lasso_arr = np.array(lasso_mask) > 0
+
+            covered = set()
+            for prop in regionprops(self._label_arr):
+                label_mask = self._label_arr == prop.label
+                # "Fully covered" = all pixels of this label are inside the lasso
+                if np.all(lasso_arr[label_mask]):
+                    covered.add(prop.label)
+            return covered
+
+        return set()
+
+    def wheelEvent(self, event):
+        factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
+        self.scale(factor, factor)
+
+
+class _ParticleClassifyWidget(NodeBaseWidget):
+    """Widget for assigning labels to named groups via shape drawing."""
+
+    _img_signal = Signal(object, object)  # (label_arr, bg_rgb)
+
+    _VIEW_MAX = 400
+    _VIEW_MIN = 200
+    _CHROME_H = 150
+
+    # Distinct group colors
+    _GROUP_PALETTE = [
+        (231, 76, 60),    # red
+        (52, 152, 219),   # blue
+        (46, 204, 113),   # green
+        (155, 89, 182),   # purple
+        (230, 126, 34),   # orange
+        (26, 188, 156),   # teal
+        (241, 196, 15),   # yellow
+        (192, 57, 43),    # dark red
+    ]
+
+    def __init__(self, parent=None, name='', label=''):
+        super().__init__(parent, name, label)
+
+        container = QtWidgets.QWidget()
+        vlay = QtWidgets.QVBoxLayout(container)
+        vlay.setContentsMargins(4, 2, 4, 2)
+        vlay.setSpacing(3)
+
+        # ── tool bar ─────────────────────────────────────────────────────
+        tb = QtWidgets.QHBoxLayout()
+        tb.setSpacing(4)
+        self._tool_group = QtWidgets.QButtonGroup(container)
+        for i, (label_text, tool_name) in enumerate([('Rect', 'rect'), ('Lasso', 'lasso')]):
+            btn = QtWidgets.QPushButton(label_text)
+            btn.setCheckable(True)
+            btn.setFixedHeight(22)
+            btn.setMinimumWidth(50)
+            self._tool_group.addButton(btn, i)
+            tb.addWidget(btn)
+            if i == 0:
+                btn.setChecked(True)
+        self._tool_names = ['rect', 'lasso']
+        tb.addSpacing(8)
+        self._btn_fit = QtWidgets.QPushButton('Fit')
+        self._btn_fit.setFixedHeight(22)
+        tb.addWidget(self._btn_fit)
+        tb.addStretch()
+        vlay.addLayout(tb)
+
+        # ── graphics view ────────────────────────────────────────────────
+        self._scene = QGraphicsScene()
+        self._view = _ClassifyGraphicsView(self._scene)
+        self._view.setMinimumSize(self._VIEW_MIN, self._VIEW_MIN)
+        self._view.setFixedSize(self._VIEW_MAX, self._VIEW_MAX)
+        self._view.setStyleSheet('background:#1a1a1a;')
+        vlay.addWidget(self._view)
+
+        # ── group list + controls ────────────────────────────────────────
+        grp_row = QtWidgets.QHBoxLayout()
+        grp_row.setSpacing(3)
+
+        self._group_list = QtWidgets.QListWidget()
+        self._group_list.setFixedHeight(90)
+        self._group_list.setMinimumWidth(200)
+        self._group_list.setStyleSheet(
+            'QListWidget { font-size: 11px; }'
+            'QListWidget::item { padding: 3px 4px; }'
+            'QListWidget::item:selected { background-color: #555; border: 2px solid #fff; }')
+        grp_row.addWidget(self._group_list)
+
+        btn_col = QtWidgets.QVBoxLayout()
+        btn_col.setSpacing(3)
+        self._btn_add = QtWidgets.QPushButton('+ New Group')
+        self._btn_add.setFixedHeight(22)
+        self._btn_add.clicked.connect(self._add_group)
+        btn_col.addWidget(self._btn_add)
+
+        self._btn_del = QtWidgets.QPushButton('Delete')
+        self._btn_del.setFixedHeight(22)
+        self._btn_del.clicked.connect(self._delete_group)
+        btn_col.addWidget(self._btn_del)
+
+        self._btn_unassign = QtWidgets.QPushButton('Unassign')
+        self._btn_unassign.setFixedHeight(22)
+        self._btn_unassign.setToolTip('Remove group assignment from selected labels')
+        self._btn_unassign.clicked.connect(self._unassign_selected)
+        btn_col.addWidget(self._btn_unassign)
+
+        btn_col.addStretch()
+        grp_row.addLayout(btn_col)
+        vlay.addLayout(grp_row)
+
+        # ── status ───────────────────────────────────────────────────────
+        self._status = QtWidgets.QLabel('No labels loaded')
+        self._status.setStyleSheet('color:#aaa; font-size:10px;')
+        vlay.addWidget(self._status)
+
+        self._container = container
+        self.set_custom_widget(container)
+
+        # ── state ────────────────────────────────────────────────────────
+        self._groups: list[str] = []          # group names
+        self._group_map: dict[int, int] = {}  # label_id → group_idx (1-based, 0=ungrouped)
+        self._current_group: int = 0          # 1-based index of active group
+
+        # ── connections ──────────────────────────────────────────────────
+        self._tool_group.idClicked.connect(
+            lambda i: self._view.set_tool(self._tool_names[i]))
+        self._view.labels_assigned.connect(self._on_labels_assigned)
+        self._group_list.currentRowChanged.connect(self._on_group_selected)
+        self._btn_fit.clicked.connect(self._fit_view)
+        self._img_signal.connect(self._apply_data, Qt.ConnectionType.QueuedConnection)
+
+    # ── thread-safe data loading ─────────────────────────────────────────
+
+    def populate(self, label_arr, bg_rgb=None):
+        if threading.current_thread() is threading.main_thread():
+            self._apply_data(label_arr, bg_rgb)
+        else:
+            self._img_signal.emit(label_arr, bg_rgb)
+
+    def _apply_data(self, label_arr, bg_rgb=None):
+        h, w = label_arr.shape[:2]
+        if w >= h:
+            vw = self._VIEW_MAX
+            vh = max(self._VIEW_MIN, int(self._VIEW_MAX * h / w))
+        else:
+            vh = self._VIEW_MAX
+            vw = max(self._VIEW_MIN, int(self._VIEW_MAX * w / h))
+        self._view.setFixedSize(vw, vh)
+        self._container.setFixedSize(vw + 8, vh + self._CHROME_H)
+
+        self._view.load_label_data(label_arr, bg_rgb)
+        self._view.set_group_colors(self._GROUP_PALETTE[:len(self._groups)])
+        self._view.set_group_map(self._group_map)
+        self._update_status()
+
+        if self.widget():
+            self.widget().adjustSize()
+        if self.node and hasattr(self.node, 'view') and \
+                hasattr(self.node.view, 'draw_node'):
+            self.node.view.draw_node()
+
+    # ── group management ─────────────────────────────────────────────────
+
+    def _add_group(self):
+        idx = len(self._groups) + 1
+        name = f'Group {idx}'
+        self._groups.append(name)
+        color = self._GROUP_PALETTE[(idx - 1) % len(self._GROUP_PALETTE)]
+        item = QtWidgets.QListWidgetItem(f'  {name}')
+        item.setForeground(QtWidgets.QApplication.palette().text().color())
+        item.setBackground(QtWidgets.QApplication.palette().window().color())
+        # Color swatch via icon
+        pix = QPixmap(14, 14)
+        pix.fill(QtWidgets.QApplication.palette().window().color())
+        from PySide6.QtGui import QPainter as _P, QColor as _C
+        p = _P(pix)
+        p.setBrush(_C(*color))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(1, 1, 12, 12)
+        p.end()
+        from PySide6.QtGui import QIcon
+        item.setIcon(QIcon(pix))
+        self._group_list.addItem(item)
+        self._group_list.setCurrentRow(len(self._groups) - 1)
+        self._current_group = idx
+        self._view.set_group_colors(self._GROUP_PALETTE[:len(self._groups)])
+        self._update_status()
+        self._emit()
+
+    def _delete_group(self):
+        row = self._group_list.currentRow()
+        if row < 0 or row >= len(self._groups):
+            return
+        gidx = row + 1  # 1-based
+        # Unassign all labels in this group
+        for lbl in list(self._group_map):
+            if self._group_map[lbl] == gidx:
+                del self._group_map[lbl]
+            elif self._group_map[lbl] > gidx:
+                self._group_map[lbl] -= 1
+        self._groups.pop(row)
+        self._group_list.takeItem(row)
+        # Re-index group names in list
+        for i in range(self._group_list.count()):
+            self._group_list.item(i).setText(f'  {self._groups[i]}')
+        self._current_group = min(self._current_group, len(self._groups))
+        self._view.set_group_colors(self._GROUP_PALETTE[:len(self._groups)])
+        self._view.set_group_map(self._group_map)
+        self._update_status()
+        self._emit()
+
+    def _on_group_selected(self, row):
+        self._current_group = row + 1 if row >= 0 else 0
+
+    def _fit_view(self):
+        if self._view._pixmap_item:
+            self._view.fitInView(self._view._pixmap_item,
+                                 Qt.AspectRatioMode.KeepAspectRatio)
+
+    # ── label assignment ─────────────────────────────────────────────────
+
+    def _on_labels_assigned(self, label_ids: set):
+        """Assign all covered labels to the current group."""
+        if self._current_group < 1:
+            return  # no group selected
+        for lbl in label_ids:
+            self._group_map[lbl] = self._current_group
+        self._view.set_group_map(self._group_map)
+        self._update_status()
+        self._emit()
+
+    def _unassign_selected(self):
+        """Remove group assignment — draw shape to unassign, or unassign all in current group."""
+        if self._current_group < 1:
+            return
+        to_remove = [lbl for lbl, g in self._group_map.items()
+                     if g == self._current_group]
+        for lbl in to_remove:
+            del self._group_map[lbl]
+        self._view.set_group_map(self._group_map)
+        self._update_status()
+        self._emit()
+
+    # ── status ───────────────────────────────────────────────────────────
+
+    def _update_status(self):
+        n_total = len(self._view._all_labels)
+        n_assigned = len(self._group_map)
+        n_groups = len(self._groups)
+        self._status.setText(
+            f'{n_assigned}/{n_total} labels assigned to {n_groups} groups')
+
+    # ── NodeBaseWidget interface ─────────────────────────────────────────
+
+    def _emit(self):
+        self.value_changed.emit(self.get_name(), self.get_value())
+
+    def get_value(self) -> str:
+        return _json.dumps({
+            'groups': self._groups,
+            'group_map': {str(k): v for k, v in self._group_map.items()},
+        })
+
+    def set_value(self, value: str):
+        if not value:
+            return
+        try:
+            state = _json.loads(value)
+        except (ValueError, TypeError):
+            return
+        self._groups = state.get('groups', [])
+        self._group_map = {int(k): v for k, v in state.get('group_map', {}).items()}
+        # Rebuild list widget
+        self._group_list.clear()
+        for i, name in enumerate(self._groups):
+            color = self._GROUP_PALETTE[i % len(self._GROUP_PALETTE)]
+            item = QtWidgets.QListWidgetItem(f'  {name}')
+            pix = QPixmap(14, 14)
+            pix.fill(QtWidgets.QApplication.palette().window().color())
+            from PySide6.QtGui import QPainter as _P, QColor as _C, QIcon
+            p = _P(pix)
+            p.setBrush(_C(*color))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(1, 1, 12, 12)
+            p.end()
+            item.setIcon(QIcon(pix))
+            self._group_list.addItem(item)
+        self._view.set_group_colors(self._GROUP_PALETTE[:len(self._groups)])
+        self._view.set_group_map(self._group_map)
+        self._update_status()
+
+
+class ParticleClassifyNode(BaseImageProcessNode):
+    """
+    Assigns particles to named groups by drawing shapes around them.
+
+    ### Usage
+
+    - Connect a **label image** (from Particle Props or Watershed).
+    - Click **+ New Group** to create groups (Group 1, Group 2, …).
+    - Select a group, then draw a **rect** or **lasso** around particles.
+    - All labels fully enclosed by the shape are assigned to that group.
+    - Unassigned labels remain as "Ungrouped" (label 0 in output).
+
+    ### Outputs
+
+    - **label_image** — relabeled: Group 1 → 1, Group 2 → 2, ungrouped → 0.
+    - **table** — original particle table with an added `group` column.
+
+    Keywords: classify, group, assign, cluster, categorize, label,
+              分類, 分群, 標記, 歸類
+    """
+    __identifier__ = 'nodes.image_process.morphology'
+    NODE_NAME = 'Particle Classify'
+    PORT_SPEC = {'inputs': ['label_image', 'image'],
+                 'outputs': ['label_image', 'table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('label_image', color=PORT_COLORS['label'])
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_output('label_image', color=PORT_COLORS['label'])
+        self.add_output('table', color=PORT_COLORS['table'])
+        self._cls_widget = _ParticleClassifyWidget(
+            self.view, name='classify_state', label='')
+        self.add_custom_widget(self._cls_widget)
+
+    def evaluate(self):
+        self.reset_progress()
+        from skimage.measure import regionprops_table
+
+        # 1. Get label data
+        port = self.inputs().get('label_image')
+        if not port or not port.connected_ports():
+            return False, 'No label_image connected'
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if not isinstance(data, LabelData):
+            return False, 'Input must be LabelData (from Particle Props or Watershed)'
+
+        labeled = data.payload
+        self.set_progress(20)
+
+        # 2. Optional background image
+        bg_rgb = None
+        img_port = self.inputs().get('image')
+        if img_port and img_port.connected_ports():
+            icp = img_port.connected_ports()[0]
+            idata = icp.node().output_values.get(icp.name())
+            if isinstance(idata, ImageData):
+                bg = idata.payload
+                if bg.ndim == 2:
+                    bg = np.stack([bg] * 3, axis=-1)
+                elif bg.ndim == 3 and bg.shape[2] == 4:
+                    bg = bg[..., :3]
+                if bg.dtype != np.uint8:
+                    from data_models import array_to_pil
+                    bg = np.array(array_to_pil(
+                        bg, getattr(idata, 'bit_depth', 8),
+                        getattr(idata, 'display_min', None),
+                        getattr(idata, 'display_max', None)).convert('RGB'))
+                if bg.shape[:2] == labeled.shape:
+                    bg_rgb = bg
+
+        self.set_progress(30)
+
+        # 3. Populate widget
+        self._cls_widget.populate(labeled, bg_rgb)
+        self.set_progress(40)
+
+        # 4. Read classification state
+        state_str = self.get_property('classify_state')
+        try:
+            state = _json.loads(state_str) if state_str else {}
+        except (ValueError, TypeError):
+            state = {}
+
+        groups = state.get('groups', [])
+        gmap = {int(k): v for k, v in state.get('group_map', {}).items()}
+
+        self.set_progress(60)
+
+        # 5. Build output label image (group index per pixel)
+        out_labels = np.zeros_like(labeled, dtype=np.int32)
+        for lbl, gidx in gmap.items():
+            out_labels[labeled == lbl] = gidx
+
+        # 6. Build output table with group column
+        props = regionprops_table(labeled, properties=['label', 'area',
+                                                        'centroid'])
+        df = pd.DataFrame(props)
+        df['group'] = df['label'].map(
+            lambda lbl: groups[gmap[lbl] - 1] if lbl in gmap and
+            0 < gmap[lbl] <= len(groups) else 'Ungrouped')
+
+        self.set_progress(80)
+
+        # 7. Build colored visualization
+        try:
+            from .vision_nodes import _label_palette
+        except ImportError:
+            from vision_nodes import _label_palette
+        group_colors = _ParticleClassifyWidget._GROUP_PALETTE
+        if bg_rgb is not None:
+            rgb = bg_rgb.copy()
+            for lbl, gidx in gmap.items():
+                if 0 < gidx <= len(group_colors):
+                    mask_lbl = labeled == lbl
+                    color = np.array(group_colors[gidx - 1], dtype=np.float32)
+                    rgb[mask_lbl] = (rgb[mask_lbl].astype(np.float32) * 0.55
+                                    + color * 0.45).astype(np.uint8)
+            # Dim ungrouped
+            ungrouped = (labeled > 0) & (out_labels == 0)
+            rgb[ungrouped] = (rgb[ungrouped].astype(np.float32) * 0.3).astype(np.uint8)
+        else:
+            rgb = np.zeros((*labeled.shape, 3), dtype=np.uint8)
+            for lbl, gidx in gmap.items():
+                if 0 < gidx <= len(group_colors):
+                    rgb[labeled == lbl] = group_colors[gidx - 1]
+            ungrouped = (labeled > 0) & (out_labels == 0)
+            rgb[ungrouped] = [60, 60, 60]
+
+        self.output_values['label_image'] = LabelData(payload=out_labels, image=rgb)
+        self.output_values['table'] = TableData(payload=df)
+
+        self.set_progress(100)
+        return True, None

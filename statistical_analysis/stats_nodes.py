@@ -15,7 +15,7 @@ import NodeGraphQt
 import pandas as pd
 import numpy as np
 
-from data_models import TableData, FigureData, StatData
+from data_models import TableData, FigureData, StatData, ModelData
 from nodes.base import BaseExecutionNode, PORT_COLORS
 
 
@@ -39,30 +39,37 @@ def _get_table_df(node, port_name='in'):
 
 class LinearRegressionNode(BaseExecutionNode):
     """
-    Performs ordinary least-squares (OLS) linear regression, simple or multiple.
+    Performs ordinary least-squares (OLS) linear or polynomial regression.
+
+    Set **Degree** > 1 for polynomial regression (e.g. 2 = quadratic, 3 = cubic).
+    With degree 1 (default), this is standard linear regression.
 
     Outputs:
     - **coefficients** — slope, intercept, standard error, 95% CI, and p-values per parameter
     - **residuals** — fitted values, residuals, and standardized residuals for downstream plotting
 
     Summary statistics: R², adjusted R², F-statistic, and F p-value.
-
-    Keywords: linear regression, OLS, slope, intercept, R-squared, coefficient,
-              residuals, predict, fitted values, multiple regression,
-              線性回歸, 迴歸分析, 最小二乘法, 斜率, 截距, 決定係數
+    
+    Keywords: linear regression, polynomial regression, OLS, slope, intercept,
+              R-squared, coefficient, residuals, predict, fitted values,
+              multiple regression, quadratic, cubic, standard curve, Bradford,
+              線性回歸, 多項式迴歸, 迴歸分析, 最小二乘法, 斜率, 截距, 決定係數
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Linear Regression'
-    PORT_SPEC = {'inputs': ['table'], 'outputs': ['stat', 'table']}
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['stat', 'table', 'table', 'model']}
 
     def __init__(self):
         super().__init__()
         self.add_input('in',            color=PORT_COLORS['table'])
         self.add_output('coefficients', color=PORT_COLORS['stat'])
         self.add_output('residuals',    color=PORT_COLORS['table'])
+        self.add_output('curve',        color=PORT_COLORS['table'])
+        self.add_output('model',        color=PORT_COLORS['model'])
 
-        self.add_text_input('x_cols',   'X Column(s) (comma-sep)',  text='')
-        self.add_text_input('y_col',    'Y Column',                 text='')
+        self._add_column_selector('x_cols', 'X Column(s)', text='', mode='multi', tab='Parameters')
+        self._add_column_selector('y_col',  'Y Column',    text='', mode='single', tab='Parameters')
+        self._add_int_spinbox('degree', 'Polynomial Degree', value=1, min_val=1, max_val=10, step=1)
         self.add_checkbox('intercept',  '', text='Include Intercept', state=True)
 
     def evaluate(self):
@@ -72,6 +79,8 @@ class LinearRegressionNode(BaseExecutionNode):
         df, err = _get_table_df(self)
         if df is None:
             self.mark_error(); return False, err
+
+        self._refresh_column_selectors(df, 'x_cols', 'y_col')
 
         x_cols_raw = str(self.get_property('x_cols') or '').strip()
         y_col      = str(self.get_property('y_col')  or '').strip()
@@ -91,11 +100,22 @@ class LinearRegressionNode(BaseExecutionNode):
         if not x_cols:
             self.mark_error(); return False, "X column(s) not found in the table"
 
+        degree = int(self.get_property('degree') or 1)
+        degree = max(1, min(degree, 6))  # clamp to 1-6
+
         try:
             self.set_progress(20)
             df_c = df[x_cols + [y_col]].dropna()
             X    = df_c[x_cols].astype(float)
             y    = df_c[y_col].astype(float)
+
+            # Polynomial expansion: add x², x³, ... columns
+            if degree > 1 and len(x_cols) == 1:
+                base_col = x_cols[0]
+                x_base = X[base_col]
+                for d in range(2, degree + 1):
+                    X[f'{base_col}^{d}'] = x_base ** d
+
             if intercept:
                 X = sm.add_constant(X, has_constant='add')
 
@@ -122,11 +142,15 @@ class LinearRegressionNode(BaseExecutionNode):
             coef_df = pd.DataFrame(rows)
             n = int(model.nobs)
             pad = [np.nan] * (len(rows) - 1)
+            rmse = float(np.sqrt(model.ssr / max(1, n - len(model.params))))
             coef_df.insert(0, 'n',           [n]                                  + pad)
             coef_df.insert(1, 'R²',          [round(model.rsquared,     6)]       + pad)
             coef_df.insert(2, 'Adj R²',      [round(model.rsquared_adj, 6)]       + pad)
-            coef_df.insert(3, 'F-statistic', [round(float(model.fvalue),    4)]   + pad)
-            coef_df.insert(4, 'F p-value',   [round(float(model.f_pvalue),  6)]   + pad)
+            coef_df.insert(3, 'RMSE',        [round(rmse,               6)]       + pad)
+            coef_df.insert(4, 'AIC',         [round(float(model.aic),   2)]       + pad)
+            coef_df.insert(5, 'BIC',         [round(float(model.bic),   2)]       + pad)
+            coef_df.insert(6, 'F-statistic', [round(float(model.fvalue),    4)]   + pad)
+            coef_df.insert(7, 'F p-value',   [round(float(model.f_pvalue),  6)]   + pad)
 
             resid_df                        = df_c.copy()
             resid_df['Predicted']           = model.fittedvalues.values
@@ -137,8 +161,59 @@ class LinearRegressionNode(BaseExecutionNode):
             else:
                 resid_df['Standardized Residual'] = np.zeros(len(model.resid))
 
-            self.output_values['coefficients'] = StatData(payload=coef_df)
+            # Smooth fitted curve with 95% CI for RegressionPlotNode
+            if len(x_cols) == 1:
+                from scipy.stats import t as _t
+                x_raw = df_c[x_cols[0]].astype(float)
+                x_curve = np.linspace(float(x_raw.min()), float(x_raw.max()), 200)
+                X_curve = pd.DataFrame({x_cols[0]: x_curve})
+                if degree > 1:
+                    for d in range(2, degree + 1):
+                        X_curve[f'{x_cols[0]}^{d}'] = x_curve ** d
+                if intercept:
+                    X_curve = sm.add_constant(X_curve, has_constant='add')
+                y_curve = model.predict(X_curve)
+
+                # CI band from OLS prediction standard error
+                n_obs = int(model.nobs)
+                n_params = len(model.params)
+                _dof = max(1, n_obs - n_params)
+                s_err = float(np.sqrt(model.ssr / _dof))
+                t_c = _t.ppf(0.975, _dof)
+                x_vals = x_raw.values
+                x_mean = float(x_vals.mean())
+                ss_xx = float(np.sum((x_vals - x_mean) ** 2))
+                se_curve = s_err * np.sqrt(
+                    1.0 / n_obs + (x_curve - x_mean) ** 2 / max(ss_xx, 1e-300)
+                )
+                ci_lo = y_curve - t_c * se_curve
+                ci_hi = y_curve + t_c * se_curve
+
+                curve_df = pd.DataFrame({
+                    x_cols[0]:        x_curve,
+                    f'{y_col}_fit':   y_curve,
+                    f'{y_col}_ci_lo': ci_lo,
+                    f'{y_col}_ci_hi': ci_hi,
+                })
+            else:
+                # Multiple X — can't generate a smooth 1D curve; output fitted values instead
+                curve_df = resid_df[[*x_cols, 'Predicted']].rename(
+                    columns={'Predicted': f'{y_col}_fit'})
+
+            self.output_values['coefficients'] = TableData(payload=coef_df)
             self.output_values['residuals']    = TableData(payload=resid_df)
+            self.output_values['curve']        = TableData(payload=curve_df)
+            self.output_values['model']        = ModelData(
+                payload=model,
+                metadata={
+                    'model_type':  'linear',
+                    'x_columns':   x_cols,
+                    'y_column':    y_col,
+                    'degree':      degree,
+                    'intercept':   intercept,
+                    'model_name':  f'OLS (degree={degree})',
+                },
+            )
             self.set_progress(100)
             self.mark_clean()
             return True, None
@@ -170,7 +245,7 @@ class NonlinearRegressionNode(BaseExecutionNode):
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Nonlinear Regression'
-    PORT_SPEC = {'inputs': ['table'], 'outputs': ['stat', 'table']}
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['stat', 'table', 'model']}
 
     MODELS = [
         '4PL (EC50 / Dose-Response)',
@@ -188,13 +263,17 @@ class NonlinearRegressionNode(BaseExecutionNode):
         self.add_input('in',         color=PORT_COLORS['table'])
         self.add_output('parameters', color=PORT_COLORS['stat'])
         self.add_output('curve',      color=PORT_COLORS['table'])
+        self.add_output('model',      color=PORT_COLORS['model'])
 
-        self.add_text_input('x_col',    'X Column',              text='')
-        self.add_text_input('y_col',    'Y Column',              text='')
+        self._add_column_selector('x_col', 'X Column', text='', mode='single', tab='Parameters')
+        self._add_column_selector('y_col', 'Y Column', text='', mode='single', tab='Parameters')
         self.add_combo_menu('model',    'Model',                 items=self.MODELS)
-        self.add_text_input('n_points', 'Curve Points',          text='200')
-        self.add_text_input('x_min',    'X Min (blank=auto)',    text='')
-        self.add_text_input('x_max',    'X Max (blank=auto)',    text='')
+        import NodeGraphQt as _nq
+        self.create_property('n_points', 200,
+                             widget_type=_nq.constants.NodePropWidgetEnum.QSPIN_BOX.value,
+                             tab='Parameters')
+        self._add_float_spinbox('x_min', 'X Min (0=auto)', value=0.0, min_val=-1e9, max_val=1e9, step=0.1, decimals=4)
+        self._add_float_spinbox('x_max', 'X Max (0=auto)', value=0.0, min_val=-1e9, max_val=1e9, step=0.1, decimals=4)
 
     # ── model functions ────────────────────────────────────────────────────────
 
@@ -268,6 +347,8 @@ class NonlinearRegressionNode(BaseExecutionNode):
         if df is None:
             self.mark_error(); return False, err
 
+        self._refresh_column_selectors(df, 'x_col', 'y_col')
+
         x_col      = str(self.get_property('x_col') or '').strip()
         y_col      = str(self.get_property('y_col') or '').strip()
         model_name = self.get_property('model') or self.MODELS[0]
@@ -307,44 +388,281 @@ class NonlinearRegressionNode(BaseExecutionNode):
             ss_tot = float(np.sum((ydata - ydata.mean()) ** 2))
             r2     = 1.0 - ss_res / ss_tot if ss_tot > 0 else float('nan')
             rmse   = float(np.sqrt(ss_res / n))
+            k      = len(popt)
+
+            # Additional fit statistics
+            reduced_chi2 = ss_res / dof if dof > 0 else float('nan')
+            ln_lik = -0.5 * n * (np.log(2 * np.pi * ss_res / n) + 1)
+            aic = 2 * k - 2 * ln_lik
+            bic = k * np.log(n) - 2 * ln_lik
+            # F-test: model vs null (mean-only)
+            if dof > 0 and ss_tot > 0 and k > 1:
+                f_stat = ((ss_tot - ss_res) / (k - 1)) / (ss_res / dof)
+                from scipy.stats import f as f_dist
+                f_pval = 1.0 - f_dist.cdf(f_stat, k - 1, dof)
+            else:
+                f_stat, f_pval = float('nan'), float('nan')
+
+            # Per-parameter t-values and p-values
+            t_values = popt / np.where(perr > 0, perr, np.nan)
+            p_values = 2.0 * (1.0 - t_dist.cdf(np.abs(t_values), dof))
 
             rows = [
                 {
                     'Parameter':      pname,
                     'Best-fit Value': round(float(val), 6),
                     'Std Error':      round(float(se),  6),
+                    't-value':        round(float(tv),  4),
+                    'p-value':        round(float(pv),  6),
                     '95% CI Lo':      round(float(lo),  6),
                     '95% CI Hi':      round(float(hi),  6),
                 }
-                for pname, val, se, lo, hi in zip(param_names, popt, perr, ci_lo, ci_hi)
+                for pname, val, se, tv, pv, lo, hi in zip(
+                    param_names, popt, perr, t_values, p_values, ci_lo, ci_hi)
             ]
             params_df = pd.DataFrame(rows)
             pad = [np.nan] * (len(rows) - 1)
-            params_df.insert(0, 'Model', [model_name] + [''] * (len(rows) - 1))
-            params_df.insert(1, 'R²',    [round(r2,   6)] + pad)
-            params_df.insert(2, 'RMSE',  [round(rmse, 6)] + pad)
-            params_df.insert(3, 'n',     [int(n)]         + pad)
+            params_df.insert(0, 'Model',       [model_name]                       + [''] * (len(rows) - 1))
+            params_df.insert(1, 'n',           [int(n)]                           + pad)
+            params_df.insert(2, 'R²',          [round(r2,                6)]      + pad)
+            params_df.insert(3, 'RMSE',        [round(rmse,              6)]      + pad)
+            params_df.insert(4, 'Reduced χ²',  [round(reduced_chi2,      6)]      + pad)
+            params_df.insert(5, 'AIC',         [round(float(aic),        2)]      + pad)
+            params_df.insert(6, 'BIC',         [round(float(bic),        2)]      + pad)
+            params_df.insert(7, 'F-statistic', [round(float(f_stat),     4)]      + pad)
+            params_df.insert(8, 'F p-value',   [round(float(f_pval),     6)]      + pad)
 
-            # Smooth fitted curve
-            try:
-                n_pts = max(50, int(self.get_property('n_points') or 200))
-            except (ValueError, TypeError):
-                n_pts = 200
-            x_min_s = str(self.get_property('x_min') or '').strip()
-            x_max_s = str(self.get_property('x_max') or '').strip()
-            x_lo    = float(x_min_s) if x_min_s else float(xdata.min())
-            x_hi    = float(x_max_s) if x_max_s else float(xdata.max())
+            # Smooth fitted curve with 95% CI band (delta method)
+            n_pts = max(50, int(self.get_property('n_points') or 200))
+            x_min_v = float(self.get_property('x_min') or 0.0)
+            x_max_v = float(self.get_property('x_max') or 0.0)
+            x_lo = x_min_v if x_min_v != 0.0 else float(xdata.min())
+            x_hi = x_max_v if x_max_v != 0.0 else float(xdata.max())
             x_curve = np.linspace(x_lo, x_hi, n_pts)
             y_curve = func(x_curve, *popt)
-            curve_df = pd.DataFrame({x_col: x_curve, f'{y_col}_fit': y_curve})
+
+            # Delta method: var(f(x)) ≈ J(x) @ pcov @ J(x).T
+            # J = Jacobian of f w.r.t. parameters via finite differences
+            eps = np.sqrt(np.finfo(float).eps)
+            J = np.zeros((n_pts, k))
+            for i in range(k):
+                p_up = popt.copy()
+                delta = max(abs(popt[i]) * eps, eps)
+                p_up[i] += delta
+                J[:, i] = (func(x_curve, *p_up) - y_curve) / delta
+            y_var = np.array([float(J[j, :] @ pcov @ J[j, :]) for j in range(n_pts)])
+            y_se  = np.sqrt(np.clip(y_var, 0, None))
+            ci_band_lo = y_curve - t_val * y_se
+            ci_band_hi = y_curve + t_val * y_se
+
+            curve_df = pd.DataFrame({
+                x_col:            x_curve,
+                f'{y_col}_fit':   y_curve,
+                f'{y_col}_ci_lo': ci_band_lo,
+                f'{y_col}_ci_hi': ci_band_hi,
+            })
 
             self.output_values['parameters'] = StatData(payload=params_df)
             self.output_values['curve']      = TableData(payload=curve_df)
+
+            # Wrap the fitted function + params as a ModelData for prediction
+            _func_copy = func
+            _popt_copy = popt.copy()
+            def _predict_fn(x_arr):
+                return _func_copy(np.asarray(x_arr, dtype=float), *_popt_copy)
+            self.output_values['model'] = ModelData(
+                payload=_predict_fn,
+                metadata={
+                    'model_type':   'nonlinear',
+                    'x_columns':    [x_col],
+                    'y_column':     y_col,
+                    'model_name':   model_name,
+                    'param_names':  param_names,
+                    'param_values': [float(v) for v in popt],
+                },
+            )
             self.set_progress(100)
             self.mark_clean()
             return True, None
         except Exception as e:
             self.mark_error(); return False, str(e)
+
+
+# ── 2b. Model Predict ─────────────────────────────────────────────────────────
+
+class ModelPredictNode(BaseExecutionNode):
+    """
+    Predicts Y values from a fitted model and a new data table.
+
+    Connect the **model** output from Linear Regression or Nonlinear Regression,
+    then provide a table with the X column to predict on.
+
+    The node auto-detects the X column name from the model metadata.
+    Override with the **X Column** field if the new table uses a different name.
+
+    Outputs the input table with an added **Predicted** column.
+    
+    Keywords: predict, interpolate, standard curve, estimate, concentration,
+              Bradford, ELISA, 預測, 插值, 標準曲線
+    """
+    __identifier__ = 'nodes.analysis'
+    NODE_NAME = 'Model Predict'
+    PORT_SPEC = {'inputs': ['model', 'table'], 'outputs': ['table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('model', color=PORT_COLORS['model'])
+        self.add_input('data',  color=PORT_COLORS['table'])
+        self.add_output('out',  color=PORT_COLORS['table'])
+
+        self._add_column_selector('x_col', 'X Column (blank=auto)', text='', mode='single', tab='Parameters')
+        self.add_text_input('pred_name',  'Output Column Name',    text='Predicted')
+        self.add_checkbox('inverse',      '', text='Inverse predict (given Y → predict X)', state=False)
+        self._add_float_spinbox('inv_x_min', 'Inverse X Min (0=auto)', value=0.0, min_val=-1e9, max_val=1e9, step=0.1, decimals=4)
+        self._add_float_spinbox('inv_x_max', 'Inverse X Max (0=auto)', value=0.0, min_val=-1e9, max_val=1e9, step=0.1, decimals=4)
+
+
+    def evaluate(self):
+        self.reset_progress()
+        import statsmodels.api as sm
+
+        # ── Get model ────────────────────────────────────────────────
+        model_port = self.inputs().get('model')
+        if not model_port or not model_port.connected_ports():
+            self.mark_error()
+            return False, "No model connected."
+        cp = model_port.connected_ports()[0]
+        model_data = cp.node().output_values.get(cp.name())
+        if not isinstance(model_data, ModelData):
+            self.mark_error()
+            return False, "Input is not a ModelData."
+
+        # ── Get data table ───────────────────────────────────────────
+        df, err = _get_table_df(self, port_name='data')
+        if df is None:
+            self.mark_error()
+            return False, err or "No data table connected."
+
+        self._refresh_column_selectors(df, 'x_col')
+
+        meta       = model_data.metadata or {}
+        model_type = meta.get('model_type', 'unknown')
+        x_columns  = meta.get('x_columns', [])
+        y_column   = meta.get('y_column', 'Y')
+        degree     = meta.get('degree', 1)
+        intercept  = meta.get('intercept', True)
+
+        x_col_override = str(self.get_property('x_col') or '').strip()
+        pred_name      = str(self.get_property('pred_name') or 'Predicted').strip()
+        inverse        = bool(self.get_property('inverse'))
+        inv_x_min      = float(self.get_property('inv_x_min') or 0.0)
+        inv_x_max      = float(self.get_property('inv_x_max') or 0.0)
+
+        self.set_progress(20)
+
+        try:
+            if model_type == 'linear':
+                # statsmodels OLS result
+                ols_model = model_data.payload
+
+                if inverse:
+                    # Inverse prediction: given Y, solve for X
+                    # Only works for single-X linear/polynomial models
+                    if len(x_columns) != 1:
+                        self.mark_error()
+                        return False, "Inverse prediction only works with single-X models."
+                    y_col_in = x_col_override or y_column
+                    if y_col_in not in df.columns:
+                        self.mark_error()
+                        return False, f"Column '{y_col_in}' not found for inverse prediction."
+                    y_vals = df[y_col_in].astype(float).values
+                    params = ols_model.params.values
+                    from scipy.optimize import brentq
+                    x_pred = []
+                    # Use user-specified range, or auto from training data
+                    if inv_x_min != 0.0 or inv_x_max != 0.0:
+                        x_lo, x_hi = inv_x_min, inv_x_max
+                    else:
+                        x_range = ols_model.model.exog[:, -1 if not intercept else 1]
+                        x_lo, x_hi = float(x_range.min()), float(x_range.max())
+                        x_lo -= abs(x_lo) * 0.1 + 1e-9
+                        x_hi += abs(x_hi) * 0.1 + 1e-9
+                    for y_target in y_vals:
+                        def _resid(x_val):
+                            row = [x_val ** d for d in range(1, degree + 1)]
+                            if intercept:
+                                row = [1.0] + row
+                            return float(np.dot(params, row)) - y_target
+                        try:
+                            x_pred.append(float(brentq(_resid, x_lo, x_hi)))
+                        except ValueError:
+                            x_pred.append(float('nan'))
+                    result = df.copy()
+                    result[pred_name] = x_pred
+                else:
+                    # Forward prediction: given X, predict Y
+                    x_col_name = x_col_override or (x_columns[0] if x_columns else '')
+                    if x_col_name not in df.columns:
+                        self.mark_error()
+                        return False, f"X column '{x_col_name}' not found. Set 'X Column' manually."
+                    X_new = df[[x_col_name]].astype(float).copy()
+                    if degree > 1:
+                        base = X_new[x_col_name]
+                        for d in range(2, degree + 1):
+                            X_new[f'{x_col_name}^{d}'] = base ** d
+                    if intercept:
+                        X_new = sm.add_constant(X_new, has_constant='add')
+                    result = df.copy()
+                    result[pred_name] = ols_model.predict(X_new)
+
+            elif model_type == 'nonlinear':
+                predict_fn = model_data.payload  # callable
+                x_col_name = x_col_override or (x_columns[0] if x_columns else '')
+
+                if inverse:
+                    # Inverse: given Y, find X numerically
+                    y_col_in = x_col_override or meta.get('y_column', '')
+                    if y_col_in not in df.columns:
+                        self.mark_error()
+                        return False, f"Column '{y_col_in}' not found for inverse prediction."
+                    from scipy.optimize import brentq
+                    y_vals = df[y_col_in].astype(float).values
+                    # Use user-specified range, or auto-estimate from model params
+                    if inv_x_min != 0.0 or inv_x_max != 0.0:
+                        x_lo, x_hi = inv_x_min, inv_x_max
+                    else:
+                        pvals = meta.get('param_values', [])
+                        x_lo = 1e-12
+                        x_hi = max(abs(v) for v in pvals) * 100 if pvals else 1e6
+                    x_pred = []
+                    for y_target in y_vals:
+                        try:
+                            x_pred.append(float(brentq(
+                                lambda x: float(predict_fn(np.array([x]))[0]) - y_target,
+                                x_lo, x_hi,
+                            )))
+                        except (ValueError, IndexError):
+                            x_pred.append(float('nan'))
+                    result = df.copy()
+                    result[pred_name] = x_pred
+                else:
+                    if x_col_name not in df.columns:
+                        self.mark_error()
+                        return False, f"X column '{x_col_name}' not found. Set 'X Column' manually."
+                    x_vals = df[x_col_name].astype(float).values
+                    result = df.copy()
+                    result[pred_name] = predict_fn(x_vals)
+            else:
+                self.mark_error()
+                return False, f"Unsupported model type: {model_type}"
+
+            self.output_values['out'] = TableData(payload=result)
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+        except Exception as e:
+            self.mark_error()
+            return False, str(e)
 
 
 # ── 3. Two-Way ANOVA ───────────────────────────────────────────────────────────

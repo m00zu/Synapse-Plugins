@@ -726,6 +726,7 @@ class ImageMathNode(BaseImageProcessNode):
     __identifier__ = 'nodes.image_process.Exposure'
     NODE_NAME = 'Image Math'
     PORT_SPEC = {'inputs': ['image', 'mask'], 'outputs': ['image', 'mask']}
+    _collection_aware = True
 
     _TWO_INPUT_OPS = frozenset({
         'A + B', 'A - B', 'A × B (image)', 'A × B (apply mask)',

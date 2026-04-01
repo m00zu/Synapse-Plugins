@@ -669,11 +669,17 @@ class AggregateTableNode(BaseExecutionNode):
     | Treated | 190  |
 
     Parameters:
-    - **Operation** — sum, mean, median, min, max, count, std, var
+    - **Operation** — sum, mean, median, min, max, count, std, var, auc
     - **Group By** — column name(s) to group by (comma-separated, leave empty for no grouping)
     - **Columns** — restrict to specific columns (comma-separated, leave empty = all numeric)
+    - **Sort By** — column to sort by before computing AUC (required for auc, e.g. time column)
 
-    Keywords: aggregate, groupby, mean, sum, median, 聚合, 分組, 計算, 平均值, 統計
+    The **auc** operation computes the area under the curve using the trapezoidal
+    rule.  Rows are first sorted by the *Sort By* column, which serves as the
+    x-axis (e.g. time).  Each selected numeric column is then integrated against
+    that x-axis.
+
+    Keywords: aggregate, groupby, mean, sum, median, auc, area under curve, trapezoidal, 聚合, 分組, 計算, 平均值, 統計
     """
     __identifier__ = 'nodes.dataframe.Compute'
     NODE_NAME = 'Aggregate Table'
@@ -691,9 +697,10 @@ class AggregateTableNode(BaseExecutionNode):
         self.add_input('in', color=PORT_COLORS['table'])
         self.add_output('out', color=PORT_COLORS['table'])
         self.add_combo_menu('operation', 'Operation',
-                            items=['sum', 'mean', 'median', 'min', 'max', 'count', 'std', 'var'])
+                            items=['sum', 'mean', 'median', 'min', 'max', 'count', 'std', 'var', 'auc'])
         self._add_column_selector('group_by', 'Group By (optional)', text='', mode='single', tab='Parameters')
         self._add_column_selector('columns', 'Columns (A,B)', text='', mode='multi', tab='Parameters')
+        self._add_column_selector('sort_by', 'Sort By (for AUC)', text='', mode='single', tab='Parameters')
 
     def evaluate(self):
         in_port = self.inputs().get('in')
@@ -707,12 +714,13 @@ class AggregateTableNode(BaseExecutionNode):
             self.mark_error()
             return False, "Input must be TableData."
 
-        self._refresh_column_selectors(data.df, 'group_by', 'columns')
+        self._refresh_column_selectors(data.df, 'group_by', 'columns', 'sort_by')
 
         df = data.df.copy()
         operation   = self.get_property('operation') or 'sum'
         group_by_str = str(self.get_property('group_by') or '').strip()
         columns_str  = str(self.get_property('columns')  or '').strip()
+        sort_by_str  = str(self.get_property('sort_by')  or '').strip()
 
         group_cols = [c.strip() for c in group_by_str.split(',') if c.strip() and c.strip() in df.columns] if group_by_str else []
 
@@ -720,19 +728,52 @@ class AggregateTableNode(BaseExecutionNode):
             agg_cols = [c.strip() for c in columns_str.split(',')
                         if c.strip() in df.columns and pd.api.types.is_numeric_dtype(df[c.strip()])]
         else:
-            agg_cols = [c for c in df.select_dtypes(include='number').columns if c not in group_cols]
+            agg_cols = [c for c in df.select_dtypes(include='number').columns
+                        if c not in group_cols and c != sort_by_str]
 
         if not agg_cols:
             self.mark_error()
             return False, "No numeric columns to aggregate."
 
         try:
-            if group_cols:
-                result = df.groupby(group_cols)[agg_cols].agg(operation).reset_index()
+            if operation == 'auc':
+                # AUC via trapezoidal rule — requires a sort column as x-axis
+                sort_col = sort_by_str if sort_by_str in df.columns else None
+                if sort_col is None:
+                    # Fall back to first numeric column not in agg_cols
+                    for c in df.select_dtypes(include='number').columns:
+                        if c not in agg_cols and c not in group_cols:
+                            sort_col = c
+                            break
+                if sort_col is None:
+                    self.mark_error()
+                    return False, "AUC requires a Sort By column (e.g. time)."
+
+                import numpy as np
+
+                def _trapz_auc(sub_df):
+                    sub_sorted = sub_df.sort_values(sort_col)
+                    x = sub_sorted[sort_col].to_numpy(dtype=float)
+                    row = {}
+                    for col in agg_cols:
+                        y = sub_sorted[col].to_numpy(dtype=float)
+                        mask = ~(np.isnan(x) | np.isnan(y))
+                        row[col] = float(np.trapz(y[mask], x[mask])) if mask.sum() >= 2 else float('nan')
+                    return pd.Series(row)
+
+                if group_cols:
+                    result = df.groupby(group_cols).apply(_trapz_auc, include_groups=False).reset_index()
+                else:
+                    auc_row = _trapz_auc(df)
+                    result = auc_row.to_frame().T.reset_index(drop=True)
+                    result.insert(0, 'stat', 'auc')
             else:
-                agg_series = df[agg_cols].agg(operation)   # Series: index=col_names
-                result = agg_series.to_frame(name=operation).T.reset_index(drop=True)
-                result.insert(0, 'stat', operation)
+                if group_cols:
+                    result = df.groupby(group_cols)[agg_cols].agg(operation).reset_index()
+                else:
+                    agg_series = df[agg_cols].agg(operation)   # Series: index=col_names
+                    result = agg_series.to_frame(name=operation).T.reset_index(drop=True)
+                    result.insert(0, 'stat', operation)
 
             self.output_values['out'] = TableData(payload=result)
             self.mark_clean()
