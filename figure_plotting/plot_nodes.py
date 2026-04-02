@@ -1831,8 +1831,9 @@ class PlotToolboxMixin:
         _original_set_proxy = self.view.set_proxy_mode
         _node_ref = self
         def _patched_set_proxy(mode):
+            was_proxy = _node_ref.view._proxy_mode
             _original_set_proxy(mode)
-            if not mode and hasattr(_node_ref, 'view'):
+            if was_proxy and not mode and hasattr(_node_ref, 'view'):
                 _node_ref.view.draw_node()
         self.view.set_proxy_mode = _patched_set_proxy
 
@@ -3868,19 +3869,18 @@ class ScatterPlotNode(BaseExecutionNode):
         self.add_combo_menu('palette',     'Palette',
                             items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
         self.add_checkbox('regression',    '', text='Regression line', state=False)
-        self._add_int_spinbox('marker_size', 'Marker Size', value=25, min_val=1, max_val=200, step=1)
-        self._add_float_spinbox('alpha', 'Opacity', value=0.7, min_val=0.05, max_val=1.0, step=0.05, decimals=2)
-        self.add_combo_menu('marker', 'Marker Style',
-                            items=['o', 's', '^', 'D', 'v', 'X', '+', '*'])
         self.add_text_input('x_label',    'X Label',  text='')
         self.add_text_input('y_label',    'Y Label',  text='')
         self.add_text_input('plot_title', 'Title',    text='')
 
         import NodeGraphQt
         H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
-        self.create_property('fig_width',     7.0, widget_type=H)
-        self.create_property('fig_height',    6.0, widget_type=H)
-        self.create_property('tick_rotation', 0.0, widget_type=H)
+        self.create_property('marker_size',   25,    widget_type=H)
+        self.create_property('alpha',         0.7,   widget_type=H)
+        self.create_property('marker',        'o',   widget_type=H)
+        self.create_property('fig_width',     7.0,   widget_type=H)
+        self.create_property('fig_height',    6.0,   widget_type=H)
+        self.create_property('tick_rotation', 0.0,   widget_type=H)
 
     def evaluate(self):
         self.reset_progress()
@@ -3962,18 +3962,17 @@ class HistogramNode(BaseExecutionNode):
         self.add_combo_menu('palette',     'Palette',
                             items=['Set2', 'husl', 'colorblind', 'viridis', 'None'])
         self.add_checkbox('kde',           '', text='KDE overlay', state=True)
-        self.add_combo_menu('stat', 'Stat Type',
-                            items=['count', 'frequency', 'density', 'percent', 'probability'])
-        self._add_float_spinbox('hist_alpha', 'Bar Opacity', value=0.7, min_val=0.1, max_val=1.0, step=0.05, decimals=2)
         self.add_text_input('x_label',    'X Label',  text='')
         self.add_text_input('y_label',    'Y Label',  text='')
         self.add_text_input('plot_title', 'Title',    text='')
 
         import NodeGraphQt
         H = NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value
-        self.create_property('fig_width',     7.0, widget_type=H)
-        self.create_property('fig_height',    5.0, widget_type=H)
-        self.create_property('tick_rotation', 0.0, widget_type=H)
+        self.create_property('stat',          'count', widget_type=H)
+        self.create_property('hist_alpha',    0.7,     widget_type=H)
+        self.create_property('fig_width',     7.0,     widget_type=H)
+        self.create_property('fig_height',    5.0,     widget_type=H)
+        self.create_property('tick_rotation', 0.0,     widget_type=H)
 
     def evaluate(self):
         self.reset_progress()
@@ -4267,13 +4266,6 @@ class XYLinePlotNode(BaseExecutionNode):
                             items=['SEM', 'SD', '95% CI', 'None'])
         self.add_text_input('x_order',   'X Order (comma-sep, opt.)', text='')
         self.add_checkbox('show_points', '', text='Show Individual Points', state=True)
-        self._add_float_spinbox('line_width', 'Line Width', value=1.8, min_val=0.5, max_val=10.0, step=0.2, decimals=1)
-        self.add_combo_menu('line_style', 'Line Style',
-                            items=['-', '--', '-.', ':'])
-        self._add_int_spinbox('marker_size', 'Marker Size', value=5, min_val=1, max_val=30, step=1)
-        self.add_combo_menu('marker', 'Marker Style',
-                            items=['o', 's', '^', 'D', 'v', 'X', '+', '*', 'None'])
-        self._add_float_spinbox('capsize', 'Error Cap Size', value=4.0, min_val=0.0, max_val=15.0, step=0.5, decimals=1)
         self.add_combo_menu('palette', 'Color Palette',
                             items=['Set2', 'tab10', 'colorblind', 'husl', 'dark', 'None'])
         self.add_text_input('x_label',    'X Label',    text='')
@@ -4282,9 +4274,14 @@ class XYLinePlotNode(BaseExecutionNode):
 
         import NodeGraphQt as _nq
         H = _nq.constants.NodePropWidgetEnum.HIDDEN.value
-        self.create_property('fig_width',     8.0, widget_type=H)
-        self.create_property('fig_height',    6.0, widget_type=H)
-        self.create_property('tick_rotation', 0.0, widget_type=H)
+        self.create_property('line_width',    1.8,   widget_type=H)
+        self.create_property('line_style',    '-',   widget_type=H)
+        self.create_property('marker_size',   5,     widget_type=H)
+        self.create_property('marker',        'o',   widget_type=H)
+        self.create_property('capsize',       4.0,   widget_type=H)
+        self.create_property('fig_width',     8.0,   widget_type=H)
+        self.create_property('fig_height',    6.0,   widget_type=H)
+        self.create_property('tick_rotation', 0.0,   widget_type=H)
         _add_stat_hidden_props(self)
 
     def evaluate(self):

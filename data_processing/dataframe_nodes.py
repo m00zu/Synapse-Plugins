@@ -16,328 +16,532 @@ from nodes.base import (
 )
 
 
-class EditableNodeTableWidget(NodeBaseWidget):
+def _col_letter(n: int) -> str:
+    """Convert 0-based column index to Excel-style letter (A, B, ..., Z, AA, ...)."""
+    result = ''
+    while True:
+        result = chr(65 + n % 26) + result
+        n = n // 26 - 1
+        if n < 0:
+            break
+    return result
+
+
+def _is_cell_empty(val) -> bool:
+    """Return True if a cell value should be considered empty/blank."""
+    if val is None:
+        return True
+    if isinstance(val, float) and np.isnan(val):
+        return True
+    if isinstance(val, str) and val.strip() in ('', 'nan', 'None'):
+        return True
+    return False
+
+
+class _SpreadsheetModel(QtCore.QAbstractTableModel):
     """
-    A custom node widget that displays an editable pandas DataFrame directly on the node.
-    Emits a signal when user edits a cell, allowing the node to push updated data downstream.
+    Virtual spreadsheet model: a real DataFrame plus a buffer zone of empty
+    rows/columns.  Typing into the buffer auto-expands the DataFrame.
     """
-    dataframe_edited = QtCore.Signal(object)
-    update_table_signal = QtCore.Signal(object)
-    
+    BUFFER_ROWS = 50
+    BUFFER_COLS = 10
+
+    _BG_DATA   = QtGui.QColor(0x22, 0x22, 0x22)
+    _BG_BUFFER = QtGui.QColor(0x1a, 0x1a, 0x1a)
+    _FG        = QtGui.QColor(0xdd, 0xdd, 0xdd)
+    _FG_BUFFER = QtGui.QColor(0x55, 0x55, 0x55)
+
+    # Emitted when a single cell is edited via the QTableView delegate.
+    # Separate from dataChanged so the widget can distinguish user edits
+    # from programmatic model resets without double-emitting.
+    cell_edited = QtCore.Signal()
+
     def __init__(self, parent=None):
-        super(EditableNodeTableWidget, self).__init__(parent, name='editable_table', label='')
-        
-        self._table = QtWidgets.QTableWidget()
-        
-        # Ensure scrollbars are always visible
-        self._table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
-        self._table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
-        
-        # Enable smooth scrolling on Mac trackpads
-        self._table.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
-        self._table.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
-        
-        # Style the table for dark mode consistency
-        self._table.setStyleSheet("""
-            QTableWidget {
-                background-color: #222;
-                color: #ddd;
-                gridline-color: #444;
-                border: 1px solid #555;
-            }
-            QHeaderView::section {
-                background-color: #333;
-                color: #fff;
-                padding: 4px;
-                border: 1px solid #444;
-            }
-            QTableWidget::item:selected {
-                background-color: #2a82da;
-                color: #ffffff;
-            }
-        """)
-        
-        # Connect to cell editing
-        self._table.itemChanged.connect(self._on_item_changed)
-
-        # Connect to header clicks for sort / rename
-        header = self._table.horizontalHeader()
-        header.sectionClicked.connect(self._on_header_single_click)
-        header.sectionDoubleClicked.connect(self._on_header_double_clicked)
-
-        # Sort state
+        super().__init__(parent)
+        self._df = pd.DataFrame()
         self._sort_column: int | None = None
         self._sort_ascending: bool = True
-        # Timer to disambiguate single-click (sort) from double-click (rename)
-        self._sort_click_timer = QtCore.QTimer()
-        self._sort_click_timer.setSingleShot(True)
-        self._sort_click_timer.setInterval(300)
-        self._pending_sort_col: int | None = None
-        self._sort_click_timer.timeout.connect(self._do_sort)
 
-        self._df = None
-        self._is_updating_ui = False  # prevent infinite signal loops when populating table
-        
-        # Build UI layout with buttons
-        self._container = QtWidgets.QWidget()
-        self._layout = QtWidgets.QVBoxLayout(self._container)
-        self._layout.setContentsMargins(2, 2, 2, 2)
-        self._layout.setSpacing(4)
-        
-        self._btn_layout = QtWidgets.QHBoxLayout()
-        self._btn_add_row = QtWidgets.QPushButton("+ Row")
-        self._btn_rm_row = QtWidgets.QPushButton("- Row")
-        self._btn_add_col = QtWidgets.QPushButton("+ Col")
-        self._btn_rm_col = QtWidgets.QPushButton("- Col")
-        
-        self._btn_layout.addWidget(self._btn_add_row)
-        self._btn_layout.addWidget(self._btn_rm_row)
-        self._btn_layout.addWidget(self._btn_add_col)
-        self._btn_layout.addWidget(self._btn_rm_col)
-        self._btn_layout.addStretch()
-        
-        self._btn_add_row.clicked.connect(self._add_row)
-        self._btn_rm_row.clicked.connect(self._remove_row)
-        self._btn_add_col.clicked.connect(self._add_column)
-        self._btn_rm_col.clicked.connect(self._remove_column)
-        
-        self._layout.addWidget(self._table)
-        self._layout.addLayout(self._btn_layout)
-        
-        self.set_custom_widget(self._container)
-        
-        self.update_table_signal.connect(self._sync_table_ui, QtCore.Qt.QueuedConnection)
-        
-        # Initial sizing
-        self._resize_table()
+    # ── public helpers ───────���─────────────────────────────────────────
+    @property
+    def df(self) -> pd.DataFrame:
+        return self._df
 
-    def _resize_table(self):
-        """Dynamically adjust the widget size based on row/col count, bounded by a max size."""
-        # Calculate desired dimensions based on data roughly
-        num_cols = len(self._df.columns) if self._df is not None else 2
-        num_rows = len(self._df) if self._df is not None else 2
-        
-        calc_width = min(320 + (num_cols * 50), 800)
-        calc_height = min(240 + (num_rows * 30), 500)
-        
-        self._table.setFixedSize(calc_width, calc_height)
-        self._container.adjustSize()
+    def set_dataframe(self, df: pd.DataFrame | None):
+        self.beginResetModel()
+        self._df = df.copy() if df is not None else pd.DataFrame()
+        self._sort_column = None
+        self.endResetModel()
 
-        if self.widget() and self.node and hasattr(self.node, 'view'):
-            _v = self.node.view
-            if _v.scene() and _v.scene().views():
-                _v.draw_node()
+    def trim(self) -> pd.DataFrame:
+        """Return the DataFrame with trailing all-empty rows/columns removed."""
+        df = self._df.copy()
+        while len(df) > 0 and df.iloc[-1].apply(_is_cell_empty).all():
+            df = df.iloc[:-1]
+        while len(df.columns) > 0 and df.iloc[:, -1].apply(_is_cell_empty).all():
+            df = df.iloc[:, :-1]
+        if df.empty:
+            return pd.DataFrame()
+        return df.reset_index(drop=True)
 
-    def _remove_row(self):
-        """Removes the currently selected row."""
-        if self._df is None or self._df.empty: return
-        row_idx = self._table.currentRow()
-        if row_idx < 0: return # No row selected
-        
-        self._df = self._df.drop(self._df.index[row_idx])
-        self._df.reset_index(drop=True, inplace=True)
-        
-        self._is_updating_ui = True
-        self._table.removeRow(row_idx)
-        self._table.setVerticalHeaderLabels([str(i) for i in self._df.index])
-        self._resize_table()
-        self._is_updating_ui = False
-        self.dataframe_edited.emit(self._df)
-        
-    def _remove_column(self):
-        """Removes the currently selected column."""
-        if self._df is None or self._df.empty: return
-        col_idx = self._table.currentColumn()
-        if col_idx < 0: return # No column selected
-        
-        col_name = self._df.columns[col_idx]
-        self._df = self._df.drop(columns=[col_name])
-        
-        self._is_updating_ui = True
-        self._table.removeColumn(col_idx)
-        self._resize_table()
-        self._is_updating_ui = False
-        self.dataframe_edited.emit(self._df)
+    # ── QAbstractTableModel interface ──────────────────────────────────
+    def rowCount(self, parent=None):
+        return len(self._df) + self.BUFFER_ROWS
 
-    def _add_row(self):
-        """Appends an empty row to the DataFrame."""
-        if self._df is None: return
-        
-        # Create an empty series with NaNs/Nones matching columns
-        new_row = pd.Series([np.nan] * len(self._df.columns), index=self._df.columns)
-        self._df = pd.concat([self._df, new_row.to_frame().T], ignore_index=True)
-        
-        # Refresh UI
-        self._is_updating_ui = True
-        row_idx = self._table.rowCount()
-        self._table.insertRow(row_idx)
-        self._table.setVerticalHeaderLabels([str(i) for i in self._df.index])
-        
-        for col in range(self._df.shape[1]):
-            item = QtWidgets.QTableWidgetItem(str(np.nan))
-            self._table.setItem(row_idx, col, item)
-            
-        self._resize_table()
-        self._is_updating_ui = False
-        self.dataframe_edited.emit(self._df)
-        
-    def _add_column(self):
-        """Prompts for a name and appends an empty column."""
-        if self._df is None: return
-        
-        new_name, ok = QtWidgets.QInputDialog.getText(
-            self._table, "Add Column", "Enter new column name:"
-        )
-        
-        if ok and new_name:
-            if new_name in self._df.columns:
-                QtWidgets.QMessageBox.warning(self._table, "Invalid Name", "Column name already exists!")
-                return
-                
-            self._df[new_name] = pd.Series([None] * len(self._df), dtype=object)
-            
-            # Refresh UI
-            self._is_updating_ui = True
-            col_idx = self._table.columnCount()
-            self._table.insertColumn(col_idx)
-            self._table.setHorizontalHeaderLabels([str(c) for c in self._df.columns])
-            
-            for row in range(self._df.shape[0]):
-                item = QtWidgets.QTableWidgetItem(str(np.nan))
-                self._table.setItem(row, col_idx, item)
-                
-            self._resize_table()
-            self._is_updating_ui = False
-            self.dataframe_edited.emit(self._df)
+    def columnCount(self, parent=None):
+        return max(len(self._df.columns), 1) + self.BUFFER_COLS
 
-    def _on_header_single_click(self, logical_index):
-        """Queue a sort action — cancelled if a double-click follows within 300 ms."""
-        self._pending_sort_col = logical_index
-        self._sort_click_timer.start()
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        r, c = index.row(), index.column()
+        in_data = r < len(self._df) and c < len(self._df.columns)
 
-    def _do_sort(self):
-        """Perform the sort after confirming it was a single (not double) click."""
-        if self._pending_sort_col is None or self._df is None:
-            return
-        col_idx = self._pending_sort_col
-        self._pending_sort_col = None
+        if role in (QtCore.Qt.ItemDataRole.DisplayRole,
+                    QtCore.Qt.ItemDataRole.EditRole):
+            if not in_data:
+                return ''
+            val = self._df.iat[r, c]
+            if _is_cell_empty(val):
+                return ''
+            if role == QtCore.Qt.ItemDataRole.EditRole:
+                return str(val)
+            if isinstance(val, (float, np.floating)):
+                return f'{val:.2e}' if 0 < abs(val) < 0.0001 else f'{val:.4f}'
+            return str(val)
+
+        if role == QtCore.Qt.ItemDataRole.BackgroundRole:
+            return self._BG_DATA if in_data else self._BG_BUFFER
+        if role == QtCore.Qt.ItemDataRole.ForegroundRole:
+            return self._FG if in_data else self._FG_BUFFER
+        if role == QtCore.Qt.ItemDataRole.TextAlignmentRole:
+            return int(QtCore.Qt.AlignmentFlag.AlignLeft |
+                       QtCore.Qt.AlignmentFlag.AlignVCenter)
+        return None
+
+    def setData(self, index, value, role=QtCore.Qt.ItemDataRole.EditRole):
+        if role != QtCore.Qt.ItemDataRole.EditRole:
+            return False
+        r, c = index.row(), index.column()
+        text = str(value).strip() if value is not None else ''
+
+        # Don't expand the DataFrame for empty edits in the buffer zone
+        if (r >= len(self._df) or c >= len(self._df.columns)) and not text:
+            return False
+
+        if r >= len(self._df) or c >= len(self._df.columns):
+            self._expand_to(r, c)
+
+        parsed = self._parse_value(text, c)
+
+        col_name = self._df.columns[c]
+        if (not isinstance(parsed, str)
+                and not pd.api.types.is_numeric_dtype(self._df[col_name].dtype)):
+            self._df[col_name] = self._df[col_name].astype(object)
+
+        self._df.iat[r, c] = parsed
+
+        # Promote column to numeric if every value converts cleanly
+        if not pd.api.types.is_numeric_dtype(self._df[col_name].dtype):
+            promoted = pd.to_numeric(self._df[col_name], errors='coerce')
+            if promoted.notna().all():
+                self._df[col_name] = promoted
+
+        self.dataChanged.emit(index, index, [role])
+        self.cell_edited.emit()
+        return True
+
+    def flags(self, index):
+        return (QtCore.Qt.ItemFlag.ItemIsEnabled
+                | QtCore.Qt.ItemFlag.ItemIsSelectable
+                | QtCore.Qt.ItemFlag.ItemIsEditable)
+
+    def headerData(self, section, orientation, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if role != QtCore.Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == QtCore.Qt.Orientation.Horizontal:
+            if section < len(self._df.columns):
+                label = str(self._df.columns[section])
+                if section == self._sort_column:
+                    label += (' \u2191' if self._sort_ascending else ' \u2193')
+                return label
+            return _col_letter(section)
+        return str(section)
+
+    # ── mutation helpers (called by the widget) ────────────────────────
+    def sort_by_column(self, col_idx):
         if col_idx >= len(self._df.columns):
             return
         col_name = self._df.columns[col_idx]
-        # Toggle direction if same column clicked again
         if self._sort_column == col_idx:
             self._sort_ascending = not self._sort_ascending
         else:
             self._sort_column = col_idx
             self._sort_ascending = True
+        self.beginResetModel()
         self._df = self._df.sort_values(
             by=col_name, ascending=self._sort_ascending
         ).reset_index(drop=True)
-        self._sync_table_ui(self._df)
-        self.dataframe_edited.emit(self._df)
+        self.endResetModel()
 
-    def _on_header_double_clicked(self, logical_index):
-        """Prompt user to rename a column header."""
-        self._sort_click_timer.stop()  # cancel pending single-click sort
-        self._pending_sort_col = None
-        if self._df is None:
-            return
-            
-        old_name = str(self._df.columns[logical_index])
-        new_name, ok = QtWidgets.QInputDialog.getText(
-            self._table, "Rename Column", 
-            f"Enter new name for column '{old_name}':",
-            QtWidgets.QLineEdit.Normal, old_name
-        )
-        
-        if ok and new_name and new_name != old_name:
-            # Check for duplicates 
-            if new_name in self._df.columns:
-                QtWidgets.QMessageBox.warning(self._table, "Invalid Name", "Column name already exists!")
-                return
-                
-            # Rename in dataframe
-            self._df.rename(columns={self._df.columns[logical_index]: new_name}, inplace=True)
-            
-            # Update UI
-            self._is_updating_ui = True
-            self._table.setHorizontalHeaderItem(logical_index, QtWidgets.QTableWidgetItem(new_name))
-            self._is_updating_ui = False
-            
-            # Emit signal
-            self.dataframe_edited.emit(self._df)
+    def rename_column(self, col_idx, new_name):
+        if col_idx >= len(self._df.columns) or new_name in self._df.columns:
+            return False
+        self._df.rename(
+            columns={self._df.columns[col_idx]: new_name}, inplace=True)
+        self.headerDataChanged.emit(
+            QtCore.Qt.Orientation.Horizontal, col_idx, col_idx)
+        return True
 
-    def _on_item_changed(self, item):
-        """Called when a user finishes editing a cell in the table UI."""
-        if self._is_updating_ui or self._df is None:
-            return
-            
-        row = item.row()
-        col = item.column()
-        new_val_str = item.text()
-        
-        # Try to cast back to original column type
-        col_type = self._df.dtypes.iloc[col]
-        try:
-            if pd.api.types.is_numeric_dtype(col_type):
-                try:
-                    if pd.api.types.is_integer_dtype(col_type):
-                        new_val = int(new_val_str)
-                    else:
-                        new_val = float(new_val_str)
-                except (ValueError, TypeError):
-                    # User typed a string into a numeric column — convert column to object
-                    col_name = self._df.columns[col]
-                    self._df[col_name] = self._df[col_name].astype(object)
-                    new_val = str(new_val_str)
-            elif pd.api.types.is_bool_dtype(col_type):
-                new_val = new_val_str.lower() in ('true', '1', 't', 'yes', 'y')
+    def insert_rows(self, at, count=1):
+        at = min(at, len(self._df))
+        new = pd.DataFrame({c: [None] * count for c in self._df.columns})
+        self.beginResetModel()
+        self._df = pd.concat(
+            [self._df.iloc[:at], new, self._df.iloc[at:]], ignore_index=True)
+        self.endResetModel()
+
+    def insert_columns(self, at, count=1):
+        self.beginResetModel()
+        for i in range(count):
+            name = _col_letter(len(self._df.columns))
+            while name in self._df.columns:
+                name += '_'
+            if at + i >= len(self._df.columns):
+                self._df[name] = pd.Series([None] * len(self._df), dtype=object)
             else:
-                # object column: try numeric inference before falling back to string
+                self._df.insert(at + i, name,
+                                pd.Series([None] * len(self._df), dtype=object))
+        self.endResetModel()
+
+    def delete_rows(self, rows):
+        rows = sorted(set(r for r in rows if r < len(self._df)), reverse=True)
+        if not rows:
+            return
+        self.beginResetModel()
+        self._df = self._df.drop(self._df.index[rows]).reset_index(drop=True)
+        self.endResetModel()
+
+    def delete_columns(self, cols):
+        cols = sorted(set(c for c in cols if c < len(self._df.columns)),
+                      reverse=True)
+        if not cols:
+            return
+        names = [self._df.columns[c] for c in cols]
+        self.beginResetModel()
+        self._df = self._df.drop(columns=names)
+        self.endResetModel()
+
+    def clear_cells(self, indices):
+        changed = False
+        for r, c in indices:
+            if r < len(self._df) and c < len(self._df.columns):
+                self._df.iat[r, c] = None
+                changed = True
+        if changed:
+            tl = self.index(min(r for r, _ in indices),
+                            min(c for _, c in indices))
+            br = self.index(max(r for r, _ in indices),
+                            max(c for _, c in indices))
+            self.dataChanged.emit(tl, br)
+
+    def paste_block(self, start_row, start_col, text):
+        """Parse tab/newline-separated *text* and fill cells from (start_row, start_col)."""
+        lines = text.rstrip('\n').split('\n')
+        rows_data = [line.split('\t') for line in lines]
+        if not rows_data:
+            return
+        max_r = start_row + len(rows_data) - 1
+        max_c = start_col + max(len(r) for r in rows_data) - 1
+        if max_r >= len(self._df) or max_c >= len(self._df.columns):
+            self._expand_to(max_r, max_c)
+        for ri, row_vals in enumerate(rows_data):
+            for ci, val in enumerate(row_vals):
+                r, c = start_row + ri, start_col + ci
+                parsed = self._parse_value(val.strip(), c)
+                col_name = self._df.columns[c]
+                if (not isinstance(parsed, str)
+                        and not pd.api.types.is_numeric_dtype(
+                            self._df[col_name].dtype)):
+                    self._df[col_name] = self._df[col_name].astype(object)
+                self._df.iat[r, c] = parsed
+        self.beginResetModel()
+        self.endResetModel()
+
+    # ── internal ─────────────��─────────────────────────────────────────
+    def _expand_to(self, row, col):
+        cur_rows, cur_cols = len(self._df), len(self._df.columns)
+        if col >= cur_cols:
+            for i in range(cur_cols, col + 1):
+                name = _col_letter(i)
+                while name in self._df.columns:
+                    name += '_'
+                self._df[name] = pd.Series(
+                    [None] * max(len(self._df), 1), dtype=object)
+        if row >= len(self._df):
+            n_new = row - len(self._df) + 1
+            new = pd.DataFrame(
+                {c: [None] * n_new for c in self._df.columns})
+            self._df = pd.concat([self._df, new], ignore_index=True)
+        self.layoutChanged.emit()
+
+    def _parse_value(self, text, col):
+        if not text:
+            return None
+        if col < len(self._df.columns):
+            ctype = self._df.dtypes.iloc[col]
+            if pd.api.types.is_numeric_dtype(ctype):
                 try:
-                    new_val = int(new_val_str)
+                    return int(text) if pd.api.types.is_integer_dtype(ctype) else float(text)
                 except (ValueError, TypeError):
-                    try:
-                        new_val = float(new_val_str)
-                    except (ValueError, TypeError):
-                        new_val = str(new_val_str)
+                    return text
+        try:
+            return int(text)
+        except (ValueError, TypeError):
+            try:
+                return float(text)
+            except (ValueError, TypeError):
+                return text
 
-            # Update underlying dataframe safely.
-            # Newer pandas (3.x) uses StringDtype instead of plain object for
-            # string columns; StringDtype rejects non-string assignments with a
-            # TypeError.  Convert to object first so we can store numeric values,
-            # then promote the whole column to a real numeric dtype afterward.
-            col_name = self._df.columns[col]
-            if not isinstance(new_val, str) and not pd.api.types.is_numeric_dtype(self._df.dtypes.iloc[col]):
-                self._df[col_name] = self._df[col_name].astype(object)
 
-            self._df.iat[row, col] = new_val
+class _SpreadsheetView(QtWidgets.QTableView):
+    """QTableView subclass that adds copy / paste / delete key handling."""
+    paste_requested = QtCore.Signal(str)
+    delete_requested = QtCore.Signal()
+    copy_requested = QtCore.Signal()
 
-            # Attempt to promote the column to a proper numeric dtype if every
-            # cell can be converted without loss.
-            if not pd.api.types.is_numeric_dtype(self._df.dtypes.iloc[col]):
-                promoted = pd.to_numeric(self._df[col_name], errors='coerce')
-                if promoted.notna().all():
-                    self._df[col_name] = promoted
-            
-            # Emit our custom signal instead of value_changed to avoid property caching issues
-            self.dataframe_edited.emit(self._df)
-            
-        except ValueError:
-            # If parsing fails, revert the cell text to the underlying dataframe value
-            self._is_updating_ui = True
-            old_val = self._df.iat[row, col]
-            item.setText(str(old_val))
-            self._is_updating_ui = False
+    def keyPressEvent(self, event):
+        if event.matches(QtGui.QKeySequence.StandardKey.Paste):
+            text = QtWidgets.QApplication.clipboard().text()
+            if text:
+                self.paste_requested.emit(text)
+            return
+        if event.matches(QtGui.QKeySequence.StandardKey.Copy):
+            self.copy_requested.emit()
+            return
+        if event.key() in (QtCore.Qt.Key.Key_Delete,
+                           QtCore.Qt.Key.Key_Backspace):
+            if not self.state() == QtWidgets.QAbstractItemView.State.EditingState:
+                self.delete_requested.emit()
+                return
+        super().keyPressEvent(event)
 
+
+class EditableNodeTableWidget(NodeBaseWidget):
+    """
+    Excel-like spreadsheet widget embedded in a node.
+
+    Shows a large virtual grid (data + buffer zone). Users can type anywhere
+    to expand the DataFrame, double-click column headers to rename them,
+    single-click headers to sort, and right-click for insert/delete operations.
+    """
+    dataframe_edited = QtCore.Signal(object)
+    update_table_signal = QtCore.Signal(object)
+
+    def __init__(self, parent=None):
+        super(EditableNodeTableWidget, self).__init__(
+            parent, name='editable_table', label='')
+
+        self._model = _SpreadsheetModel()
+        self._is_updating_ui = False
+        self._header_editor = None
+
+        # ── view ───────────────────────────────────────────────────────
+        self._table = _SpreadsheetView()
+        self._table.setModel(self._model)
+
+        self._table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            | QtWidgets.QAbstractItemView.EditTrigger.AnyKeyPressed
+            | QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed)
+        self._table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        self._table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        self._table.setVerticalScrollMode(
+            QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self._table.setHorizontalScrollMode(
+            QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self._table.horizontalHeader().setDefaultSectionSize(80)
+        self._table.horizontalHeader().setMinimumSectionSize(40)
+        self._table.verticalHeader().setDefaultSectionSize(24)
+
+        self._table.setStyleSheet("""
+            QTableView {
+                background-color: #1e1e1e; color: #ddd;
+                gridline-color: #333; border: 1px solid #555;
+                selection-background-color: #264f78;
+                selection-color: #fff;
+            }
+            QHeaderView::section {
+                background-color: #2d2d2d; color: #fff;
+                padding: 3px; border: 1px solid #444; font-size: 10px;
+            }
+        """)
+        self._table.setFixedSize(480, 360)
+
+        # ── header interactions ────────────────────────────────────────
+        h = self._table.horizontalHeader()
+        h.setSectionsClickable(True)
+        h.sectionClicked.connect(self._on_header_click)
+        h.sectionDoubleClicked.connect(self._on_header_double_click)
+
+        self._sort_timer = QtCore.QTimer()
+        self._sort_timer.setSingleShot(True)
+        self._sort_timer.setInterval(300)
+        self._pending_sort_col = None
+        self._sort_timer.timeout.connect(self._do_sort)
+
+        # ── keyboard shortcuts ─────────────────────────────────────────
+        self._table.paste_requested.connect(self._on_paste)
+        self._table.delete_requested.connect(self._on_delete)
+        self._table.copy_requested.connect(self._on_copy)
+
+        # ── context menu ────────────��───────────────────────���──────────
+        self._table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
+
+        # ── data-change tracking (cell_edited fires only for user edits) ──
+        self._model.cell_edited.connect(self._emit_edit)
+
+        # ── layout ��────────────────────────────────────────────────────
+        container = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(container)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.setSpacing(0)
+        lay.addWidget(self._table)
+        self.set_custom_widget(container)
+
+        self.update_table_signal.connect(
+            self._set_df_main_thread, QtCore.Qt.QueuedConnection)
+
+    # ── header sort / rename ────────────���──────────────────────────────
+    def _on_header_click(self, section):
+        self._pending_sort_col = section
+        self._sort_timer.start()
+
+    def _on_header_double_click(self, section):
+        self._sort_timer.stop()
+        self._pending_sort_col = None
+        if section >= len(self._model.df.columns):
+            return
+        self._start_header_edit(section)
+
+    def _do_sort(self):
+        if self._pending_sort_col is None:
+            return
+        col = self._pending_sort_col
+        self._pending_sort_col = None
+        self._model.sort_by_column(col)
+        self._emit_edit()
+
+    def _start_header_edit(self, section):
+        header = self._table.horizontalHeader()
+        x = header.sectionPosition(section) - header.offset()
+        w = header.sectionSize(section)
+        h = header.height()
+        old_name = str(self._model.df.columns[section])
+
+        editor = QtWidgets.QLineEdit(header)
+        editor.setGeometry(x, 0, w, h)
+        editor.setText(old_name)
+        editor.selectAll()
+        editor.setStyleSheet(
+            'QLineEdit { background: #1a1a2e; color: #fff; '
+            'border: 2px solid #4a9eff; padding: 2px; font-size: 10px; }')
+
+        def _finish():
+            new_name = editor.text().strip()
+            editor.deleteLater()
+            self._header_editor = None
+            if new_name and new_name != old_name:
+                if self._model.rename_column(section, new_name):
+                    self._emit_edit()
+
+        editor.editingFinished.connect(_finish)
+        editor.show()
+        editor.setFocus()
+        self._header_editor = editor
+
+    # ── keyboard actions ───────────────────────────────────────────────
+    def _on_paste(self, text):
+        idx = self._table.currentIndex()
+        if not idx.isValid():
+            return
+        self._model.paste_block(idx.row(), idx.column(), text)
+        self._emit_edit()
+
+    def _on_copy(self):
+        sel = self._table.selectionModel().selectedIndexes()
+        if not sel:
+            return
+        rows = sorted(set(i.row() for i in sel))
+        cols = sorted(set(i.column() for i in sel))
+        lines = []
+        for r in rows:
+            cells = []
+            for c in cols:
+                idx = self._model.index(r, c)
+                val = self._model.data(idx, QtCore.Qt.ItemDataRole.DisplayRole)
+                cells.append(str(val) if val else '')
+            lines.append('\t'.join(cells))
+        QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
+
+    def _on_delete(self):
+        sel = self._table.selectionModel().selectedIndexes()
+        if not sel:
+            return
+        indices = [(i.row(), i.column()) for i in sel]
+        self._model.clear_cells(indices)
+        self._emit_edit()
+
+    # ── context menu ──────────────────────────────���────────────────────
+    def _show_context_menu(self, pos):
+        sel = self._table.selectionModel().selectedIndexes()
+        rows = sorted(set(i.row() for i in sel)) if sel else []
+        cols = sorted(set(i.column() for i in sel)) if sel else []
+        n_data_rows = len(self._model.df)
+        n_data_cols = len(self._model.df.columns)
+
+        menu = QtWidgets.QMenu(self._table)
+        if rows:
+            menu.addAction('Insert Row Above',
+                           lambda: (self._model.insert_rows(rows[0]),
+                                    self._emit_edit()))
+            menu.addAction('Insert Row Below',
+                           lambda: (self._model.insert_rows(rows[-1] + 1),
+                                    self._emit_edit()))
+            data_rows = [r for r in rows if r < n_data_rows]
+            if data_rows:
+                menu.addAction(
+                    f'Delete Row{"s" if len(data_rows) > 1 else ""}',
+                    lambda: (self._model.delete_rows(data_rows),
+                             self._emit_edit()))
+        menu.addSeparator()
+        if cols:
+            menu.addAction('Insert Column Left',
+                           lambda: (self._model.insert_columns(cols[0]),
+                                    self._emit_edit()))
+            menu.addAction('Insert Column Right',
+                           lambda: (self._model.insert_columns(cols[-1] + 1),
+                                    self._emit_edit()))
+            data_cols = [c for c in cols if c < n_data_cols]
+            if data_cols:
+                menu.addAction(
+                    f'Delete Column{"s" if len(data_cols) > 1 else ""}',
+                    lambda: (self._model.delete_columns(data_cols),
+                             self._emit_edit()))
+        menu.addSeparator()
+        if sel:
+            menu.addAction('Clear Cell(s)', self._on_delete)
+        menu.exec_(self._table.viewport().mapToGlobal(pos))
+
+    # ── data change tracking ───────────────────────────────────────────
+    def _emit_edit(self):
+        trimmed = self._model.trim()
+        self.dataframe_edited.emit(trimmed)
+
+    # ── NodeBaseWidget interface ───────────────��───────────────────────
     def set_value(self, value):
-        """Populate the QTableWidget from a DataFrame or a saved JSON dict snapshot.
-
-        NodeGraphQt calls this with whatever get_value() returned when the
-        workflow was saved (a plain dict), so we must handle both cases:
-          - pd.DataFrame  → direct call from evaluate() / __init__
-          - dict          → restored from a saved workflow file
-        """
+        """Accept a DataFrame or a saved JSON dict snapshot."""
         restored_from_json = isinstance(value, dict)
 
         if isinstance(value, dict) and 'columns' in value:
@@ -356,85 +560,30 @@ class EditableNodeTableWidget(NodeBaseWidget):
 
         import threading
         if threading.current_thread() is threading.main_thread():
-            self._sync_table_ui(new_df)
+            self._set_df_main_thread(new_df)
         else:
             self.update_table_signal.emit(new_df)
 
-        # After restoring from a saved workflow, propagate the DataFrame so
-        # output_values['out'] reflects the saved state without needing a
-        # manual graph run.
         if restored_from_json and new_df is not None:
             self.dataframe_edited.emit(new_df)
-    
-    @QtCore.Slot(object)
-    def _sync_table_ui(self, df):
-        """Thread-safe UI update performed in the main GUI thread."""
-        if df is None:
-            self._is_updating_ui = True
-            self._table.setRowCount(0)
-            self._table.setColumnCount(0)
-            self._df = None
-            self._is_updating_ui = False
-            return
-            
-        self._df = df.copy() # Store a local copy to allow editing
-        self._is_updating_ui = True
 
-        self._table.setRowCount(df.shape[0])
-        self._table.setColumnCount(df.shape[1])
-        # Add sort direction indicator to the active sort column
-        header_labels = []
-        for i, col in enumerate(df.columns):
-            label = str(col)
-            if i == self._sort_column:
-                label += (' ↑' if self._sort_ascending else ' ↓')
-            header_labels.append(label)
-        self._table.setHorizontalHeaderLabels(header_labels)
-        self._table.setVerticalHeaderLabels([str(i) for i in df.index])
-        
-        for row in range(df.shape[0]):
-            for col in range(df.shape[1]):
-                val = df.iat[row, col]
-                
-                # Format smartly for UI
-                if isinstance(val, (float, np.floating)):
-                    if 0 < abs(val) < 0.0001:
-                        display_text = f"{val:.2e}"
-                    else:
-                        display_text = f"{val:.4f}"
-                else:
-                    display_text = str(val)
-                    
-                item = QtWidgets.QTableWidgetItem(display_text)
-                self._table.setItem(row, col, item)
-                
-        self._resize_table()
+    @QtCore.Slot(object)
+    def _set_df_main_thread(self, df):
+        self._is_updating_ui = True
+        self._model.set_dataframe(df)
         self._is_updating_ui = False
-        
-        # Force proxy widget to update its size
-        if self.widget():
-            self.widget().adjustSize()
-            if self.node and hasattr(self.node, 'view'):
-                _v = self.node.view
-                if _v.scene() and _v.scene().views():
-                    _v.draw_node()
 
     def get_dataframe(self):
-        """Return the live DataFrame — for use by EditableTableNode.evaluate()."""
-        return self._df
+        """Return the trimmed live DataFrame."""
+        return self._model.trim()
 
     def get_value(self):
-        """Return a JSON-serializable snapshot for NodeGraphQt's save_session.
-
-        NodeGraphQt calls this during save_session and passes the result to
-        json.dumps.  Returning the raw DataFrame causes a
-        ``ValueError: Circular reference detected`` because pandas' internal
-        object graph contains cycles.  We serialise to a plain dict instead.
-        """
-        if self._df is None:
+        """Return a JSON-serializable snapshot for workflow save."""
+        df = self._model.trim()
+        if df is None or df.empty:
             return None
         try:
-            return json.loads(self._df.to_json(orient='split'))
+            return json.loads(df.to_json(orient='split'))
         except Exception:
             return None
 
@@ -443,9 +592,10 @@ class EditableTableNode(BaseExecutionNode):
     """
     Displays an input table in an editable spreadsheet widget and outputs the modified result.
 
-    The node accepts a TableData input and presents it in an interactive QTableWidget
-    where you can edit cell values, add/remove rows and columns, rename headers, and
-    sort by clicking column headers. Changes are pushed downstream automatically.
+    The node accepts a TableData input and presents it in an Excel-like spreadsheet
+    where you can type anywhere to add data, double-click column headers to rename
+    them, single-click headers to sort, and right-click for insert/delete operations.
+    Copy/paste and Delete key are supported. Changes are pushed downstream automatically.
 
     Parameters:
     - **Reset Edits on Next Run** — when checked, discards local edits and reloads from upstream on the next evaluation
@@ -470,11 +620,9 @@ class EditableTableNode(BaseExecutionNode):
         
         # When manual edits occur, mark the node dirty to propagate changes down
         self.editable_widget.dataframe_edited.connect(self._on_table_edited)
-        
-        # Initialize default empty dataframe
-        empty_df = pd.DataFrame([['', ''], ['', '']], columns=['Column 1', 'Column 2'])
-        self.editable_widget.set_value(empty_df)
-        self.output_values['out'] = TableData(payload=empty_df)
+
+        # Start with an empty spreadsheet — the buffer zone provides visual cells
+        self.output_values['out'] = TableData(payload=pd.DataFrame())
         
     def _on_table_edited(self, new_df):
         """Triggered asynchronously via Qt Signals when the user clicks out of a table cell."""
@@ -491,12 +639,10 @@ class EditableTableNode(BaseExecutionNode):
         self.reset_progress()
         in_port = self.inputs().get('in')
         if not in_port or not in_port.connected_ports():
-            # If no input, retain local edits or use an empty table
+            # No input — retain whatever the user has typed in the spreadsheet
             edited_df = self.editable_widget.get_dataframe()
             if edited_df is None:
-                edited_df = pd.DataFrame([['', ''], ['', '']], columns=['Column 1', 'Column 2'])
-                self.editable_widget.set_value(edited_df)
-                
+                edited_df = pd.DataFrame()
             self.output_values['out'] = TableData(payload=edited_df)
             self._last_input_df = None
             self.set_progress(100)

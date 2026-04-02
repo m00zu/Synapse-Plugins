@@ -109,23 +109,23 @@ class _CodePreviewWidget(NodeBaseWidget):
             self.on_value_changed(code)
 
 
-class _ScriptOutputHelper(QtCore.QObject):
-    """Main-thread helper that shows print() output as a popup."""
-    _show = QtCore.Signal(str, str)
-
-    def __init__(self):
-        super().__init__()
-        self._show.connect(self._on_show)
-
-    def _on_show(self, title, text):
-        QtWidgets.QMessageBox.information(
-            QtWidgets.QApplication.activeWindow(), title, text)
-
-_output_helper = _ScriptOutputHelper()
+_output_helper = None
 
 
 def _show_script_output(node_name: str, text: str):
     """Thread-safe: emit signal to show popup on main thread."""
+    global _output_helper
+    if _output_helper is None:
+        # Lazy init — only created when first print() output occurs
+        class _Helper(QtCore.QObject):
+            _show = QtCore.Signal(str, str)
+            def __init__(self):
+                super().__init__()
+                self._show.connect(self._on_show)
+            def _on_show(self, title, text):
+                QtWidgets.QMessageBox.information(
+                    QtWidgets.QApplication.activeWindow(), title, text)
+        _output_helper = _Helper()
     _output_helper._show.emit(f'Python Script — {node_name}', text)
 
 

@@ -838,6 +838,8 @@ class PairwiseMatrixWidget(NodeBaseWidget):
 
     # ── grid management ───────────────────────────────────────────────
     def _rebuild_grid(self, groups: list[str]):
+        if groups == self._groups:
+            return
         self._is_updating = True
         self._groups = list(groups)
         n = len(groups)
