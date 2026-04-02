@@ -1827,16 +1827,6 @@ class PlotToolboxMixin:
         self.toolbox._toolbox.setMinimumWidth(280)
         self.add_custom_widget(self.toolbox)
 
-        # Patch proxy mode to restore node size after zoom in/out
-        _original_set_proxy = self.view.set_proxy_mode
-        _node_ref = self
-        def _patched_set_proxy(mode):
-            was_proxy = _node_ref.view._proxy_mode
-            _original_set_proxy(mode)
-            if was_proxy and not mode and hasattr(_node_ref, 'view'):
-                _node_ref.view.draw_node()
-        self.view.set_proxy_mode = _patched_set_proxy
-
     def _tb_text(self, name, label, page, default=''):
         container = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(container)
@@ -2400,7 +2390,8 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('stat_text_color', [0, 0, 0, 255], widget_type=NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value, tab='Properties')
         self.create_property('stat_text_size', 12.0, widget_type=NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value, tab='Properties')
         self.create_property('stat_y_offset', 0.05, widget_type=NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value, tab='Properties')
-        
+        self.create_property('group_spacing', 0.5, widget_type=NodeGraphQt.constants.NodePropWidgetEnum.HIDDEN.value, tab='Properties')
+
         # Create the toolbox widget
         self._build_toolbox(450)
 
@@ -2416,6 +2407,7 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_spinbox('tick_rotation', 'X-Tick Rotation (Deg)', 'Data & Labels', 0.0, 0, 180, 1, 2)
         self._tb_spinbox('fig_width', 'Fig Width', 'Figure & Layout', 10.0, 0, 100, 0.5, 2)
         self._tb_spinbox('fig_height', 'Fig Height', 'Figure & Layout', 8.0, 0, 100, 0.5, 2)
+        self._tb_spinbox('group_spacing', 'Group Spacing', 'Figure & Layout', 0.5, 0.1, 10.0, 0.05, 2)
         self._tb_combo('dot_palette', 'Color Palette (by Group)', 'Visuals', ['None', 'Set2', 'husl', 'viridis', 'colorblind', 'pastel', 'dark'])
         self._tb_color('dot_color', 'Dot Color (if No Palette)', 'Visuals')
         self._tb_spinbox('dot_size', 'Dot Size', 'Visuals', 5.0, 0, 100, 0.5, 2)
@@ -2749,7 +2741,16 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
             
             ax.set_ylabel(y_label_text, fontsize=label_fs)
             ax.set_title(title_text, fontweight='bold', fontsize=title_fs)
-            
+
+            # Tighten group spacing — groups sit at x = 0, 1, …, n-1;
+            # this controls the padding on either side.
+            try:
+                spacing = float(self.get_property('group_spacing'))
+            except (ValueError, TypeError):
+                spacing = 0.5
+            n_groups = len(plot_order)
+            ax.set_xlim(-spacing, max(n_groups - 1, 0) + spacing)
+
             if has_subgroups:
                 ax.set_xticks(range(len(plot_order)))
                 ax.set_xticklabels(x_labels, fontweight='bold', rotation=rot_val)
