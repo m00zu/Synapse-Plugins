@@ -35,6 +35,11 @@ def _css_parse(s: str) -> dict:
     return d
 
 
+def _css_ser(d: dict) -> str:
+    """Serialize a dict back to an inline CSS string."""
+    return '; '.join(f'{k}: {v}' for k, v in d.items())
+
+
 def _css_build(d: dict) -> str:
     """Rebuild a CSS style string from a dict."""
     return '; '.join(f'{k}: {v}' for k, v in d.items() if v.strip())
@@ -86,15 +91,17 @@ def _is_draggable(elem, tick_text_ids=frozenset()) -> bool:
     """Determine if an SVG overlay should be movable (draggable).
 
     Returns True for:
-      - text groups  (text_N, <text>) — EXCEPT tick labels
+      - text groups  (text_N, <text>) — EXCEPT tick labels and axis groups
       - stat-annotation text  (stat_text:*)
       - user-added annotations  (annotation_*)
 
-    Tick labels, data elements (line2d, PathCollection, etc.) are NOT
-    draggable.
+    Tick labels, axis groups, data elements (line2d, PathCollection, etc.)
+    are NOT draggable.
     """
     eid = elem.get('id', '')
-    # Tick labels must stay locked to the axes
+    # Axis groups and tick labels must stay locked
+    if eid.startswith('matplotlib.axis_'):
+        return False
     if eid in tick_text_ids:
         return False
     # User-added annotations are always draggable
@@ -107,6 +114,13 @@ def _is_draggable(elem, tick_text_ids=frozenset()) -> bool:
     if eid.startswith('stat_text:'):
         return True
     return False
+
+
+def _is_deletable(eid: str) -> bool:
+    """Only user-added annotations can be deleted."""
+    return any(eid.startswith(p) for p in
+               ('annotation_', 'rect_ann_', 'ellipse_ann_',
+                'line_ann_', 'arrow_ann_'))
 
 
 # ── Marker shape SVG path data (normalised to ~±3.5 unit coords) ──────────
@@ -571,6 +585,9 @@ class _SvgEditorView(object):
 
             _SKIP   = _SvgEditorView._SKIP_TAGS
 
+            _ZOOM_MIN = 0.25
+            _ZOOM_MAX = 8.0
+
             def __init__(self):
                 super().__init__()
                 from PySide6.QtSvgWidgets import QGraphicsSvgItem
@@ -587,6 +604,8 @@ class _SvgEditorView(object):
                 self.setStyleSheet(
                     "background: #1c1c1c; border: 1px solid #333;")
                 self.setMinimumSize(540, 440)
+                self.setContextMenuPolicy(
+                    QtCore.Qt.ContextMenuPolicy.DefaultContextMenu)
 
                 self._renderer = None
                 self._bg       = None      # QGraphicsSvgItem (vector)
@@ -596,6 +615,17 @@ class _SvgEditorView(object):
                 self._sx = self._sy = 1.0
                 self._vbox    = QtCore.QRectF()
                 self._pan_pos = None       # middle-button pan
+                self._space_pan = False    # Space+drag pan
+                self._inline_editor = None # active inline text QLineEdit
+
+                # Zoom indicator label (top-right corner)
+                self._zoom_label = QtWidgets.QLabel("100%", self)
+                self._zoom_label.setStyleSheet(
+                    "QLabel { color: #aaa; background: rgba(0,0,0,150);"
+                    " padding: 2px 6px; border-radius: 3px; font-size: 10px; }")
+                self._zoom_label.setFixedHeight(18)
+                self._zoom_label.move(8, 8)
+                self._zoom_label.show()
 
                 self._sc.selectionChanged.connect(self._on_sel_changed)
 
@@ -667,13 +697,33 @@ class _SvgEditorView(object):
             def overlay_count(self):
                 return len(self._overlays)
 
-            def zoom_in(self):   self.scale(1.25, 1.25)
-            def zoom_out(self):  self.scale(0.80, 0.80)
+            def _current_zoom(self):
+                return self.transform().m11()
+
+            def _update_zoom_label(self):
+                pct = int(self._current_zoom() * 100)
+                self._zoom_label.setText(f"{pct}%")
+
+            def _try_scale(self, factor):
+                """Scale with zoom limits."""
+                cur = self._current_zoom()
+                new = cur * factor
+                if new < self._ZOOM_MIN:
+                    factor = self._ZOOM_MIN / cur
+                elif new > self._ZOOM_MAX:
+                    factor = self._ZOOM_MAX / cur
+                if factor != 1.0:
+                    self.scale(factor, factor)
+                self._update_zoom_label()
+
+            def zoom_in(self):   self._try_scale(1.25)
+            def zoom_out(self):  self._try_scale(0.80)
             def zoom_fit(self):
                 if self._sc.sceneRect().isValid():
                     self.fitInView(
                         self._sc.sceneRect(),
                         QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+                    self._update_zoom_label()
 
             # ── private ───────────────────────────────────────────────────
             def _create_overlays(self):
@@ -710,9 +760,12 @@ class _SvgEditorView(object):
                                 tick_text_ids.add(_tdid)
 
                 # Structural containers — no overlay, children handled individually
+                # Note: matplotlib.axis groups ARE selectable (for tick styling)
                 _STRUCTURAL_RE = re.compile(
                     r'^(figure|axes|subplot|inset_axes|polar_axes'
-                    r'|xtick|ytick|matplotlib\.axis)_\d+$')
+                    r'|xtick|ytick)_\d+$')
+                # Axis containers get a single selectable (non-draggable) overlay
+                _AXIS_RE = re.compile(r'^matplotlib\.axis_\d+$')
 
                 # Helper: check if a <g> wraps a purely white-fill (#ffffff)
                 # background path. These are figure/axes bg rects and should
@@ -734,6 +787,7 @@ class _SvgEditorView(object):
                     r'^(line2d|PathCollection|QuadMesh|PolyCollection'
                     r'|FillBetweenPolyCollection'
                     r'|mcoll|AxesImage|FancyBboxPatch|legend'
+                    r'|matplotlib\.axis'
                     r'|text)_\d+$')
 
                 # Identify semantic-group roots and their non-root children
@@ -839,6 +893,12 @@ class _SvgEditorView(object):
                         self.element_double_clicked.emit(e)
                     ov._mov_cb = lambda e, dx, dy: \
                         self.element_moved.emit(e, dx, dy)
+                    # Flag text elements for inline editing
+                    ov._is_text = (_has_text_descendant(elem)
+                                   or _ltag(elem) in ('text', 'tspan')
+                                   or eid.startswith('text_')
+                                   or eid.startswith('annotation_')
+                                   or eid.startswith('stat_text:'))
                     self._sc.addItem(ov)
                     self._overlays[eid] = ov
 
@@ -850,17 +910,218 @@ class _SvgEditorView(object):
 
             # ── events ────────────────────────────────────────────────────
             def wheelEvent(self, e):
-                f = 1.15 if e.angleDelta().y() > 0 else 1.0 / 1.15
-                self.scale(f, f)
+                mods = e.modifiers()
+                # Ctrl+Wheel = zoom, plain Wheel = scroll vertically,
+                # Shift+Wheel = scroll horizontally
+                if mods & QtCore.Qt.KeyboardModifier.ControlModifier:
+                    f = 1.15 if e.angleDelta().y() > 0 else 1.0 / 1.15
+                    self._try_scale(f)
+                    e.accept()
+                elif mods & QtCore.Qt.KeyboardModifier.ShiftModifier:
+                    delta = e.angleDelta().y() or e.angleDelta().x()
+                    self.horizontalScrollBar().setValue(
+                        self.horizontalScrollBar().value() - delta)
+                    e.accept()
+                else:
+                    # Plain scroll — vertical pan
+                    super().wheelEvent(e)
+
+            # Signal for add-shape requests (handled by parent widget)
+            add_shape_requested = QtCore.Signal(str)  # shape type
+
+            def contextMenuEvent(self, e):
+                """Right-click context menu for SVG elements and canvas."""
+                _MENU_SS = ("QMenu { background: #2b2b2b; color: #ddd; border: 1px solid #555; }"
+                            "QMenu::item:selected { background: #3a6ea5; }")
+                item = self.itemAt(e.pos())
+
+                menu = QtWidgets.QMenu(self)
+                menu.setStyleSheet(_MENU_SS)
+
+                if item is not None and item is not self._bg and hasattr(item, 'eid'):
+                    eid = item.eid
+
+                    # Format action — select and show property panel
+                    fmt_act = menu.addAction("Format...")
+                    fmt_act.triggered.connect(
+                        lambda: self.element_selected.emit(eid))
+
+                    # Edit text inline (only for text elements)
+                    if hasattr(item, '_is_text') and item._is_text:
+                        edit_act = menu.addAction("Edit Text")
+                        edit_act.triggered.connect(
+                            lambda: self._start_inline_edit(item))
+
+                    menu.addSeparator()
+
+                    # Delete (only for annotations/user-added elements)
+                    if any(eid.startswith(p) for p in
+                           ('annotation_', 'rect_ann_', 'ellipse_ann_',
+                            'line_ann_', 'arrow_ann_')):
+                        del_act = menu.addAction("Delete")
+                        del_act.triggered.connect(
+                            lambda: self.delete_requested.emit(eid))
+
+                    # Bring to front / send to back
+                    menu.addSeparator()
+                    front_act = menu.addAction("Bring to Front")
+                    front_act.triggered.connect(
+                        lambda: self._change_z_order(eid, 'front'))
+                    back_act = menu.addAction("Send to Back")
+                    back_act.triggered.connect(
+                        lambda: self._change_z_order(eid, 'back'))
+
+                # Add shapes submenu (always available)
+                menu.addSeparator()
+                add_menu = menu.addMenu("Add")
+                add_menu.setStyleSheet(_MENU_SS)
+                for label, shape in [
+                    ("Text",      "text"),
+                    ("Rectangle", "rect"),
+                    ("Ellipse",   "ellipse"),
+                    ("Line",      "line"),
+                    ("Arrow",     "arrow"),
+                ]:
+                    act = add_menu.addAction(label)
+                    act.triggered.connect(
+                        lambda checked=False, s=shape: self.add_shape_requested.emit(s))
+
+                # Canvas options
+                menu.addSeparator()
+                pad_act = menu.addAction("Canvas Padding...")
+                pad_act.triggered.connect(
+                    lambda: self._show_padding_dialog())
+                fit_act = menu.addAction("Fit to View")
+                fit_act.triggered.connect(self.zoom_fit)
+
+                menu.exec(e.globalPos())
                 e.accept()
 
+            # Signal for padding apply (handled by parent widget)
+            padding_requested = QtCore.Signal()
+
+            def _show_padding_dialog(self):
+                """Show a small dialog for canvas padding."""
+                self.padding_requested.emit()
+
+            def _change_z_order(self, eid, direction):
+                """Move an SVG element to front or back in the DOM."""
+                if self.svg_root is None:
+                    return
+                elem = _find_id(self.svg_root, eid)
+                if elem is None:
+                    return
+                parent = None
+                for p in self.svg_root.iter():
+                    if elem in list(p):
+                        parent = p
+                        break
+                if parent is None:
+                    return
+                parent.remove(elem)
+                if direction == 'front':
+                    parent.append(elem)  # Last child = drawn on top
+                else:
+                    parent.insert(0, elem)  # First child = drawn behind
+                # Rerender via the element_moved signal (triggers reserialize)
+                self.element_moved.emit(eid, 0.0, 0.0)
+
             def mousePressEvent(self, e):
-                from PySide6 import QtCore
+                # Middle-button or Space+left-button → pan
                 if e.button() == QtCore.Qt.MouseButton.MiddleButton:
                     self._pan_pos = e.position().toPoint()
+                    self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+                    e.accept()
+                    return
+                if (e.button() == QtCore.Qt.MouseButton.LeftButton
+                        and self._space_pan):
+                    self._pan_pos = e.position().toPoint()
+                    self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
                     e.accept()
                     return
                 super().mousePressEvent(e)
+
+            # Signal for inline text edit completion
+            text_edited_inline = QtCore.Signal(str, str)  # (eid, new_text)
+
+            def mouseDoubleClickEvent(self, e):
+                if e.button() == QtCore.Qt.MouseButton.LeftButton:
+                    item = self.itemAt(e.position().toPoint())
+                    # Double-click on empty area → fit to view
+                    if item is None or item is self._bg:
+                        self.zoom_fit()
+                        e.accept()
+                        return
+                    # Double-click on text overlay → inline edit
+                    if hasattr(item, 'eid') and hasattr(item, '_is_text') and item._is_text:
+                        self._start_inline_edit(item)
+                        e.accept()
+                        return
+                super().mouseDoubleClickEvent(e)
+
+            def _start_inline_edit(self, overlay_item):
+                """Open a QLineEdit on top of the overlay for inline text editing."""
+                eid = overlay_item.eid
+                # Find current text content
+                if self.svg_root is None:
+                    return
+                xml_elem = None
+                for el in self.svg_root.iter():
+                    if el.get('id') == eid:
+                        xml_elem = el
+                        break
+                if xml_elem is None:
+                    return
+                # Extract text from tspan or text element
+                current_text = ''
+                for sub in xml_elem.iter():
+                    lt = _ltag(sub)
+                    if lt == 'tspan' and sub.text:
+                        current_text = sub.text
+                        break
+                    if lt == 'text' and sub.text:
+                        current_text = sub.text
+                        break
+
+                # Position the editor over the overlay
+                rect = overlay_item.sceneBoundingRect()
+                vp_rect = self.mapFromScene(rect).boundingRect()
+
+                editor = QtWidgets.QLineEdit(self.viewport())
+                editor.setText(current_text)
+                editor.setStyleSheet(
+                    "QLineEdit { background: #1e1e1e; color: #fff;"
+                    " border: 2px solid #4a9eff; padding: 2px;"
+                    " font-size: 12px; }")
+                editor.setGeometry(
+                    max(0, vp_rect.x() - 4),
+                    max(0, vp_rect.y() - 2),
+                    max(120, vp_rect.width() + 20),
+                    max(24, vp_rect.height() + 4))
+                editor.selectAll()
+                editor.setFocus()
+                editor.show()
+                self._inline_editor = editor  # track active editor
+
+                def _finish():
+                    new_text = editor.text()
+                    self._inline_editor = None
+                    editor.deleteLater()
+                    if new_text != current_text:
+                        self.text_edited_inline.emit(eid, new_text)
+
+                editor.editingFinished.connect(_finish)
+                # Also close on Escape
+                editor.installEventFilter(self)
+                editor._is_inline_edit = True
+
+            def eventFilter(self, obj, event):
+                if (hasattr(obj, '_is_inline_edit')
+                        and event.type() == QtCore.QEvent.Type.KeyPress
+                        and event.key() == QtCore.Qt.Key.Key_Escape):
+                    obj.deleteLater()
+                    return True
+                return super().eventFilter(obj, event)
 
             def mouseMoveEvent(self, e):
                 if self._pan_pos is not None:
@@ -875,23 +1136,50 @@ class _SvgEditorView(object):
                 super().mouseMoveEvent(e)
 
             def keyPressEvent(self, e):
+                # Don't intercept keys while inline text editor is active
+                if getattr(self, '_inline_editor', None) is not None:
+                    return super().keyPressEvent(e)
+                # Space → pan mode
+                if e.key() == QtCore.Qt.Key.Key_Space and not e.isAutoRepeat():
+                    self._space_pan = True
+                    self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+                    e.accept()
+                    return
+                # Ctrl+0 → fit to view
+                if (e.key() == QtCore.Qt.Key.Key_0
+                        and e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier):
+                    self.zoom_fit()
+                    e.accept()
+                    return
+                # Delete/Backspace — only for deletable elements
                 if e.key() in (QtCore.Qt.Key.Key_Delete,
                                QtCore.Qt.Key.Key_Backspace):
                     for it in self._sc.selectedItems():
-                        if hasattr(it, 'eid'):
+                        if hasattr(it, 'eid') and _is_deletable(it.eid):
                             self.delete_requested.emit(it.eid)
                             e.accept()
                             return
-                    # No overlay selected — let the event propagate
-                    # so NodeGraphQt can delete the node itself
                     return
-                # Ctrl+Z / Ctrl+Shift+Z handled by widget
                 super().keyPressEvent(e)
 
-            def mouseReleaseEvent(self, e):
-                from PySide6 import QtCore
-                if e.button() == QtCore.Qt.MouseButton.MiddleButton:
+            def keyReleaseEvent(self, e):
+                if e.key() == QtCore.Qt.Key.Key_Space and not e.isAutoRepeat():
+                    self._space_pan = False
                     self._pan_pos = None
+                    self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                    e.accept()
+                    return
+                super().keyReleaseEvent(e)
+
+            def mouseReleaseEvent(self, e):
+                if (e.button() == QtCore.Qt.MouseButton.MiddleButton
+                        or (e.button() == QtCore.Qt.MouseButton.LeftButton
+                            and self._pan_pos is not None)):
+                    self._pan_pos = None
+                    if self._space_pan:
+                        self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+                    else:
+                        self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
                     e.accept()
                     return
                 super().mouseReleaseEvent(e)
@@ -1063,6 +1351,66 @@ class _SvgPropsPanel(object):
                            or eid.startswith('annotation_'))
                 is_scatter = eid.startswith('PathCollection_')
                 is_line = eid.startswith('line2d_')
+                is_axis = eid.startswith('matplotlib.axis_')
+
+                # ── Special panel for axis elements (tick styling) ──
+                if is_axis:
+                    axis_name = 'X Axis' if 'axis_1' in eid or eid.endswith('_1') else 'Y Axis'
+                    self._title.setText(f'{axis_name} Ticks')
+                    # Find first tick path to read current style
+                    # Check both CSS style AND direct attributes (matplotlib uses both)
+                    tick_css = {}
+                    label_css = {}
+                    for ch in xml_elem.iter():
+                        ch_style = _css_parse(ch.get('style', ''))
+                        ch_tag = _ltag(ch)
+                        if ch_tag == 'path' and not tick_css:
+                            # Merge direct attributes into CSS dict
+                            for attr in ('stroke', 'stroke-width', 'opacity', 'fill'):
+                                av = ch.get(attr)
+                                if av and attr not in ch_style:
+                                    ch_style[attr] = av
+                            if ch_style:
+                                tick_css = ch_style
+                        if ch_tag in ('text', 'tspan') and not label_css:
+                            label_css = ch_style
+                            if not label_css:
+                                for p in xml_elem.iter():
+                                    if _has_text_descendant(p):
+                                        label_css = _css_parse(p.get('style', ''))
+                                        if label_css:
+                                            break
+
+                    # Tick line fields
+                    self._fl.addRow(QtWidgets.QLabel(
+                        "<b style='color:#8bf'>Tick Lines</b>"))
+                    for key, kind, default in [
+                        ('stroke',       'color', tick_css.get('stroke', '#000000')),
+                        ('stroke-width', 'float', tick_css.get('stroke-width', '0.8')),
+                        ('opacity',      'float01', tick_css.get('opacity', '1')),
+                    ]:
+                        w = self._make_editor(kind, default)
+                        if w:
+                            self._wmap[f'tick:{key}'] = w
+                            self._fl.addRow(key, w)
+
+                    # Tick label fields
+                    self._fl.addRow(QtWidgets.QLabel(
+                        "<b style='color:#8bf'>Tick Labels</b>"))
+                    scale_val, _ = _get_mpl_text_scale(xml_elem)
+                    fs_default = str(round(scale_val * 100, 1)) if scale_val else \
+                                 label_css.get('font-size', '10').replace('px', '')
+                    for key, kind, default in [
+                        ('fill',      'color', label_css.get('fill', '#000000')),
+                        ('font-size', 'float', fs_default),
+                    ]:
+                        w = self._make_editor(kind, default)
+                        if w:
+                            self._wmap[f'ticklabel:{key}'] = w
+                            self._fl.addRow(key, w)
+
+                    self._apply_btn.setEnabled(True)
+                    return
 
                 # Core fields for every element
                 # Text elements default fill to black (fill:none makes text invisible)
@@ -1095,6 +1443,7 @@ class _SvgPropsPanel(object):
                         if not default_fs:
                             default_fs = '10'
                     fields.append(('font-size', 'float', default_fs))
+                    fields.append(('font-family', 'fontpicker', 'sans-serif'))
                 elif is_line:
                     # Named line-style presets instead of raw dasharray
                     pass  # handled below as a combo
@@ -1442,6 +1791,27 @@ class _SvgPropsPanel(object):
                         lambda _v: self._debounce.start())
                     return ed
 
+                if kind == 'fontpicker':
+                    # Read current font from element
+                    cur_font = current or 'sans-serif'
+                    # Common fonts for scientific figures
+                    fonts = ['sans-serif', 'serif', 'monospace',
+                             'Arial', 'Helvetica', 'Times New Roman',
+                             'Courier New', 'Calibri', 'Georgia',
+                             'Verdana', 'Palatino']
+                    combo = QtWidgets.QComboBox()
+                    combo.setEditable(True)  # allow typing custom font names
+                    combo.addItems(fonts)
+                    combo.setCurrentText(cur_font)
+                    combo.setStyleSheet(
+                        "QComboBox { background: #1e1e1e;"
+                        " border: 1px solid #444; color: #eee;"
+                        " padding: 2px; }")
+                    combo._gv = combo.currentText
+                    combo.currentTextChanged.connect(
+                        lambda _v: self._debounce.start())
+                    return combo
+
                 return None
 
             def _swatch_ss(self, v: str) -> str:
@@ -1517,6 +1887,67 @@ class _SvgPropsPanel(object):
                                                f'translate({cx:.4g},{cy:.4g}) '
                                                f'scale({new_scale:.4g}) '
                                                f'translate({-cx:.4g},{-cy:.4g})')
+                        except (ValueError, TypeError):
+                            pass
+
+                # ── Axis tick styling ──
+                # Apply tick: and ticklabel: changes to all descendant elements
+                tick_changes = {}
+                ticklabel_changes = {}
+                for key in list(self._wmap):
+                    if key.startswith('tick:'):
+                        w = self._wmap[key]
+                        val = w._gv() if hasattr(w, '_gv') else None
+                        if val is not None:
+                            tick_changes[key[5:]] = val
+                    elif key.startswith('ticklabel:'):
+                        w = self._wmap[key]
+                        val = w._gv() if hasattr(w, '_gv') else None
+                        if val is not None:
+                            ticklabel_changes[key[10:]] = val
+
+                if tick_changes:
+                    # Apply to all <path> descendants (tick lines)
+                    # Write to both CSS style AND direct attributes
+                    # (matplotlib uses direct attrs which override CSS)
+                    for ch in elem.iter():
+                        if _ltag(ch) == 'path':
+                            c2 = _css_parse(ch.get('style', ''))
+                            c2.update(tick_changes)
+                            ch.set('style', _css_ser(c2))
+                            # Also set direct attributes (override CSS)
+                            for prop, val in tick_changes.items():
+                                if ch.get(prop) is not None:
+                                    ch.set(prop, val)
+
+                if ticklabel_changes:
+                    # Apply to all text descendants (tick labels)
+                    fs_val = ticklabel_changes.pop('font-size', None)
+                    for ch in elem.iter():
+                        lt = _ltag(ch)
+                        if lt in ('text', 'tspan'):
+                            c2 = _css_parse(ch.get('style', ''))
+                            c2.update(ticklabel_changes)
+                            ch.set('style', _css_ser(c2))
+                    # Font-size via scale transform
+                    if fs_val:
+                        try:
+                            new_pt = float(fs_val)
+                            if new_pt > 0:
+                                _TICK_RE2 = re.compile(r'^(xtick|ytick)_\d+$')
+                                for tick_g in elem.iter():
+                                    tid = tick_g.get('id', '')
+                                    if _TICK_RE2.match(tid):
+                                        _, inner = _get_mpl_text_scale(tick_g)
+                                        if inner is not None:
+                                            new_s = new_pt / 100.0
+                                            t = inner.get('transform', '')
+                                            t = re.sub(
+                                                r'scale\([\d.]+\s+(-?)[\d.]+\)',
+                                                lambda m: f'scale({new_s:.6g} '
+                                                          f'{m.group(1)}{new_s:.6g})',
+                                                t)
+                                            inner.set('transform', t)
                         except (ValueError, TypeError):
                             pass
 
@@ -1633,14 +2064,14 @@ class NodeSvgEditorWidget(object):
                           " QPushButton:hover { background: #4a4a4a; }"
                           " QPushButton:disabled { color: #666; }")
 
-                # ── toolbar row 1: zoom + undo/redo ──────────────────────
+                # ── toolbar: zoom + undo/redo + info ──────────────────────
                 tb = QtWidgets.QHBoxLayout()
                 for label, slot in (('+', 'zoom_in'),
                                     ('−', 'zoom_out'),
                                     ('Fit', 'zoom_fit')):
                     b = QtWidgets.QPushButton(label)
                     b.setFixedHeight(22)
-                    b.setFixedWidth(36 if len(label) == 1 else 40)
+                    b.setMinimumWidth(30)
                     b.setStyleSheet(_TB_SS)
                     b.clicked.connect(
                         lambda _=None, s=slot: getattr(self._view, s)())
@@ -1648,7 +2079,6 @@ class NodeSvgEditorWidget(object):
 
                 tb.addWidget(self._vsep())
 
-                # Undo / Redo
                 self._undo_btn = QtWidgets.QPushButton('Undo')
                 self._undo_btn.setFixedHeight(22)
                 self._undo_btn.setMinimumWidth(48)
@@ -1669,70 +2099,22 @@ class NodeSvgEditorWidget(object):
 
                 tb.addWidget(self._vsep())
 
-                # Delete
-                del_btn = QtWidgets.QPushButton('Del')
-                del_btn.setFixedHeight(22)
-                del_btn.setMinimumWidth(36)
-                del_btn.setStyleSheet(_TB_SS)
-                del_btn.setToolTip('Delete selected element')
-                del_btn.clicked.connect(self._on_delete_selected)
-                tb.addWidget(del_btn)
-
-                tb.addWidget(self._vsep())
-
-                # Add text
-                add_text_btn = QtWidgets.QPushButton('Txt')
-                add_text_btn.setToolTip('Add text annotation')
-                add_text_btn.setFixedHeight(22)
-                add_text_btn.setMinimumWidth(36)
-                add_text_btn.setStyleSheet(_TB_SS)
-                add_text_btn.clicked.connect(self._on_add_text)
-                tb.addWidget(add_text_btn)
-
-                # Add shapes
-                for label, tip, slot in (
-                    ('Rect',  'Add rectangle', '_on_add_rect'),
-                    ('Oval',  'Add ellipse',   '_on_add_ellipse'),
-                    ('Line',  'Add line',      '_on_add_line'),
-                    ('Arrow', 'Add arrow',     '_on_add_arrow'),
-                ):
-                    sb = QtWidgets.QPushButton(label)
-                    sb.setToolTip(tip)
-                    sb.setFixedHeight(22)
-                    sb.setMinimumWidth(42)
-                    sb.setStyleSheet(_TB_SS)
-                    sb.clicked.connect(
-                        lambda _=None, s=slot: getattr(self, s)())
-                    tb.addWidget(sb)
-
-                tb.addStretch()
-                self._info = QtWidgets.QLabel("No SVG loaded")
-                self._info.setStyleSheet(
-                    "color: #777; font-size: 9pt; padding-right: 4px;")
-                tb.addWidget(self._info)
-                root.addLayout(tb)
-
-                # ── toolbar row 2: color palettes ──────────────────────
-                tb2 = QtWidgets.QHBoxLayout()
-                pal_lbl = QtWidgets.QLabel("Palette:")
-                pal_lbl.setStyleSheet("color: #aaa; font-size: 8pt;")
-                tb2.addWidget(pal_lbl)
-
+                # Palette combo (compact)
                 _PALETTES = {
                     'Nature': ['#E64B35','#4DBBD5','#00A087',
                                '#3C5488','#F39B7F','#8491B4','#91D1C2'],
                     'Science': ['#3B4992','#EE0000','#008B45',
                                 '#631879','#008280','#BB0021','#5F559B'],
-                    'ColorBrewer Set1': ['#E41A1C','#377EB8','#4DAF4A',
-                                         '#984EA3','#FF7F00','#A65628'],
+                    'Set1': ['#E41A1C','#377EB8','#4DAF4A',
+                             '#984EA3','#FF7F00','#A65628'],
                     'Pastel': ['#AEC6CF','#FFD1DC','#B5EAD7',
                                '#FFDAC1','#C7CEEA','#F7DC6F','#A8D8A8'],
-                    'Grayscale': ['#000000','#444444','#888888',
-                                  '#AAAAAA','#CCCCCC','#EEEEEE'],
+                    'Gray': ['#000000','#444444','#888888',
+                             '#AAAAAA','#CCCCCC','#EEEEEE'],
                 }
                 self._pal_combo = QtWidgets.QComboBox()
                 self._pal_combo.setFixedHeight(22)
-                self._pal_combo.setFixedWidth(160)
+                self._pal_combo.setMinimumWidth(90)
                 self._pal_combo.setStyleSheet(
                     "QComboBox { background:#3a3a3a; color:#ddd;"
                     " border:1px solid #555; border-radius:3px; }"
@@ -1740,64 +2122,48 @@ class NodeSvgEditorWidget(object):
                     " color:#ddd; }")
                 for name in _PALETTES:
                     self._pal_combo.addItem(name)
-                tb2.addWidget(self._pal_combo)
-
-                apply_pal_btn = QtWidgets.QPushButton('Apply')
+                tb.addWidget(self._pal_combo)
+                apply_pal_btn = QtWidgets.QPushButton('Recolor')
                 apply_pal_btn.setFixedHeight(22)
-                apply_pal_btn.setFixedWidth(70)
+                apply_pal_btn.setMinimumWidth(50)
                 apply_pal_btn.setStyleSheet(_TB_SS)
                 apply_pal_btn.setToolTip(
                     'Recolor all data series with selected palette')
                 apply_pal_btn.clicked.connect(
                     lambda: self._on_apply_palette(
                         _PALETTES[self._pal_combo.currentText()]))
-                tb2.addWidget(apply_pal_btn)
+                tb.addWidget(apply_pal_btn)
 
-                tb2.addStretch()
-                root.addLayout(tb2)
+                tb.addStretch()
+                self._info = QtWidgets.QLabel("Right-click for more options")
+                self._info.setStyleSheet(
+                    "color: #666; font-size: 8pt; font-style: italic;"
+                    " padding-right: 4px;")
+                tb.addWidget(self._info)
+                root.addLayout(tb)
 
-                # ── toolbar row 3: canvas padding ─────────────────────────
-                tb3 = QtWidgets.QHBoxLayout()
-                pad_lbl = QtWidgets.QLabel("Padding:")
-                pad_lbl.setStyleSheet("color: #aaa; font-size: 8pt;")
-                tb3.addWidget(pad_lbl)
-                for side, label in [('top', 'T'), ('bottom', 'B'),
-                                    ('left', 'L'), ('right', 'R')]:
-                    sl = QtWidgets.QLabel(label)
-                    sl.setStyleSheet("color:#888; font-size:8pt;")
+                # ── legend row (compact) ──────────────────────────────────
+                self._legend_list = QtWidgets.QWidget()
+                self._legend_layout = QtWidgets.QHBoxLayout(self._legend_list)
+                self._legend_layout.setContentsMargins(0, 0, 0, 0)
+                self._legend_layout.setSpacing(6)
+                self._legend_cbs = []
+                self._legend_list.hide()  # hidden until legend is populated
+                root.addWidget(self._legend_list)
+
+                # ── padding spinboxes (hidden, accessed via right-click) ──
+                _PAD_SS = ("QSpinBox { background:#3a3a3a; color:#ddd;"
+                           " border:1px solid #555; border-radius:3px; }")
+                for side in ('top', 'bottom', 'left', 'right'):
                     sb = QtWidgets.QSpinBox()
                     sb.setRange(0, 500)
                     sb.setValue(0)
                     sb.setSuffix('px')
                     sb.setFixedWidth(65)
                     sb.setFixedHeight(22)
-                    sb.setStyleSheet(
-                        "QSpinBox { background:#3a3a3a; color:#ddd;"
-                        " border:1px solid #555; border-radius:3px; }")
+                    sb.setStyleSheet(_PAD_SS)
+                    sb.hide()
                     setattr(self, f'_pad_{side}', sb)
-                    tb3.addWidget(sl)
-                    tb3.addWidget(sb)
-                apply_pad_btn = QtWidgets.QPushButton('Apply Padding')
-                apply_pad_btn.setFixedHeight(22)
-                apply_pad_btn.setStyleSheet(_TB_SS)
-                apply_pad_btn.clicked.connect(self._on_apply_padding)
-                tb3.addWidget(apply_pad_btn)
-                tb3.addStretch()
-                root.addLayout(tb3)
-
-                # ── toolbar row 4: legend manager ────────────────────────
-                tb4 = QtWidgets.QHBoxLayout()
-                leg_lbl = QtWidgets.QLabel("Legend:")
-                leg_lbl.setStyleSheet("color: #aaa; font-size: 8pt;")
-                tb4.addWidget(leg_lbl)
-                self._legend_list = QtWidgets.QWidget()
-                self._legend_layout = QtWidgets.QHBoxLayout(self._legend_list)
-                self._legend_layout.setContentsMargins(0, 0, 0, 0)
-                self._legend_layout.setSpacing(6)
-                self._legend_cbs = []  # list of (QCheckBox, patch_elem, text_elem)
-                tb4.addWidget(self._legend_list)
-                tb4.addStretch()
-                root.addLayout(tb4)
 
                 # ── splitter: view  |  properties panel ───────────────────
                 self._sp = QtWidgets.QSplitter(
@@ -1822,6 +2188,11 @@ class NodeSvgEditorWidget(object):
                     "color: #555; font-size: 8pt; padding: 2px;")
                 root.addWidget(self._tip)
 
+                # Prevent NodeGraphQt's context menu from bubbling through
+                # the QGraphicsProxyWidget. The inner _View handles its own
+                # contextMenuEvent, but we block propagation at the container level.
+                ctr.setContextMenuPolicy(
+                    QtCore.Qt.ContextMenuPolicy.NoContextMenu)
                 self.set_custom_widget(ctr)
 
                 # ── connections ───────────────────────────────────────────
@@ -1829,6 +2200,9 @@ class NodeSvgEditorWidget(object):
                 self._view.element_double_clicked.connect(self._on_dbl)
                 self._view.element_moved.connect(self._on_moved)
                 self._view.delete_requested.connect(self._on_delete)
+                self._view.text_edited_inline.connect(self._on_inline_text_edit)
+                self._view.add_shape_requested.connect(self._on_add_shape)
+                self._view.padding_requested.connect(self._on_padding_dialog)
                 self._props.apply_requested.connect(self._on_apply)
                 self._props.reset_requested.connect(
                     lambda: self.reset_requested.emit())
@@ -1911,6 +2285,8 @@ class NodeSvgEditorWidget(object):
 
             # ── delete ────────────────────────────────────────────────────
             def _on_delete(self, eid: str):
+                if not _is_deletable(eid):
+                    return  # only annotations can be deleted
                 if self._view.svg_root is None:
                     return
                 elem = _find_id(self._view.svg_root, eid)
@@ -1943,6 +2319,67 @@ class NodeSvgEditorWidget(object):
                     elem = _find_id(self._view.svg_root, eid)
                     self._props.set_svg_root(self._view.svg_root)
                     self._props.load(eid, elem)
+
+            def _on_padding_dialog(self):
+                """Show a popup dialog for canvas padding."""
+                dlg = QtWidgets.QDialog(QtWidgets.QApplication.activeWindow())
+                dlg.setWindowTitle('Canvas Padding')
+                dlg.setFixedWidth(280)
+                form = QtWidgets.QFormLayout(dlg)
+                spins = {}
+                for side in ('top', 'bottom', 'left', 'right'):
+                    sb = QtWidgets.QSpinBox()
+                    sb.setRange(0, 500)
+                    sb.setValue(getattr(self, f'_pad_{side}').value())
+                    sb.setSuffix(' px')
+                    spins[side] = sb
+                    form.addRow(side.capitalize(), sb)
+                btns = QtWidgets.QDialogButtonBox(
+                    QtWidgets.QDialogButtonBox.Ok |
+                    QtWidgets.QDialogButtonBox.Cancel)
+                btns.accepted.connect(dlg.accept)
+                btns.rejected.connect(dlg.reject)
+                form.addRow(btns)
+                if dlg.exec() == QtWidgets.QDialog.Accepted:
+                    for side, sb in spins.items():
+                        getattr(self, f'_pad_{side}').setValue(sb.value())
+                    self._on_apply_padding()
+
+            def _on_add_shape(self, shape_type: str):
+                """Dispatch shape addition from right-click menu."""
+                _dispatch = {
+                    'text':    self._on_add_text,
+                    'rect':    self._on_add_rect,
+                    'ellipse': self._on_add_ellipse,
+                    'line':    self._on_add_line,
+                    'arrow':   self._on_add_arrow,
+                }
+                fn = _dispatch.get(shape_type)
+                if fn:
+                    fn()
+
+            def _on_inline_text_edit(self, eid: str, new_text: str):
+                """Handle inline text edit completion — update SVG and rerender."""
+                if self._view.svg_root is None:
+                    return
+                elem = _find_id(self._view.svg_root, eid)
+                if elem is None:
+                    return
+                self._snapshot()
+                # Update text in tspan or text element
+                changed = False
+                for sub in elem.iter():
+                    lt = _ltag(sub)
+                    if lt == 'tspan' and sub.text:
+                        sub.text = new_text
+                        changed = True
+                        break
+                    if lt == 'text' and sub.text:
+                        sub.text = new_text
+                        changed = True
+                        break
+                if changed:
+                    self._reserialize(keep_eid=eid)
 
             def _on_dbl(self, eid: str):
                 self._on_selected(eid)

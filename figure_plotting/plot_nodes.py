@@ -74,19 +74,22 @@ def _extract_params(fig):
                 'labelrotation': float(t.label1.get_rotation()),
                 'direction':     direction,
                 'length':        float(t.tick1line.get_markersize()),
+                'width':         float(t.tick1line.get_markeredgewidth()),
                 'major_visible': bool(t.tick1line.get_visible()),
             }
         else:
             params[axis_key] = {'labelsize': 10.0, 'labelrotation': 0.0,
                                  'direction': 'out', 'length': 3.5,
-                                 'major_visible': True}
+                                 'width': 0.8, 'major_visible': True}
         if minor_ticks:
             mt = minor_ticks[0]
             params[axis_key]['minor_visible'] = bool(mt.tick1line.get_visible())
             params[axis_key]['minor_length']  = float(mt.tick1line.get_markersize())
+            params[axis_key]['minor_width']   = float(mt.tick1line.get_markeredgewidth())
         else:
             params[axis_key]['minor_visible'] = False
             params[axis_key]['minor_length']  = 2.0
+            params[axis_key]['minor_width']   = 0.6
 
     # Grid
     for grid_key, axis in [('xgrid', ax.xaxis), ('ygrid', ax.yaxis)]:
@@ -417,7 +420,8 @@ def _apply_params(fig, params):
                            labelsize=p.get('labelsize', 10.0),
                            labelrotation=p.get('labelrotation', 0.0),
                            direction=p.get('direction', 'out'),
-                           length=p.get('length', 3.5))
+                           length=p.get('length', 3.5),
+                           width=p.get('width', 0.8))
             if 'major_visible' in p:
                 visible = bool(p['major_visible'])
                 if axis_name == 'x':
@@ -430,7 +434,8 @@ def _apply_params(fig, params):
                 else:
                     ax.yaxis.set_minor_locator(_mticker.AutoMinorLocator())
                 ax.tick_params(axis=axis_name, which='minor',
-                               length=p.get('minor_length', 2.0))
+                               length=p.get('minor_length', 2.0),
+                               width=p.get('minor_width', 0.6))
             else:
                 if axis_name == 'x':
                     ax.xaxis.set_minor_locator(_mticker.NullLocator())
@@ -881,6 +886,16 @@ class FigureEditDialog(QtWidgets.QDialog):
             dc.setCurrentText(p.get('direction', 'out'))
             form.addRow("Direction", dc);  setattr(self, f'_{axis_key}_dir', dc)
 
+            maj_len = QtWidgets.QDoubleSpinBox()
+            maj_len.setRange(0, 20); maj_len.setSingleStep(0.5)
+            maj_len.setValue(float(p.get('length', 3.5)))
+            form.addRow("Major Length", maj_len);  setattr(self, f'_{axis_key}_major_len', maj_len)
+
+            maj_w = QtWidgets.QDoubleSpinBox()
+            maj_w.setRange(0.1, 5.0); maj_w.setSingleStep(0.1); maj_w.setDecimals(1)
+            maj_w.setValue(float(p.get('width', 0.8)))
+            form.addRow("Major Width", maj_w);  setattr(self, f'_{axis_key}_major_w', maj_w)
+
             min_vis = QtWidgets.QCheckBox("Minor Ticks Visible")
             min_vis.setChecked(bool(p.get('minor_visible', False)))
             form.addRow("", min_vis);  setattr(self, f'_{axis_key}_minor_vis', min_vis)
@@ -889,6 +904,11 @@ class FigureEditDialog(QtWidgets.QDialog):
             min_len.setRange(0, 20); min_len.setSingleStep(0.5)
             min_len.setValue(float(p.get('minor_length', 2.0)))
             form.addRow("Minor Length", min_len);  setattr(self, f'_{axis_key}_minor_len', min_len)
+
+            min_w = QtWidgets.QDoubleSpinBox()
+            min_w.setRange(0.1, 5.0); min_w.setSingleStep(0.1); min_w.setDecimals(1)
+            min_w.setValue(float(p.get('minor_width', 0.6)))
+            form.addRow("Minor Width", min_w);  setattr(self, f'_{axis_key}_minor_w', min_w)
 
             vbox.addWidget(grp)
 
@@ -1648,9 +1668,12 @@ class FigureEditDialog(QtWidgets.QDialog):
             p['labelsize']     = getattr(self, f'_{axis_key}_size').value()
             p['labelrotation'] = getattr(self, f'_{axis_key}_rot').value()
             p['direction']     = getattr(self, f'_{axis_key}_dir').currentText()
+            p['length']        = getattr(self, f'_{axis_key}_major_len').value()
+            p['width']         = getattr(self, f'_{axis_key}_major_w').value()
             p['major_visible'] = getattr(self, f'_{axis_key}_major_vis').isChecked()
             p['minor_visible'] = getattr(self, f'_{axis_key}_minor_vis').isChecked()
             p['minor_length']  = getattr(self, f'_{axis_key}_minor_len').value()
+            p['minor_width']   = getattr(self, f'_{axis_key}_minor_w').value()
         for grid_key in ('xgrid', 'ygrid'):
             p = self._params.setdefault(grid_key, {})
             p['visible']   = getattr(self, f'_{grid_key}_vis').isChecked()
@@ -3651,6 +3674,8 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self.create_property('bar_value_offset',    8,       widget_type=H)
         self.create_property('bar_width',   0.8,     widget_type=H)
         self.create_property('capsize',     0.1,     widget_type=H)
+        self.create_property('err_linewidth', 1.5,   widget_type=H)
+        self.create_property('err_color',  [0, 0, 0, 255], widget_type=H)
         self.create_property('show_points', False,   widget_type=H)
         self.create_property('point_style', 'Strip', widget_type=H)
         self.create_property('point_size',  3,       widget_type=H)
@@ -3666,6 +3691,8 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
         self._tb_combo('error_type', 'Error Bars',       'Data', ['se', 'sd', 'ci', 'pi'])
         self._tb_spinbox('bar_width', 'Bar Width', 'Data', 0.8, 0.1, 1.0, 0.05, 2)
         self._tb_spinbox('capsize', 'Error Bar Cap', 'Data', 0.1, 0.0, 0.5, 0.02, 2)
+        self._tb_spinbox('err_linewidth', 'Error Bar Thickness', 'Data', 1.5, 0.1, 10.0, 0.1, 2)
+        self._tb_color('err_color', 'Error Bar Color', 'Data')
         self._tb_checkbox('show_points', 'Show Data Points', 'Data', False)
         self._tb_combo('point_style', 'Point Style',     'Data', ['Strip', 'Swarm'])
         self._tb_spinbox('point_size', 'Point Size',      'Data', 3, 1, 20)
@@ -3711,17 +3738,32 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
 
         capsize   = float(self.get_property('capsize') or 0.1)
         bar_width = float(self.get_property('bar_width') or 0.8)
+        err_lw    = float(self.get_property('err_linewidth') or 1.5)
+        err_color_raw = self.get_property('err_color')
+        err_color = None
+        if err_color_raw and isinstance(err_color_raw, (list, tuple)) and len(err_color_raw) >= 3:
+            err_color = tuple(c / 255.0 for c in err_color_raw[:3])
+        err_kws = {'linewidth': err_lw}
+        if err_color:
+            err_kws['color'] = err_color
         try:
             # seaborn ≥ 0.12: errorbar kwarg
             sns.barplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
                         palette=palette, errorbar=error_type, capsize=capsize,
-                        width=bar_width, legend=False, ax=ax)
+                        width=bar_width, err_kws=err_kws, legend=False, ax=ax)
         except TypeError:
             # older seaborn: ci kwarg
             ci = 68 if error_type == 'se' else 95
             sns.barplot(data=df, x=x_col, y=y_col, hue=x_col, order=groups,
                         palette=palette, legend=False, ci=ci, capsize=capsize,
                         width=bar_width, ax=ax)
+
+        # Force-apply error bar styling (seaborn may ignore err_kws in some versions)
+        for line in ax.get_lines():
+            line.set_linewidth(err_lw)
+            if err_color:
+                line.set_color(err_color)
+            line.set_label('_nolegend_')
 
         # legend=False skips patch labelling; assign group names explicitly so
         # _extract_params can expose per-bar coloring in the figure editor.
