@@ -1323,18 +1323,23 @@ class NormalityTestNode(BaseExecutionNode):
     - *Kolmogorov-Smirnov* — compares against a theoretical normal CDF
     - *Anderson-Darling* — weighted variant sensitive to distribution tails
 
-    Outputs a summary table with test statistic, p-value (where applicable), and pass/fail result.
+    Outputs:
+    - **results** — summary table with test statistic, p-value, and pass/fail per column.
+    - **qq_plot** — Q-Q (quantile-quantile) plots for each column. Points following the red dashed reference line indicate normality; systematic curvature suggests non-normal distribution.
 
-    Keywords: normality, shapiro, kolmogorov-smirnov, anderson-darling, gaussian check, 常態分佈, 統計檢定, 分析, 高斯, 正態性
+    Use the **Group Column** option to test normality per group (e.g. per treatment condition before running a t-test or ANOVA).
+
+    Keywords: normality, shapiro, kolmogorov-smirnov, anderson-darling, gaussian check, qq plot, quantile, 常態分佈, 統計檢定, 分析, 高斯, 正態性, QQ圖
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Normality Test'
-    PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['table', 'figure']}
 
     def __init__(self):
         super(NormalityTestNode, self).__init__()
         self.add_input('in', color=PORT_COLORS['table'])
         self.add_output('results', color=PORT_COLORS['table'])
+        self.add_output('qq_plot', color=PORT_COLORS['figure'])
 
         tests = ['All (Shapiro-Wilk + KS + Anderson-Darling)',
                  'Shapiro-Wilk',
@@ -1378,11 +1383,11 @@ class NormalityTestNode(BaseExecutionNode):
         group_col = None
         if group_col_name and group_col_name in df.columns:
             group_col = group_col_name
-        else:
-            for col in df.columns:
-                if str(col).lower() in ['group', 'class', 'treatment']:
-                    group_col = col
-                    break
+        # else:
+        #     for col in df.columns:
+        #         if str(col).lower() in ['group', 'class', 'treatment']:
+        #             group_col = col
+        #             break
 
         num_cols = [c for c in df.select_dtypes(include=[np.number]).columns
                     if c != group_col]
@@ -1468,6 +1473,60 @@ class NormalityTestNode(BaseExecutionNode):
         result_df = pd.DataFrame(rows, columns=['Column', 'Test', 'n',
                                                 'Statistic', 'p-value', 'Normal', 'Note'])
         self.output_values['results'] = TableData(payload=result_df)
+
+        # Generate Q-Q plots for each column/group combination
+        import matplotlib.pyplot as plt
+        plot_items = []  # (label, data_array)
+        for grp in groups:
+            sub = df[df[group_col] == grp] if group_col else df
+            for col in num_cols:
+                data = sub[col].dropna().values
+                if len(data) < 3:
+                    continue
+                label = col if group_col is None else f"{grp} — {col}"
+                plot_items.append((label, data))
+
+        if plot_items:
+            n_plots = len(plot_items)
+            ncols_plot = min(n_plots, 3)
+            nrows_plot = (n_plots + ncols_plot - 1) // ncols_plot
+            fig, axes = plt.subplots(nrows_plot, ncols_plot,
+                                     figsize=(4 * ncols_plot, 3.5 * nrows_plot),
+                                     squeeze=False)
+            for idx, (label, data) in enumerate(plot_items):
+                ax = axes[idx // ncols_plot][idx % ncols_plot]
+                # Q-Q plot: sorted data vs theoretical quantiles
+                sorted_data = np.sort(data)
+                n = len(sorted_data)
+                theoretical = stats.norm.ppf((np.arange(1, n + 1) - 0.5) / n)
+                ax.scatter(theoretical, sorted_data, s=16, alpha=0.6,
+                           edgecolor='none', color='#2a82da')
+                # Reference line through Q1-Q3
+                q1_data, q3_data = np.percentile(sorted_data, [25, 75])
+                q1_theo, q3_theo = stats.norm.ppf([0.25, 0.75])
+                if q3_theo != q1_theo:
+                    slope = (q3_data - q1_data) / (q3_theo - q1_theo)
+                    intercept = q1_data - slope * q1_theo
+                    x_line = np.array([theoretical[0], theoretical[-1]])
+                    ax.plot(x_line, slope * x_line + intercept,
+                            color='#e74c3c', linewidth=1.5, linestyle='--')
+                ax.set_xlabel('Theoretical Quantiles', fontsize=9)
+                ax.set_ylabel('Sample Quantiles', fontsize=9)
+                ax.set_title(label, fontsize=10, fontweight='bold')
+                ax.tick_params(labelsize=8)
+                # Remove top/right spines
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+
+            # Hide unused subplots
+            for idx in range(n_plots, nrows_plot * ncols_plot):
+                axes[idx // ncols_plot][idx % ncols_plot].set_visible(False)
+
+            fig.tight_layout()
+            self.output_values['qq_plot'] = FigureData(payload=fig)
+        else:
+            self.output_values['qq_plot'] = None
+
         self.set_progress(100)
         self.mark_clean()
         return True, None
@@ -1488,8 +1547,7 @@ class PairwiseMatrixNode(BaseExecutionNode):
 
     Outputs a matrix table (for further analysis) and an annotated heatmap figure.
 
-    Keywords: pairwise, matrix, correlation, pearson, spearman, kendall, distance, euclidean,
-              cosine, manhattan, heatmap, 相關性, 相關係數, 距離, 熱圖, 統計, 分析
+    Keywords: pairwise, matrix, correlation, pearson, spearman, kendall, distance, euclidean, cosine, manhattan, heatmap, 相關性, 相關係數, 距離, 熱圖, 統計, 分析
     """
     __identifier__ = 'nodes.analysis'
     NODE_NAME      = 'Pairwise Matrix'
@@ -1627,7 +1685,7 @@ class VarianceTestNode(BaseExecutionNode):
     def __init__(self):
         super().__init__()
         self.add_input('in', color=PORT_COLORS['table'])
-        self.add_output('stats_table', color=PORT_COLORS['stat'])
+        self.add_output('result', color=PORT_COLORS['table'])
 
         methods = ["Levene's test", "Bartlett's test", 'F-test (2 groups)']
         self.add_combo_menu('method', 'Test', items=methods)
@@ -1754,3 +1812,607 @@ class VarianceTestNode(BaseExecutionNode):
         except Exception as e:
             self.mark_error()
             return False, str(e)
+
+
+# ===========================================================================
+# EffectSizeNode
+# ===========================================================================
+
+class EffectSizeNode(BaseExecutionNode):
+    """
+    Calculates effect sizes for pairwise group comparisons.
+
+    Measures how large the difference between groups is, complementing
+    p-values from statistical tests. Journals increasingly require effect
+    sizes alongside significance testing.
+
+    Methods:
+    - *Auto* — Cohen's d for 2 groups, Eta-squared for 3+ groups
+    - *Cohen's d* — standardised mean difference (pooled SD)
+    - *Hedges' g* — Cohen's d with small-sample bias correction
+    - *Glass's delta* — mean difference divided by the control group SD
+    - *Rank-biserial r* — effect size for Mann-Whitney U (non-parametric)
+    - *Eta-squared* — proportion of variance explained (ANOVA-style)
+    - *Omega-squared* — bias-corrected eta-squared
+
+    Output columns: group1, group2, n1, n2, effect_size, ci_lower,
+    ci_upper, magnitude, method.
+
+    **magnitude** uses conventional thresholds:
+    - Cohen's d / Hedges' g / Glass's delta: negligible < 0.2, small < 0.5, medium < 0.8, large >= 0.8
+    - Eta-squared / Omega-squared: negligible < 0.01, small < 0.06, medium < 0.14, large >= 0.14
+
+    Keywords: effect size, cohen, hedges, glass, eta squared, omega squared, rank biserial, magnitude, 效果量, 效應值
+    """
+
+    __identifier__ = 'nodes.analysis'
+    NODE_NAME = 'Effect Size'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
+
+    _METHODS = ['Auto', "Cohen's d", "Hedges' g", "Glass's delta",
+                'Rank-biserial r', 'Eta-squared', 'Omega-squared']
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('in', color=PORT_COLORS['table'])
+        self.add_output('results', color=PORT_COLORS['table'])
+
+        self._add_column_selector('value_col', 'Value Column', text='', mode='single')
+        self._add_column_selector('group_col', 'Group Column', text='', mode='single')
+        self.add_combo_menu('method', 'Method', items=self._METHODS)
+        self._add_float_spinbox('ci_level', 'CI Level', value=0.95,
+                                min_val=0.80, max_val=0.99, step=0.01, decimals=2)
+        self._add_int_spinbox('n_bootstrap', 'Bootstrap Iterations',
+                              value=1000, min_val=100, max_val=10000, step=100)
+
+    def evaluate(self):
+        self.reset_progress()
+        from scipy import stats as _stats
+
+        in_port = self.inputs().get('in')
+        if not in_port or not in_port.connected_ports():
+            self.mark_error()
+            return False, "No input data"
+        cp = in_port.connected_ports()[0]
+        up_val = cp.node().output_values.get(cp.name())
+
+        if isinstance(up_val, (TableData, StatData)):
+            df = up_val.df.copy()
+        elif isinstance(up_val, pd.DataFrame):
+            df = up_val.copy()
+        else:
+            self.mark_error()
+            return False, "Expected TableData input"
+
+        self._refresh_column_selectors(df, 'value_col', 'group_col')
+
+        value_col = str(self.get_property('value_col') or '').strip()
+        group_col = str(self.get_property('group_col') or '').strip()
+        method = str(self.get_property('method') or 'Auto')
+        ci_level = float(self.get_property('ci_level') or 0.95)
+        n_boot = int(self.get_property('n_bootstrap') or 1000)
+
+        # Auto-detect columns
+        if not group_col or group_col not in df.columns:
+            for c in df.columns:
+                if df[c].dtype == 'object' or df[c].nunique() < 10:
+                    group_col = c
+                    break
+        if not value_col or value_col not in df.columns:
+            num_cols = [c for c in df.select_dtypes(include=[np.number]).columns
+                        if c != group_col]
+            value_col = num_cols[0] if num_cols else None
+
+        if not value_col or not group_col:
+            self.mark_error()
+            return False, "Could not identify value and group columns"
+
+        groups = df[group_col].dropna().unique().tolist()
+        n_groups = len(groups)
+        if n_groups < 2:
+            self.mark_error()
+            return False, f"Need at least 2 groups, found {n_groups}"
+
+        self.set_progress(10)
+
+        if method == 'Auto':
+            method = "Cohen's d" if n_groups == 2 else 'Eta-squared'
+
+        rows = []
+        rng = np.random.default_rng(42)
+        alpha = 1 - ci_level
+
+        if method in ('Eta-squared', 'Omega-squared'):
+            group_data = [df[df[group_col] == g][value_col].dropna().values
+                          for g in groups]
+            all_data = np.concatenate(group_data)
+            grand_mean = all_data.mean()
+            n_total = len(all_data)
+            k = n_groups
+            ss_between = sum(len(gd) * (gd.mean() - grand_mean) ** 2
+                             for gd in group_data)
+            ss_total = float(np.sum((all_data - grand_mean) ** 2))
+            ms_within = (ss_total - ss_between) / (n_total - k) if n_total > k else 1
+
+            if method == 'Eta-squared':
+                es = ss_between / ss_total if ss_total > 0 else 0
+            else:
+                es = max((ss_between - (k-1)*ms_within) / (ss_total + ms_within), 0)
+
+            # Bootstrap CI
+            boot_vals = []
+            for _ in range(n_boot):
+                idx = rng.choice(len(df), size=len(df), replace=True)
+                bdf = df.iloc[idx]
+                bgd = [bdf[bdf[group_col] == g][value_col].dropna().values
+                       for g in groups]
+                if any(len(gd) < 1 for gd in bgd):
+                    continue
+                ball = np.concatenate(bgd)
+                bgm = ball.mean()
+                bss_b = sum(len(gd) * (gd.mean() - bgm) ** 2 for gd in bgd)
+                bss_t = float(np.sum((ball - bgm) ** 2))
+                if bss_t == 0:
+                    continue
+                if method == 'Eta-squared':
+                    boot_vals.append(bss_b / bss_t)
+                else:
+                    bms = (bss_t - bss_b) / (len(ball) - k) if len(ball) > k else 1
+                    boot_vals.append(max((bss_b - (k-1)*bms) / (bss_t + bms), 0))
+
+            ci_lo = float(np.percentile(boot_vals, 100*alpha/2)) if boot_vals else np.nan
+            ci_hi = float(np.percentile(boot_vals, 100*(1-alpha/2))) if boot_vals else np.nan
+
+            rows.append({
+                'group1': 'omnibus', 'group2': f'{k} groups',
+                'n1': n_total, 'n2': n_total,
+                'effect_size': round(es, 4),
+                'ci_lower': round(ci_lo, 4), 'ci_upper': round(ci_hi, 4),
+                'magnitude': self._mag_eta(es), 'method': method,
+            })
+        else:
+            from itertools import combinations
+            pairs = list(combinations(groups, 2))
+            for pi, (g1, g2) in enumerate(pairs):
+                d1 = df[df[group_col] == g1][value_col].dropna().values
+                d2 = df[df[group_col] == g2][value_col].dropna().values
+                n1, n2 = len(d1), len(d2)
+
+                if n1 < 2 or n2 < 2:
+                    rows.append({
+                        'group1': g1, 'group2': g2, 'n1': n1, 'n2': n2,
+                        'effect_size': np.nan, 'ci_lower': np.nan,
+                        'ci_upper': np.nan, 'magnitude': 'N/A',
+                        'method': method,
+                    })
+                    continue
+
+                m1, m2 = d1.mean(), d2.mean()
+                s1, s2 = d1.std(ddof=1), d2.std(ddof=1)
+                pooled = np.sqrt(((n1-1)*s1**2 + (n2-1)*s2**2) / (n1+n2-2))
+                hcf = 1 - 3/(4*(n1+n2-2)-1) if (n1+n2) > 3 else 1
+
+                if method == "Cohen's d":
+                    es = (m1-m2)/pooled if pooled > 0 else 0
+                elif method == "Hedges' g":
+                    es = (m1-m2)/pooled*hcf if pooled > 0 else 0
+                elif method == "Glass's delta":
+                    es = (m1-m2)/s2 if s2 > 0 else 0
+                elif method == 'Rank-biserial r':
+                    u, _ = _stats.mannwhitneyu(d1, d2, alternative='two-sided')
+                    es = 1 - 2*u/(n1*n2)
+                else:
+                    es = 0
+
+                boot_es = []
+                for _ in range(n_boot):
+                    b1 = rng.choice(d1, size=n1, replace=True)
+                    b2 = rng.choice(d2, size=n2, replace=True)
+                    bm1, bm2 = b1.mean(), b2.mean()
+                    bs1, bs2 = b1.std(ddof=1), b2.std(ddof=1)
+                    bp = np.sqrt(((n1-1)*bs1**2+(n2-1)*bs2**2)/(n1+n2-2))
+                    if method == "Cohen's d":
+                        boot_es.append((bm1-bm2)/bp if bp > 0 else 0)
+                    elif method == "Hedges' g":
+                        boot_es.append((bm1-bm2)/bp*hcf if bp > 0 else 0)
+                    elif method == "Glass's delta":
+                        boot_es.append((bm1-bm2)/bs2 if bs2 > 0 else 0)
+                    elif method == 'Rank-biserial r':
+                        bu, _ = _stats.mannwhitneyu(b1, b2, alternative='two-sided')
+                        boot_es.append(1-2*bu/(n1*n2))
+
+                ci_lo = float(np.percentile(boot_es, 100*alpha/2)) if boot_es else np.nan
+                ci_hi = float(np.percentile(boot_es, 100*(1-alpha/2))) if boot_es else np.nan
+
+                mag = self._mag_r(abs(es)) if method == 'Rank-biserial r' else self._mag_d(abs(es))
+
+                rows.append({
+                    'group1': g1, 'group2': g2, 'n1': n1, 'n2': n2,
+                    'effect_size': round(es, 4),
+                    'ci_lower': round(ci_lo, 4), 'ci_upper': round(ci_hi, 4),
+                    'magnitude': mag, 'method': method,
+                })
+                self.set_progress(10 + int(80*(pi+1)/len(pairs)))
+
+        result_df = pd.DataFrame(rows)
+        self.output_values['results'] = TableData(payload=result_df)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+    @staticmethod
+    def _mag_d(d):
+        if d < 0.2: return 'negligible'
+        if d < 0.5: return 'small'
+        if d < 0.8: return 'medium'
+        return 'large'
+
+    @staticmethod
+    def _mag_eta(e):
+        if e < 0.01: return 'negligible'
+        if e < 0.06: return 'small'
+        if e < 0.14: return 'medium'
+        return 'large'
+
+    @staticmethod
+    def _mag_r(r):
+        if r < 0.1: return 'negligible'
+        if r < 0.3: return 'small'
+        if r < 0.5: return 'medium'
+        return 'large'
+
+
+# ===========================================================================
+# DescriptiveStatsNode
+# ===========================================================================
+
+class DescriptiveStatsNode(BaseExecutionNode):
+    """
+    Computes comprehensive descriptive statistics for numeric columns.
+
+    Calculates per-group (or overall) statistics including central tendency,
+    dispersion, shape, and confidence intervals — everything needed for a
+    publication-ready summary table.
+
+    Output columns: group, column, n, mean, median, std, sem, ci_lower, ci_upper, min, q1, q3, max, iqr, skewness, kurtosis, cv.
+
+    - **group_col** — optional grouping column. If set, statistics are computed per group. Leave blank for overall stats.
+    - **value_cols** — columns to summarise. Leave blank for all numeric.
+    - **ci_level** — confidence interval level (default 0.95).
+
+    Keywords: descriptive, summary, mean, median, std, sem, confidence interval, skewness, kurtosis, coefficient of variation, 描述統計, 平均, 中位數, 標準差
+    """
+
+    __identifier__ = 'nodes.analysis'
+    NODE_NAME = 'Descriptive Stats'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('in', color=PORT_COLORS['table'])
+        self.add_output('results', color=PORT_COLORS['table'])
+
+        self._add_column_selector('group_col', 'Group Column (opt.)', text='', mode='single')
+        self._add_column_selector('value_cols', 'Value Columns (blank=all)', text='', mode='multi')
+        self._add_float_spinbox('ci_level', 'CI Level', value=0.95,
+                                min_val=0.80, max_val=0.99, step=0.01, decimals=2)
+
+    def evaluate(self):
+        self.reset_progress()
+        from scipy import stats as _stats
+
+        in_port = self.inputs().get('in')
+        if not in_port or not in_port.connected_ports():
+            self.mark_error()
+            return False, "No input data"
+        cp = in_port.connected_ports()[0]
+        up_val = cp.node().output_values.get(cp.name())
+
+        if isinstance(up_val, (TableData, StatData)):
+            df = up_val.df.copy()
+        elif isinstance(up_val, pd.DataFrame):
+            df = up_val.copy()
+        else:
+            self.mark_error()
+            return False, "Expected TableData input"
+
+        self._refresh_column_selectors(df, 'group_col', 'value_cols')
+
+        group_col = str(self.get_property('group_col') or '').strip()
+        value_cols_str = str(self.get_property('value_cols') or '').strip()
+        ci_level = float(self.get_property('ci_level') or 0.95)
+
+        if group_col and group_col not in df.columns:
+            group_col = ''
+
+        # Determine which columns to summarise
+        if value_cols_str:
+            value_cols = [c.strip() for c in value_cols_str.split(',')
+                          if c.strip() in df.columns]
+        else:
+            value_cols = [c for c in df.select_dtypes(include=[np.number]).columns
+                          if c != group_col]
+
+        if not value_cols:
+            self.mark_error()
+            return False, "No numeric columns found"
+
+        groups = df[group_col].dropna().unique().tolist() if group_col else [None]
+        rows = []
+        total = len(groups) * len(value_cols)
+        done = 0
+
+        for grp in groups:
+            sub = df[df[group_col] == grp] if group_col else df
+            for col in value_cols:
+                data = sub[col].dropna().values
+                n = len(data)
+                if n == 0:
+                    done += 1
+                    continue
+
+                mean = float(np.mean(data))
+                median = float(np.median(data))
+                std = float(np.std(data, ddof=1)) if n > 1 else 0.0
+                sem = std / np.sqrt(n) if n > 0 else 0.0
+                q1, q3 = float(np.percentile(data, 25)), float(np.percentile(data, 75))
+
+                # Confidence interval
+                if n > 1:
+                    t_crit = _stats.t.ppf((1 + ci_level) / 2, df=n - 1)
+                    ci_lo = mean - t_crit * sem
+                    ci_hi = mean + t_crit * sem
+                else:
+                    ci_lo = ci_hi = mean
+
+                # Shape statistics
+                skew = float(_stats.skew(data, bias=False)) if n > 2 else np.nan
+                kurt = float(_stats.kurtosis(data, bias=False)) if n > 3 else np.nan
+                cv = (std / abs(mean) * 100) if mean != 0 else np.nan
+
+                row = {
+                    'column': col,
+                    'n': n,
+                    'mean': round(mean, 4),
+                    'median': round(median, 4),
+                    'std': round(std, 4),
+                    'sem': round(sem, 4),
+                    'ci_lower': round(ci_lo, 4),
+                    'ci_upper': round(ci_hi, 4),
+                    'min': round(float(np.min(data)), 4),
+                    'q1': round(q1, 4),
+                    'q3': round(q3, 4),
+                    'max': round(float(np.max(data)), 4),
+                    'iqr': round(q3 - q1, 4),
+                    'skewness': round(skew, 4) if not np.isnan(skew) else np.nan,
+                    'kurtosis': round(kurt, 4) if not np.isnan(kurt) else np.nan,
+                    'cv_percent': round(cv, 2) if not np.isnan(cv) else np.nan,
+                }
+                if group_col:
+                    row = {'group': grp, **row}
+                rows.append(row)
+
+                done += 1
+                self.set_progress(int(90 * done / total))
+
+        result_df = pd.DataFrame(rows)
+        self.output_values['results'] = TableData(payload=result_df)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+
+# ===========================================================================
+# DistributionFitNode
+# ===========================================================================
+
+class DistributionFitNode(BaseExecutionNode):
+    """
+    Fits data to candidate probability distributions and ranks them by
+    goodness-of-fit (AIC / BIC / Kolmogorov-Smirnov).
+
+    Select which distributions to test, or use **All** to try every candidate.
+    The node outputs a ranking table with fitted parameters and a figure
+    overlaying the best-fit PDFs on the empirical histogram.
+
+    Candidate distributions: Normal, Log-Normal, Exponential, Gamma, Weibull,
+    Beta, Rayleigh, Uniform, Cauchy, Logistic, Pareto, Student-t, Inverse Gaussian.
+
+    Outputs:
+    - **results** — one row per tested distribution with shape/loc/scale params,
+      log-likelihood, AIC, BIC, KS statistic, and KS p-value, sorted by AIC.
+    - **figure** — histogram of the data with top-N best-fit PDF curves overlaid.
+
+    Keywords: distribution fitting, goodness of fit, AIC, BIC, KS test, PDF, histogram, normal, lognormal, gamma, Weibull, 分佈擬合, 適合度檢定, 機率分佈
+    """
+
+    __identifier__ = 'nodes.analysis'
+    NODE_NAME = 'Distribution Fit'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['table', 'figure']}
+
+    _DIST_MAP = {
+        'Normal':           'norm',
+        'Log-Normal':       'lognorm',
+        'Exponential':      'expon',
+        'Gamma':            'gamma',
+        'Weibull':          'weibull_min',
+        'Beta':             'beta',
+        'Rayleigh':         'rayleigh',
+        'Uniform':          'uniform',
+        'Cauchy':           'cauchy',
+        'Logistic':         'logistic',
+        'Pareto':           'pareto',
+        "Student's t":      't',
+        'Inverse Gaussian': 'invgauss',
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('in', color=PORT_COLORS['table'])
+        self.add_output('results', color=PORT_COLORS['table'])
+        self.add_output('figure', multi_output=True, color=PORT_COLORS['figure'])
+
+        self._add_column_selector('value_col', 'Value Column', text='', mode='single')
+        self._add_column_selector('group_col', 'Group Column (opt.)', text='', mode='single')
+        self.add_combo_menu('distributions', 'Distributions',
+                            items=['All'] + list(self._DIST_MAP.keys()))
+        self._add_int_spinbox('n_overlay', 'Overlay Top-N', value=3,
+                              min_val=1, max_val=8, step=1)
+        self._add_int_spinbox('n_bins', 'Histogram Bins', value=50,
+                              min_val=10, max_val=200, step=5)
+        self._add_float_spinbox('fig_w', 'Fig Width', value=7.0,
+                                min_val=3, max_val=16, step=0.5, decimals=1)
+        self._add_float_spinbox('fig_h', 'Fig Height', value=5.0,
+                                min_val=3, max_val=16, step=0.5, decimals=1)
+
+    def evaluate(self):
+        self.reset_progress()
+        from scipy import stats as sp_stats
+
+        in_port = self.inputs().get('in')
+        if not in_port or not in_port.connected_ports():
+            self.mark_error(); return False, "No input data"
+        cp = in_port.connected_ports()[0]
+        up_val = cp.node().output_values.get(cp.name())
+
+        if isinstance(up_val, TableData):
+            df = up_val.df.copy()
+        elif isinstance(up_val, pd.DataFrame):
+            df = up_val.copy()
+        else:
+            self.mark_error(); return False, "Expected TableData input"
+
+        self._refresh_column_selectors(df, 'value_col', 'group_col')
+
+        value_col = str(self.get_property('value_col') or '').strip()
+        group_col = str(self.get_property('group_col') or '').strip()
+        dist_sel  = str(self.get_property('distributions') or 'All')
+        n_overlay = int(self.get_property('n_overlay') or 3)
+        n_bins    = int(self.get_property('n_bins') or 50)
+        fig_w     = float(self.get_property('fig_w') or 7.0)
+        fig_h     = float(self.get_property('fig_h') or 5.0)
+
+        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if not value_col or value_col not in df.columns:
+            value_col = num_cols[0] if num_cols else None
+        if not value_col:
+            self.mark_error(); return False, "No numeric column found"
+
+        if group_col and group_col not in df.columns:
+            group_col = ''
+
+        # Determine which distributions to test
+        if dist_sel == 'All':
+            dists_to_test = list(self._DIST_MAP.items())
+        else:
+            dists_to_test = [(dist_sel, self._DIST_MAP[dist_sel])]
+
+        groups = df[group_col].dropna().unique().tolist() if group_col else [None]
+
+        all_rows = []
+        all_fits = {}  # {group: [(name, dist_obj, params, aic), ...]}
+
+        total = len(groups) * len(dists_to_test)
+        done = 0
+
+        for grp in groups:
+            sub = df[df[group_col] == grp] if group_col else df
+            data = sub[value_col].dropna().values.astype(float)
+            n = len(data)
+            if n < 5:
+                done += len(dists_to_test)
+                continue
+
+            fits = []
+            for dist_name, dist_id in dists_to_test:
+                try:
+                    dist_obj = getattr(sp_stats, dist_id)
+                    params = dist_obj.fit(data)
+                    k = len(params)
+                    ll = float(np.sum(dist_obj.logpdf(data, *params)))
+                    aic = 2 * k - 2 * ll
+                    bic = k * np.log(n) - 2 * ll
+                    ks_stat, ks_p = sp_stats.kstest(data, dist_id, args=params)
+
+                    loc = params[-2]
+                    scale = params[-1]
+                    shapes = params[:-2] if len(params) > 2 else ()
+
+                    row = {'distribution': dist_name, 'n': n,
+                           'log_likelihood': round(ll, 2),
+                           'AIC': round(aic, 2), 'BIC': round(bic, 2),
+                           'KS_statistic': round(ks_stat, 4),
+                           'KS_p_value': round(ks_p, 4),
+                           'loc': round(loc, 4), 'scale': round(scale, 4)}
+                    for si, sv in enumerate(shapes):
+                        row[f'shape_{si+1}'] = round(sv, 4)
+                    if group_col:
+                        row = {'group': grp, **row}
+
+                    all_rows.append(row)
+                    fits.append((dist_name, dist_obj, params, aic))
+                except Exception:
+                    pass
+
+                done += 1
+                self.set_progress(int(70 * done / max(total, 1)))
+
+            fits.sort(key=lambda x: x[3])
+            all_fits[grp] = fits
+
+        if not all_rows:
+            self.mark_error(); return False, "All distribution fits failed"
+
+        result_df = pd.DataFrame(all_rows).sort_values('AIC').reset_index(drop=True)
+        self.output_values['results'] = TableData(payload=result_df)
+
+        # --- Figure: histogram + top-N overlay per group ---
+        import matplotlib
+        matplotlib.use('Agg')
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        n_groups = len([g for g in groups if g in all_fits and all_fits[g]])
+        if n_groups == 0:
+            self.output_values['figure'] = None
+            self.set_progress(100); self.mark_clean(); return True, None
+
+        fig = Figure(figsize=(fig_w, fig_h * max(n_groups, 1)))
+        FigureCanvasAgg(fig)
+
+        plot_idx = 0
+        for grp in groups:
+            if grp not in all_fits or not all_fits[grp]:
+                continue
+            plot_idx += 1
+            ax = fig.add_subplot(n_groups, 1, plot_idx)
+
+            sub = df[df[group_col] == grp] if group_col else df
+            data = sub[value_col].dropna().values.astype(float)
+
+            ax.hist(data, bins=n_bins, density=True, alpha=0.4,
+                    color='#4c72b0', edgecolor='white', label='Data')
+
+            x_plot = np.linspace(data.min(), data.max(), 300)
+            fits = all_fits[grp][:n_overlay]
+            colors = ['#c44e52', '#dd8452', '#55a868', '#8172b3',
+                      '#937860', '#da8bc3', '#8c8c8c', '#ccb974']
+            for i, (name, dist_obj, params, aic) in enumerate(fits):
+                try:
+                    pdf = dist_obj.pdf(x_plot, *params)
+                    ax.plot(x_plot, pdf, lw=2, color=colors[i % len(colors)],
+                            label=f'{name} (AIC={aic:.1f})')
+                except Exception:
+                    pass
+
+            title = f'{value_col}' + (f' — {grp}' if group_col else '')
+            ax.set_title(title, fontweight='bold')
+            ax.set_xlabel(value_col)
+            ax.set_ylabel('Density')
+            ax.legend(fontsize=8, frameon=True)
+
+        fig.tight_layout()
+        self.output_values['figure'] = FigureData(payload=fig)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None

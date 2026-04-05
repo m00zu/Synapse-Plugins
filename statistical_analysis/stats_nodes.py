@@ -1283,3 +1283,189 @@ class PCANode(BaseExecutionNode):
             return True, None
         except Exception as e:
             self.mark_error(); return False, str(e)
+
+
+# ── 7. Mixed Effects Model ───────────────────────────────────────────────────
+
+class MixedEffectsModelNode(BaseExecutionNode):
+    """
+    Fits a linear mixed-effects model (LMM) for hierarchical / nested data.
+
+    Mixed-effects models are essential when observations are grouped (e.g.
+    cells within wells, animals within treatment groups, repeated measures
+    per subject). They estimate **fixed effects** (population-level trends)
+    and **random effects** (group-level deviations) simultaneously.
+
+    Configuration:
+    - **y_col** — dependent (response) variable.
+    - **fixed_cols** — fixed-effect predictor(s), comma-separated.
+    - **group_col** — grouping variable for random intercepts (required).
+    - **random_slope_col** — optional predictor for random slopes.
+    - **REML** — use Restricted ML (default) or Full ML estimation.
+
+    Outputs:
+    - **fixed_effects** — coefficient table with SE, z-value, p-value, 95% CI.
+    - **random_effects** — per-group random intercept (and slope) estimates.
+    - **summary** — model-level statistics: log-likelihood, AIC, BIC,
+      number of groups, ICC.
+
+    Keywords: mixed effects, LMM, hierarchical model, multilevel, random intercept, random slope, nested data, repeated measures, REML, 混合效應, 階層模型, 隨機截距, 重複量測
+    """
+
+    __identifier__ = 'nodes.analysis'
+    NODE_NAME = 'Mixed Effects Model'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['stat', 'table', 'stat']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('in',              color=PORT_COLORS['table'])
+        self.add_output('fixed_effects',  color=PORT_COLORS['stat'])
+        self.add_output('random_effects', color=PORT_COLORS['table'])
+        self.add_output('summary',        color=PORT_COLORS['stat'])
+
+        self._add_column_selector('y_col',   'Y (Response)',   text='', mode='single', tab='Parameters')
+        self._add_column_selector('fixed_cols', 'Fixed Effect(s)', text='', mode='multi', tab='Parameters')
+        self._add_column_selector('group_col',  'Group (Random Intercept)', text='', mode='single', tab='Parameters')
+        self._add_column_selector('random_slope_col', 'Random Slope (opt.)', text='', mode='single', tab='Parameters')
+        self.add_checkbox('reml', '', text='Use REML (Restricted ML)', state=True)
+
+    def evaluate(self):
+        self.reset_progress()
+        import statsmodels.api as sm
+        import statsmodels.formula.api as smf
+
+        df, err = _get_table_df(self)
+        if df is None:
+            self.mark_error(); return False, err
+
+        self._refresh_column_selectors(df, 'y_col', 'fixed_cols', 'group_col',
+                                       'random_slope_col')
+
+        y_col      = str(self.get_property('y_col') or '').strip()
+        fixed_raw  = str(self.get_property('fixed_cols') or '').strip()
+        group_col  = str(self.get_property('group_col') or '').strip()
+        rslope_col = str(self.get_property('random_slope_col') or '').strip()
+        use_reml   = bool(self.get_property('reml'))
+
+        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+
+        if not y_col or y_col not in df.columns:
+            y_col = num_cols[-1] if num_cols else None
+        if not y_col:
+            self.mark_error(); return False, "No Y column found"
+
+        if not group_col or group_col not in df.columns:
+            group_col = cat_cols[0] if cat_cols else None
+        if not group_col:
+            self.mark_error(); return False, "Group column required for random effects"
+
+        if not fixed_raw:
+            fixed_cols = [c for c in num_cols if c != y_col][:1]
+        else:
+            fixed_cols = [c.strip() for c in fixed_raw.split(',')
+                          if c.strip() in df.columns]
+        if not fixed_cols:
+            self.mark_error(); return False, "At least one fixed-effect column required"
+
+        if rslope_col and rslope_col not in df.columns:
+            rslope_col = ''
+
+        try:
+            self.set_progress(10)
+
+            # Sanitize column names for formula (replace spaces/special chars)
+            col_map = {}
+            inv_map = {}
+            for col in [y_col, group_col] + fixed_cols + ([rslope_col] if rslope_col else []):
+                safe = col.replace(' ', '_').replace('-', '_').replace('.', '_')
+                safe = ''.join(c if c.isalnum() or c == '_' else '_' for c in safe)
+                if safe[0].isdigit():
+                    safe = '_' + safe
+                col_map[col] = safe
+                inv_map[safe] = col
+
+            df_work = df[[y_col, group_col] + fixed_cols +
+                         ([rslope_col] if rslope_col else [])].dropna().copy()
+            df_work.rename(columns=col_map, inplace=True)
+
+            y_safe = col_map[y_col]
+            fixed_safe = [col_map[c] for c in fixed_cols]
+            group_safe = col_map[group_col]
+            rslope_safe = col_map[rslope_col] if rslope_col else ''
+
+            # Build formula
+            formula = f'{y_safe} ~ {" + ".join(fixed_safe)}'
+
+            # Random effects specification
+            if rslope_safe:
+                re_formula = f'~{rslope_safe}'
+            else:
+                re_formula = '~1'
+
+            self.set_progress(20)
+
+            model = smf.mixedlm(formula, df_work, groups=df_work[group_safe],
+                                re_formula=re_formula)
+            result = model.fit(reml=use_reml)
+
+            self.set_progress(60)
+
+            # --- Fixed effects table ---
+            fe_df = pd.DataFrame({
+                'Parameter':    [inv_map.get(p, p) for p in result.fe_params.index],
+                'Coefficient':  result.fe_params.round(6).values,
+                'Std Error':    result.bse_fe.round(6).values,
+                'z-value':      result.tvalues.loc[result.fe_params.index].round(4).values,
+                'p-value':      result.pvalues.loc[result.fe_params.index].round(6).values,
+            })
+            ci = result.conf_int().loc[result.fe_params.index]
+            fe_df['95% CI Lo'] = ci.iloc[:, 0].round(6).values
+            fe_df['95% CI Hi'] = ci.iloc[:, 1].round(6).values
+
+            self.set_progress(75)
+
+            # --- Random effects table ---
+            re_dict = result.random_effects
+            re_rows = []
+            for grp_name, effects in re_dict.items():
+                row = {group_col: grp_name}
+                for eff_name, eff_val in effects.items():
+                    label = inv_map.get(eff_name, eff_name)
+                    if label == 'Group':
+                        label = 'Intercept'
+                    row[label] = round(float(eff_val), 6)
+                re_rows.append(row)
+            re_df = pd.DataFrame(re_rows)
+
+            self.set_progress(85)
+
+            # --- Summary statistics ---
+            n_groups = int(result.nobs) if hasattr(result, 'nobs') else len(re_dict)
+            # Intraclass correlation coefficient (ICC)
+            re_cov = result.cov_re
+            var_random = float(re_cov.iloc[0, 0]) if re_cov.shape[0] > 0 else 0
+            var_resid = float(result.scale)
+            icc = var_random / (var_random + var_resid) if (var_random + var_resid) > 0 else 0
+
+            summary_df = pd.DataFrame([{
+                'n_obs': int(result.nobs),
+                'n_groups': len(re_dict),
+                'log_likelihood': round(float(result.llf), 2),
+                'AIC': round(float(-2 * result.llf + 2 * result.df_modelwc), 2),
+                'BIC': round(float(-2 * result.llf + np.log(result.nobs) * result.df_modelwc), 2),
+                'var_random_intercept': round(var_random, 6),
+                'var_residual': round(var_resid, 6),
+                'ICC': round(icc, 4),
+                'converged': bool(result.converged),
+                'method': 'REML' if use_reml else 'ML',
+            }])
+
+            self.output_values['fixed_effects']  = StatData(payload=fe_df)
+            self.output_values['random_effects'] = TableData(payload=re_df)
+            self.output_values['summary']        = StatData(payload=summary_df)
+            self.set_progress(100)
+            self.mark_clean()
+            return True, None
+        except Exception as e:
+            self.mark_error(); return False, str(e)

@@ -321,12 +321,28 @@ def _extract_params(fig):
     # DPI
     params['dpi'] = float(fig.get_dpi())
 
-    # Legend
+    # Legend — always provide defaults so the Legend tab is available in the editor
     _LOC_INT_TO_STR = {0: 'best', 1: 'upper right', 2: 'upper left',
                        3: 'lower left', 4: 'lower right', 5: 'right',
                        6: 'center left', 7: 'center right',
                        8: 'lower center', 9: 'upper center', 10: 'center'}
     legend = ax.get_legend()
+    if legend is None:
+        from matplotlib.legend import Legend as _LegendCls
+        for child in ax.get_children():
+            if isinstance(child, _LegendCls):
+                legend = child
+                break
+    if legend is None:
+        params['legend'] = {
+            'visible': False, 'frameon': True, 'fontsize': 10.0,
+            'title': '', 'title_fontsize': 10.0, 'loc': 'upper right',
+            'labelcolor': [0.0, 0.0, 0.0, 1.0], 'framealpha': 1.0,
+            'facecolor': [1.0, 1.0, 1.0, 1.0], 'edgecolor': [0.0, 0.0, 0.0, 1.0],
+            'ncols': 1, 'labels': [], 'markerscale': 1.0, 'borderpad': 0.4,
+            'labelspacing': 0.5, 'handlelength': 2.0, 'handletextpad': 0.8,
+            'columnspacing': 2.0, 'borderaxespad': 0.5,
+        }
     if legend is not None:
         texts = legend.get_texts()
         title_artist = legend.get_title()
@@ -624,65 +640,96 @@ def _apply_params(fig, params):
     p = params.get('legend')
     if p:
         legend = ax.get_legend()
+        # After deepcopy, ax.get_legend() may be None even though a legend
+        # artist exists.  Fall back to searching ax.get_children().
+        if legend is None:
+            from matplotlib.legend import Legend as _LegendCls
+            for child in ax.get_children():
+                if isinstance(child, _LegendCls):
+                    legend = child
+                    break
         if legend:
-            # Check for custom label sorting
-            if p.get('labels') is not None:
-                # We need to rebuild the legend entirely to change its drawing order
-                handles, current_labels = ax.get_legend_handles_labels()
-                lbl_to_hdl = dict(zip(current_labels, handles))
-                new_labels = []
-                new_handles = []
-                for tgt_lbl in p['labels']:
-                    if tgt_lbl in lbl_to_hdl:
-                        new_labels.append(tgt_lbl)
-                        new_handles.append(lbl_to_hdl[tgt_lbl])
-                # Append any remaining ones that might not have been in the order list
-                for lbl, hdl in zip(current_labels, handles):
-                    if lbl not in new_labels:
-                        new_labels.append(lbl)
-                        new_handles.append(hdl)
-                if new_handles:
-                    old_title = legend.get_title().get_text() if legend.get_title() else None
-                    legend = ax.legend(new_handles, new_labels, title=old_title)
+            # Remove old legend and rebuild from scratch — deepcopy breaks
+            # matplotlib's internal legend state, so in-place modifications
+            # (set_fontsize, set_frame_on, etc.) don't persist in rendering.
+            if p.get('visible') is False:
+                legend.remove()
+            else:
+                # Get handles and labels from the axes
+                handles, labels = ax.get_legend_handles_labels()
 
-            if p.get('visible')  is not None: legend.set_visible(p['visible'])
-            if p.get('frameon')  is not None: legend.set_frame_on(p['frameon'])
-            if p.get('fontsize') is not None:
-                for t in legend.get_texts():
-                    t.set_fontsize(p['fontsize'])
-            if p.get('labelcolor') is not None:
-                for t in legend.get_texts():
-                    t.set_color(p['labelcolor'])
-            title_artist = legend.get_title()
-            if title_artist:
-                if p.get('title')          is not None: title_artist.set_text(p['title'])
-                if p.get('title_fontsize') is not None: title_artist.set_fontsize(p['title_fontsize'])
-            frame = legend.get_frame()
-            if frame:
-                if p.get('framealpha') is not None:
-                    frame.set_alpha(float(p['framealpha']))
-                if p.get('facecolor') is not None:
-                    frame.set_facecolor(p['facecolor'])
-                if p.get('edgecolor') is not None:
-                    frame.set_edgecolor(p['edgecolor'])
-            if p.get('ncols') is not None:
-                try:
-                    legend._ncols = int(p['ncols'])
-                except Exception:
-                    pass
-            for attr in ('markerscale', 'borderpad', 'labelspacing',
-                         'handlelength', 'handletextpad', 'columnspacing', 'borderaxespad'):
-                if p.get(attr) is not None and hasattr(legend, attr):
-                    try:
-                        setattr(legend, attr, float(p[attr]))
-                    except Exception:
-                        pass
-            if p.get('loc') is not None:
-                _LOC_STR_TO_INT = {'best': 0, 'upper right': 1, 'upper left': 2,
-                                   'lower left': 3, 'lower right': 4, 'right': 5,
-                                   'center left': 6, 'center right': 7,
-                                   'lower center': 8, 'upper center': 9, 'center': 10}
-                legend._loc = _LOC_STR_TO_INT.get(p['loc'], 1)
+                # Apply edited labels (renamed + reordered) from the dialog.
+                # _orig_labels tracks which original handle each edited label
+                # maps to, so reorder+rename both work correctly.
+                edited_labels = p.get('labels')
+                orig_labels = p.get('_orig_labels')
+                if edited_labels and orig_labels:
+                    # Map original axes label → handle
+                    orig_lbl_to_hdl = dict(zip(labels, handles))
+                    new_labels, new_handles = [], []
+                    for edited, orig in zip(edited_labels, orig_labels):
+                        hdl = orig_lbl_to_hdl.get(orig)
+                        if hdl is not None:
+                            new_labels.append(edited)
+                            new_handles.append(hdl)
+                    # Append any remaining originals not covered
+                    used_orig = set(orig_labels)
+                    for lbl, hdl in zip(labels, handles):
+                        if lbl not in used_orig:
+                            new_labels.append(lbl)
+                            new_handles.append(hdl)
+                    handles, labels = new_handles, new_labels
+                elif edited_labels:
+                    # No _orig_labels — legacy: match by name only
+                    lbl_to_hdl = dict(zip(labels, handles))
+                    new_labels, new_handles = [], []
+                    for tgt in edited_labels:
+                        if tgt in lbl_to_hdl:
+                            new_labels.append(tgt)
+                            new_handles.append(lbl_to_hdl[tgt])
+                    for lbl, hdl in zip(labels, handles):
+                        if lbl not in new_labels:
+                            new_labels.append(lbl)
+                            new_handles.append(hdl)
+                    handles, labels = new_handles, new_labels
+
+                if handles:
+                    _LOC_STR_TO_INT = {
+                        'best': 0, 'upper right': 1, 'upper left': 2,
+                        'lower left': 3, 'lower right': 4, 'right': 5,
+                        'center left': 6, 'center right': 7,
+                        'lower center': 8, 'upper center': 9, 'center': 10,
+                    }
+                    # Remove old legend
+                    legend.remove()
+                    # Rebuild with all params baked in
+                    new_legend = ax.legend(
+                        handles, labels,
+                        loc=_LOC_STR_TO_INT.get(p.get('loc', 'upper right'), 1),
+                        title=p.get('title', ''),
+                        frameon=p.get('frameon', True),
+                        framealpha=float(p.get('framealpha', 1.0)),
+                        fontsize=float(p.get('fontsize', 10.0)),
+                        title_fontsize=float(p.get('title_fontsize', 10.0)),
+                        ncols=int(p.get('ncols', 1)),
+                        markerscale=float(p.get('markerscale', 1.0)),
+                        borderpad=float(p.get('borderpad', 0.4)),
+                        labelspacing=float(p.get('labelspacing', 0.5)),
+                        handlelength=float(p.get('handlelength', 2.0)),
+                        handletextpad=float(p.get('handletextpad', 0.8)),
+                        columnspacing=float(p.get('columnspacing', 2.0)),
+                        borderaxespad=float(p.get('borderaxespad', 0.5)),
+                    )
+                    # Apply colors that can't be set via legend() constructor
+                    if p.get('labelcolor') is not None:
+                        for t in new_legend.get_texts():
+                            t.set_color(p['labelcolor'])
+                    frame = new_legend.get_frame()
+                    if frame:
+                        if p.get('facecolor') is not None:
+                            frame.set_facecolor(p['facecolor'])
+                        if p.get('edgecolor') is not None:
+                            frame.set_edgecolor(p['edgecolor'])
 
     # Custom text annotations
     for txt in list(ax.texts):
@@ -1126,14 +1173,24 @@ class FigureEditDialog(QtWidgets.QDialog):
             'legend_edge_color', p.get('edgecolor', [0.0, 0.0, 0.0, 1.0]))
         form.addRow("Frame Edge", self._legend_edge_color)
         
-        # Add draggable legend ordering list if labels exist
-        if 'labels' in p and p['labels']:
+        # Add draggable + editable legend label list
+        # Store original labels from the axes as item data so we can
+        # map renamed labels back to the correct handles after reordering.
+        orig_labels = p.get('_orig_labels') or p.get('labels') or []
+        display_labels = p.get('labels') or []
+        if display_labels:
             self._legend_order_list = QtWidgets.QListWidget()
             self._legend_order_list.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
             self._legend_order_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
             self._legend_order_list.setMinimumHeight(100)
-            self._legend_order_list.addItems(p['labels'])
-            form.addRow("Label Order\n(Drag to Reorder)", self._legend_order_list)
+            for i, label in enumerate(display_labels):
+                item = QtWidgets.QListWidgetItem(label)
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                # Store the original (axes) label so we can find the right handle
+                orig = orig_labels[i] if i < len(orig_labels) else label
+                item.setData(QtCore.Qt.ItemDataRole.UserRole, orig)
+                self._legend_order_list.addItem(item)
+            form.addRow("Labels\n(Double-click to Edit,\n Drag to Reorder)", self._legend_order_list)
         else:
             self._legend_order_list = None
 
@@ -1716,7 +1773,13 @@ class FigureEditDialog(QtWidgets.QDialog):
             p['facecolor']      = self._color_cache.get('legend_face_color', p.get('facecolor', [1.0, 1.0, 1.0, 1.0]))
             p['edgecolor']      = self._color_cache.get('legend_edge_color', p.get('edgecolor', [0.0, 0.0, 0.0, 1.0]))
             if hasattr(self, '_legend_order_list') and self._legend_order_list:
-                p['labels'] = [self._legend_order_list.item(i).text() for i in range(self._legend_order_list.count())]
+                n = self._legend_order_list.count()
+                p['labels'] = [self._legend_order_list.item(i).text() for i in range(n)]
+                p['_orig_labels'] = [
+                    self._legend_order_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
+                    or self._legend_order_list.item(i).text()
+                    for i in range(n)
+                ]
         if self._params.get('lines'):
             self._save_current_line()
         if self._params.get('collections'):
@@ -4772,6 +4835,9 @@ class RegressionPlotNode(BaseExecutionNode):
     fits the equation and R-squared are annotated on the plot
     automatically.
 
+    Connect the optional **predictions** input (from Model Predict) to
+    overlay predicted data points as red × markers on the plot.
+
     Columns:
     - **x_col** — numeric column for the X axis
     - **y_col** — numeric column for the Y axis
@@ -4787,12 +4853,13 @@ class RegressionPlotNode(BaseExecutionNode):
     """
     __identifier__ = 'nodes.plotting'
     NODE_NAME      = 'Regression Plot'
-    PORT_SPEC      = {'inputs': ['table', 'table'], 'outputs': ['figure']}
+    PORT_SPEC      = {'inputs': ['table', 'table', 'table'], 'outputs': ['figure']}
 
     def __init__(self):
         super().__init__()
-        self.add_input('data',  color=PORT_COLORS['table'])
-        self.add_input('curve', color=PORT_COLORS['table'])
+        self.add_input('data',        color=PORT_COLORS['table'])
+        self.add_input('curve',       color=PORT_COLORS['table'])
+        self.add_input('predictions', color=PORT_COLORS['table'])
         self.add_output('plot', color=PORT_COLORS['figure'])
 
         self._add_column_selector('x_col',     'X Column',            text='', mode='single')
@@ -4805,6 +4872,9 @@ class RegressionPlotNode(BaseExecutionNode):
         self.add_checkbox('show_equation', '', text='Show Equation / R²',       state=True)
         self.add_combo_menu('palette', 'Color Palette',
                             items=['Set2', 'tab10', 'colorblind', 'husl', 'None'])
+        # Column selector for predicted data overlay
+        self._add_column_selector('pred_y_col', 'Predicted Y Column (opt.)', text='', mode='single')
+
         self.add_text_input('x_label',    'X Label',    text='')
         self.add_text_input('y_label',    'Y Label',    text='')
         self.add_text_input('plot_title', 'Title',      text='')
@@ -4814,12 +4884,12 @@ class RegressionPlotNode(BaseExecutionNode):
         self.create_property('fig_width',     8.0, widget_type=H)
         self.create_property('fig_height',    6.0, widget_type=H)
         self.create_property('tick_rotation', 0.0, widget_type=H)
-        
-        # New customizable properties for the equation
-        self.add_text_input('eq_x',       'Equation X Pos',        text='0.05')
-        self.add_text_input('eq_y',       'Equation Y Pos',        text='0.95')
-        self.add_text_input('eq_size',    'Equation Font Size',    text='9')
-        self.add_text_input('eq_spacing', 'Eq / R² Line Spacing',  text='1.5')
+
+        # Equation annotation position and style
+        self._add_float_spinbox('eq_x',       'Equation X Pos',       value=0.05, min_val=0.0, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('eq_y',       'Equation Y Pos',       value=0.95, min_val=0.0, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('eq_size',    'Equation Font Size',   value=9.0,  min_val=4.0, max_val=24.0, step=1.0, decimals=0)
+        self._add_float_spinbox('eq_spacing', 'Eq / R² Line Spacing', value=1.5,  min_val=0.5, max_val=4.0, step=0.1, decimals=1)
 
     def evaluate(self):
         self.reset_progress()
@@ -4958,9 +5028,36 @@ class RegressionPlotNode(BaseExecutionNode):
                                 bbox=dict(boxstyle='round,pad=0.3',
                                           fc='white', alpha=0.85))
 
+            # --- Overlay predicted data points (optional) ----------------
+            pred_df = _read_table_port(self, 'predictions')
+            if pred_df is not None and x_col:
+                self._refresh_column_selectors(pred_df, 'pred_y_col')
+
+                # Use user-selected column, or auto-detect
+                pred_y_col = str(self.get_property('pred_y_col') or '').strip() or None
+                if not pred_y_col or pred_y_col not in pred_df.columns:
+                    # Auto-detect: whichever numeric column isn't the X column
+                    pred_num = pred_df.select_dtypes(include=[np.number]).columns.tolist()
+                    candidates = [c for c in pred_num if c != x_col]
+                    pred_y_col = candidates[0] if candidates else None
+
+                # Determine X column in predictions table
+                pred_x_col = x_col if x_col in pred_df.columns else None
+                if pred_x_col is None:
+                    pred_num = pred_df.select_dtypes(include=[np.number]).columns.tolist()
+                    others = [c for c in pred_num if c != pred_y_col]
+                    pred_x_col = others[0] if others else None
+
+                if pred_x_col and pred_y_col:
+                    px = pred_df[pred_x_col].values
+                    py = pred_df[pred_y_col].values
+                    ax.scatter(px, py, marker='X', s=64, color='#e74c3c',
+                               edgecolor='white', linewidth=0.8, zorder=5,
+                               label=f'Predicted ({pred_y_col})')
+
             self.set_progress(80)
-            if group_col:
-                ax.legend(title=group_col, frameon=False)
+            if group_col or pred_df is not None:
+                ax.legend(title=group_col if group_col else None, frameon=False)
             _finalize_ax(ax, self)
             fig.tight_layout()
             self.output_values['plot'] = FigureData(payload=fig)
@@ -5427,6 +5524,303 @@ class AnglePlotNode(PlotToolboxMixin, BaseExecutionNode):
             return False, traceback.format_exc()
 
 
+# ── Radar Chart Node ─────────────────────────────────────────────────────────
+
+class RadarChartNode(BaseExecutionNode):
+    """
+    Creates a radar (spider / star) chart comparing multiple metrics across groups.
+
+    Ideal for comparing phenotype profiles, treatment effects, or multi-parameter
+    characterisations side by side.
+
+    The input table should have a **group column** (one row per group) and
+    multiple **metric columns** (numeric) that become the radar axes.
+
+    - **group_col** — column identifying each group / sample.
+    - **metric_cols** — numeric columns to plot (leave blank = all numeric).
+    - **normalize** — scale each axis to [0, 1] so different units are comparable.
+    - **fill_alpha** — transparency of filled polygon area.
+
+    Outputs:
+    - **plot** — radar chart figure.
+
+    Keywords: radar, spider, star chart, multi-metric, phenotype, profile, comparison, 雷達圖, 蜘蛛圖, 多指標比較
+    """
+
+    __identifier__ = 'nodes.plotting'
+    NODE_NAME = 'Radar Chart'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['figure']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('data', color=PORT_COLORS['table'])
+        self.add_output('plot', multi_output=True, color=PORT_COLORS['figure'])
+
+        self._add_column_selector('group_col', 'Group Column', text='', mode='single')
+        self._add_column_selector('metric_cols', 'Metric Columns (blank=all)', text='', mode='multi')
+        self.add_checkbox('normalize', '', text='Normalize axes [0-1]', state=True)
+        self._add_float_spinbox('fill_alpha', 'Fill Alpha', value=0.15,
+                                min_val=0.0, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('line_width', 'Line Width', value=2.0,
+                                min_val=0.5, max_val=6.0, step=0.5, decimals=1)
+        self.add_combo_menu('palette', 'Palette',
+                            items=['Set2', 'tab10', 'Dark2', 'Paired', 'Set1',
+                                   'Pastel1', 'colorblind'])
+        self._add_float_spinbox('fig_w', 'Fig Width', value=6.0,
+                                min_val=3, max_val=14, step=0.5, decimals=1)
+        self._add_float_spinbox('fig_h', 'Fig Height', value=6.0,
+                                min_val=3, max_val=14, step=0.5, decimals=1)
+
+    def evaluate(self):
+        self.reset_progress()
+        import matplotlib
+        matplotlib.use('Agg')
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        import seaborn as sns
+
+        df = _read_table_port(self, 'data')
+        if df is None:
+            self.mark_error(); return False, 'No data connected'
+
+        self._refresh_column_selectors(df, 'group_col', 'metric_cols')
+
+        group_col   = str(self.get_property('group_col') or '').strip()
+        metric_str  = str(self.get_property('metric_cols') or '').strip()
+        normalize   = bool(self.get_property('normalize'))
+        fill_alpha  = float(self.get_property('fill_alpha') or 0.15)
+        lw          = float(self.get_property('line_width') or 2.0)
+        palette     = str(self.get_property('palette') or 'Set2')
+        fig_w       = float(self.get_property('fig_w') or 6.0)
+        fig_h       = float(self.get_property('fig_h') or 6.0)
+
+        # Resolve group column
+        if not group_col or group_col not in df.columns:
+            cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+            group_col = cat_cols[0] if cat_cols else None
+        if not group_col:
+            self.mark_error(); return False, 'No group column found'
+
+        # Resolve metric columns
+        if metric_str:
+            metrics = [c.strip() for c in metric_str.split(',')
+                       if c.strip() in df.columns]
+        else:
+            metrics = [c for c in df.select_dtypes(include=[np.number]).columns
+                       if c != group_col]
+        if len(metrics) < 3:
+            self.mark_error()
+            return False, 'Radar chart needs at least 3 numeric metrics'
+
+        self.set_progress(20)
+
+        # Aggregate: mean per group
+        grouped = df.groupby(group_col)[metrics].mean()
+        groups = grouped.index.tolist()
+
+        values = grouped.values.copy()
+        if normalize:
+            col_min = values.min(axis=0)
+            col_max = values.max(axis=0)
+            rng = col_max - col_min
+            rng[rng == 0] = 1.0
+            values = (values - col_min) / rng
+
+        self.set_progress(40)
+
+        # Radar plot
+        n_axes = len(metrics)
+        angles = np.linspace(0, 2 * np.pi, n_axes, endpoint=False).tolist()
+        angles += angles[:1]  # close the polygon
+
+        try:
+            colors = sns.color_palette(palette, len(groups))
+        except Exception:
+            colors = sns.color_palette('tab10', len(groups))
+
+        fig = Figure(figsize=(fig_w, fig_h))
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111, polar=True)
+
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        ax.set_thetagrids(np.degrees(angles[:-1]), metrics, fontsize=9)
+
+        for i, (grp, row) in enumerate(zip(groups, values)):
+            vals = row.tolist() + [row[0]]  # close polygon
+            ax.plot(angles, vals, linewidth=lw, color=colors[i],
+                    label=str(grp))
+            ax.fill(angles, vals, alpha=fill_alpha, color=colors[i])
+
+        ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1),
+                  fontsize=8, frameon=True)
+        fig.tight_layout()
+
+        self.output_values['plot'] = FigureData(payload=fig)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+
+# ── Bland-Altman Node ────────────────────────────────────────────────────────
+
+class BlandAltmanNode(BaseExecutionNode):
+    """
+    Creates a Bland-Altman plot for method-comparison / agreement analysis.
+
+    The Bland-Altman plot shows the **difference** between two measurements
+    against their **mean**, with lines for the mean bias and 95% limits of
+    agreement (mean +/- 1.96 SD). Used to assess whether two measurement
+    methods are interchangeable.
+
+    Inputs:
+    - **table** — DataFrame with two numeric columns to compare.
+
+    Outputs:
+    - **plot** — Bland-Altman figure with bias and LoA lines.
+    - **stats** — bias (mean difference), SD of differences, upper/lower LoA,
+      95% CI of bias.
+
+    Keywords: Bland-Altman, agreement, method comparison, bias, limits of agreement, measurement, reproducibility, 布蘭德-奧特曼, 方法比較, 一致性分析
+    """
+
+    __identifier__ = 'nodes.plotting'
+    NODE_NAME = 'Bland-Altman'
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['figure', 'stat']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('data', color=PORT_COLORS['table'])
+        self.add_output('plot', multi_output=True, color=PORT_COLORS['figure'])
+        self.add_output('stats', color=PORT_COLORS['stat'])
+
+        self._add_column_selector('method1', 'Method 1 Column', text='', mode='single')
+        self._add_column_selector('method2', 'Method 2 Column', text='', mode='single')
+        self._add_float_spinbox('ci_level', 'CI Level', value=0.95,
+                                min_val=0.80, max_val=0.99, step=0.01, decimals=2)
+        self.add_checkbox('show_ci', '', text='Show CI bands for LoA', state=True)
+        self.add_checkbox('proportional', '', text='Proportional difference (%)', state=False)
+        self._add_float_spinbox('fig_w', 'Fig Width', value=7.0,
+                                min_val=3, max_val=14, step=0.5, decimals=1)
+        self._add_float_spinbox('fig_h', 'Fig Height', value=5.0,
+                                min_val=3, max_val=14, step=0.5, decimals=1)
+
+    def evaluate(self):
+        self.reset_progress()
+        from scipy import stats as sp_stats
+        import matplotlib
+        matplotlib.use('Agg')
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        df = _read_table_port(self, 'data')
+        if df is None:
+            self.mark_error(); return False, 'No data connected'
+
+        self._refresh_column_selectors(df, 'method1', 'method2')
+
+        col1 = str(self.get_property('method1') or '').strip()
+        col2 = str(self.get_property('method2') or '').strip()
+        ci_level     = float(self.get_property('ci_level') or 0.95)
+        show_ci      = bool(self.get_property('show_ci'))
+        proportional = bool(self.get_property('proportional'))
+        fig_w        = float(self.get_property('fig_w') or 7.0)
+        fig_h        = float(self.get_property('fig_h') or 5.0)
+
+        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if not col1 or col1 not in df.columns:
+            col1 = num_cols[0] if len(num_cols) >= 2 else None
+        if not col2 or col2 not in df.columns:
+            col2 = num_cols[1] if len(num_cols) >= 2 else None
+        if not col1 or not col2:
+            self.mark_error(); return False, 'Need two numeric columns'
+        if col1 == col2:
+            self.mark_error(); return False, 'Method 1 and Method 2 must be different columns'
+
+        self.set_progress(15)
+
+        m1 = df[col1].dropna().values.astype(float)
+        m2 = df[col2].dropna().values.astype(float)
+        n = min(len(m1), len(m2))
+        m1, m2 = m1[:n], m2[:n]
+
+        means = (m1 + m2) / 2.0
+        diffs = m1 - m2
+        if proportional:
+            diffs = diffs / np.where(means == 0, 1, means) * 100.0
+
+        bias = float(np.mean(diffs))
+        sd   = float(np.std(diffs, ddof=1))
+
+        z = sp_stats.norm.ppf((1 + ci_level) / 2)
+        loa_upper = bias + z * sd
+        loa_lower = bias - z * sd
+
+        # CI of bias
+        se_bias = sd / np.sqrt(n)
+        t_crit = sp_stats.t.ppf((1 + ci_level) / 2, df=n - 1)
+        bias_ci_lo = bias - t_crit * se_bias
+        bias_ci_hi = bias + t_crit * se_bias
+
+        # CI of LoA (approximate)
+        se_loa = np.sqrt(sd**2 / n + 2 * sd**4 / (n - 1)) if n > 1 else 0
+        loa_upper_ci = (loa_upper - t_crit * se_loa, loa_upper + t_crit * se_loa)
+        loa_lower_ci = (loa_lower - t_crit * se_loa, loa_lower + t_crit * se_loa)
+
+        self.set_progress(40)
+
+        # --- Stats output ---
+        diff_label = 'Difference (%)' if proportional else 'Difference'
+        stats_df = pd.DataFrame([{
+            'n': n,
+            'bias': round(bias, 4),
+            'SD_diff': round(sd, 4),
+            'LoA_upper': round(loa_upper, 4),
+            'LoA_lower': round(loa_lower, 4),
+            'bias_CI_lower': round(bias_ci_lo, 4),
+            'bias_CI_upper': round(bias_ci_hi, 4),
+            'CI_level': ci_level,
+            'type': diff_label,
+        }])
+        self.output_values['stats'] = StatData(payload=stats_df)
+
+        self.set_progress(60)
+
+        # --- Figure ---
+        fig = Figure(figsize=(fig_w, fig_h))
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+
+        ax.scatter(means, diffs, s=20, alpha=0.6, color='#4c72b0',
+                   edgecolors='white', linewidths=0.5)
+
+        # Bias line
+        ax.axhline(bias, color='#333333', linestyle='-', linewidth=1.2,
+                   label=f'Bias = {bias:.3f}')
+        # LoA lines
+        ax.axhline(loa_upper, color='#c44e52', linestyle='--', linewidth=1,
+                   label=f'+{z:.2f} SD = {loa_upper:.3f}')
+        ax.axhline(loa_lower, color='#c44e52', linestyle='--', linewidth=1,
+                   label=f'-{z:.2f} SD = {loa_lower:.3f}')
+
+        # CI shading
+        if show_ci:
+            ax.axhspan(bias_ci_lo, bias_ci_hi, alpha=0.12, color='#333333')
+            ax.axhspan(loa_upper_ci[0], loa_upper_ci[1], alpha=0.10, color='#c44e52')
+            ax.axhspan(loa_lower_ci[0], loa_lower_ci[1], alpha=0.10, color='#c44e52')
+
+        ax.set_xlabel(f'Mean of {col1} and {col2}')
+        ax.set_ylabel(diff_label)
+        ax.set_title('Bland-Altman Plot', fontweight='bold')
+        ax.legend(fontsize=8, frameon=True, loc='best')
+        fig.tight_layout()
+
+        self.output_values['plot'] = FigureData(payload=fig)
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
+
+
 # ── Save Figure Node ─────────────────────────────────────────────────────────
 
 class SaveFigureNode(BaseExecutionNode):
@@ -5491,10 +5885,347 @@ class SaveFigureNode(BaseExecutionNode):
 
         self.set_progress(30)
         try:
-            fig.savefig(file_path, bbox_inches='tight', dpi=dpi)
+            # If upstream provides edited SVG (from SvgEditorNode or
+            # MultiPanelFigureNode), use it instead of the raw Figure
+            svg_data = getattr(data, 'svg_override', None)
+            if svg_data:
+                if isinstance(svg_data, str):
+                    svg_data = svg_data.encode('utf-8')
+                if file_path.lower().endswith('.svg'):
+                    with open(file_path, 'wb') as f:
+                        f.write(svg_data)
+                else:
+                    # Rasterize SVG via Qt for PNG/TIFF/JPEG
+                    from PySide6.QtSvg import QSvgRenderer
+                    from PySide6.QtGui import QImage, QPainter
+                    from PySide6.QtCore import QByteArray
+                    renderer = QSvgRenderer(QByteArray(svg_data))
+                    default_size = renderer.defaultSize()
+                    scale = dpi / 72.0
+                    w = int(default_size.width() * scale)
+                    h = int(default_size.height() * scale)
+                    image = QImage(w, h, QImage.Format.Format_ARGB32)
+                    image.fill(0xFFFFFFFF)
+                    painter = QPainter(image)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    renderer.render(painter)
+                    painter.end()
+                    image.save(file_path)
+            else:
+                fig.savefig(file_path, bbox_inches='tight', dpi=dpi)
             self.set_progress(100)
             self.mark_clean()
             return True, None
         except Exception as e:
             self.mark_error()
             return False, str(e)
+
+
+# ===========================================================================
+# MultiPanelFigureNode
+# ===========================================================================
+
+class MultiPanelFigureNode(BaseExecutionNode):
+    """
+    Composes multiple figures into a single multi-panel publication figure.
+
+    Each input port corresponds to a panel (A, B, C, …). Figures are
+    rendered to SVG and combined into a single vector SVG document with
+    panel labels and configurable grid layout.
+
+    - **n_panels** — number of input ports / panels (2–9).
+    - **layout** — grid arrangement: Auto, 1×2, 2×1, 2×2, etc.
+    - **panel_labels** — labelling style for panels.
+    - **label_fontsize** — font size for A/B/C labels.
+    - **fig_width** / **fig_height** — overall figure size in inches.
+    - **spacing** — gap between panels (fraction of panel size).
+
+    The output is a FigureData with vector SVG. Save as SVG for vector
+    output, or PNG/TIFF for raster at any DPI.
+
+    Keywords: multi-panel, compose, grid, publication figure, subplot,
+    combine plots, A B C labels, 多面板, 組合圖, 發表圖
+    """
+
+    __identifier__ = 'nodes.plotting'
+    NODE_NAME = 'Multi-Panel Figure'
+    PORT_SPEC = {'inputs': ['figure', 'figure'], 'outputs': ['figure']}
+
+    _UI_PROPS = frozenset({
+        'n_panels', 'layout_rows', 'layout_cols', 'panel_labels',
+        'label_fontsize', 'label_fontweight', 'label_pad_x', 'label_pad_y',
+        'fig_width', 'fig_height', 'spacing',
+        '_grid_row', '_label_row', '_fig_size_row',
+    })
+
+    _LABEL_STYLES = ['A, B, C…', 'a, b, c…', '(A), (B)…', '(a), (b)…', 'None']
+
+    def __init__(self):
+        super().__init__()
+        self.set_port_deletion_allowed(True)
+
+        self.add_input('Panel A', color=PORT_COLORS['figure'])
+        self.add_input('Panel B', color=PORT_COLORS['figure'])
+        self.add_output('figure', color=PORT_COLORS['figure'])
+
+        self._add_row('_grid_row', 'Grid', [
+            {'name': 'n_panels', 'label': 'Panels', 'type': 'int',
+             'value': 2, 'min_val': 2, 'max_val': 9, 'step': 1},
+            {'name': 'layout_rows', 'label': 'Rows', 'type': 'int',
+             'value': 0, 'min_val': 0, 'max_val': 4, 'step': 1},
+            {'name': 'layout_cols', 'label': 'Cols', 'type': 'int',
+             'value': 0, 'min_val': 0, 'max_val': 4, 'step': 1},
+        ])
+        self.add_combo_menu('panel_labels', 'Panel Labels', items=self._LABEL_STYLES)
+        self.add_combo_menu('label_fontweight', 'Label Weight',
+                            items=['bold', 'normal'])
+        self._add_row('_label_row', 'Label', [
+            {'name': 'label_fontsize', 'label': 'Size', 'type': 'float',
+             'value': 16.0, 'min_val': 6, 'max_val': 36, 'step': 1, 'decimals': 0},
+            {'name': 'label_pad_x', 'label': 'Pad X', 'type': 'float',
+             'value': 4.0, 'min_val': 0, 'max_val': 40, 'step': 1, 'decimals': 0},
+            {'name': 'label_pad_y', 'label': 'Pad Y', 'type': 'float',
+             'value': 2.0, 'min_val': 0, 'max_val': 40, 'step': 1, 'decimals': 0},
+        ])
+        self._add_row('_fig_size_row', 'Figure', [
+            {'name': 'fig_width', 'label': 'W', 'type': 'float',
+             'value': 7.0, 'min_val': 2, 'max_val': 20, 'step': 0.5, 'decimals': 1},
+            {'name': 'fig_height', 'label': 'H', 'type': 'float',
+             'value': 5.0, 'min_val': 2, 'max_val': 20, 'step': 0.5, 'decimals': 1},
+            {'name': 'spacing', 'label': 'Gap', 'type': 'float',
+             'value': 0.03, 'min_val': 0, 'max_val': 0.2, 'step': 0.01, 'decimals': 2},
+        ])
+
+        self._current_n = 2
+
+    # ── Dynamic port management ───────────────────────────────────────────
+
+    def set_property(self, name, value, push_undo=True):
+        super().set_property(name, value, push_undo)
+        if name == 'n_panels':
+            self._sync_panel_ports(int(value or 2))
+
+    def _sync_panel_ports(self, target):
+        """Add or remove panel input ports to match target count."""
+        labels = [chr(ord('A') + i) for i in range(max(target, self._current_n))]
+        for i in range(self._current_n, target):
+            pname = f'Panel {labels[i]}'
+            if pname not in self.inputs():
+                self.add_input(pname, color=PORT_COLORS['figure'])
+        for i in range(self._current_n - 1, target - 1, -1):
+            pname = f'Panel {labels[i]}'
+            port = self.get_input(pname)
+            if port:
+                for cp in port.connected_ports():
+                    port.disconnect_from(cp)
+                self.delete_input(port)
+        self._current_n = target
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _fig_to_svg_bytes(fig) -> bytes:
+        """Render a matplotlib Figure to SVG bytes."""
+        import io as _io, matplotlib
+        old_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+        matplotlib.rcParams['svg.fonttype'] = 'none'
+        buf = _io.BytesIO()
+        fig.savefig(buf, format='svg', bbox_inches='tight')
+        matplotlib.rcParams['svg.fonttype'] = old_fonttype
+        buf.seek(0)
+        return buf.getvalue()
+
+    @staticmethod
+    def _auto_grid(n: int) -> tuple:
+        if n <= 1: return (1, 1)
+        if n == 2: return (1, 2)
+        if n == 3: return (1, 3)
+        if n == 4: return (2, 2)
+        if n <= 6: return (2, 3)
+        return (3, 3)
+
+    @staticmethod
+    def _parse_layout(layout_str: str, n: int) -> tuple:
+        if layout_str == 'Auto':
+            return MultiPanelFigureNode._auto_grid(n)
+        parts = layout_str.replace('x', '×').split('×')
+        if len(parts) == 2:
+            try:
+                return (int(parts[0]), int(parts[1]))
+            except ValueError:
+                pass
+        return MultiPanelFigureNode._auto_grid(n)
+
+    @staticmethod
+    def _make_label(index: int, style: str) -> str:
+        if style == 'None':
+            return ''
+        up = chr(ord('A') + index)
+        lo = chr(ord('a') + index)
+        if style == 'A, B, C…': return up
+        if style == 'a, b, c…': return lo
+        if style == '(A), (B)…': return f'({up})'
+        if style == '(a), (b)…': return f'({lo})'
+        return up
+
+    # ── Evaluate ──────────────────────────────────────────────────────────
+
+    def evaluate(self):
+        self.reset_progress()
+
+        # Collect input figures in port order
+        panel_labels = [chr(ord('A') + i) for i in range(self._current_n)]
+        figures = []
+        for label in panel_labels:
+            pname = f'Panel {label}'
+            port = self.inputs().get(pname)
+            if not port or not port.connected_ports():
+                continue
+            cp = port.connected_ports()[0]
+            val = cp.node().output_values.get(cp.name())
+            if val is None:
+                continue
+            fig = val.payload if hasattr(val, 'payload') else val
+            if hasattr(fig, 'savefig'):
+                figures.append((label, fig))
+
+        if not figures:
+            self.mark_error()
+            return False, "No figures connected"
+
+        self.set_progress(10)
+
+        # Read properties
+        l_rows = int(self.get_property('layout_rows') or 0)
+        l_cols = int(self.get_property('layout_cols') or 0)
+        label_style = str(self.get_property('panel_labels') or 'A, B, C…')
+        label_fs = float(self.get_property('label_fontsize') or 16)
+        label_fw = str(self.get_property('label_fontweight') or 'bold')
+        label_px = float(self.get_property('label_pad_x') or 4)
+        label_py = float(self.get_property('label_pad_y') or 2)
+        fig_w = float(self.get_property('fig_width') or 7.0)
+        fig_h = float(self.get_property('fig_height') or 5.0)
+        spacing = float(self.get_property('spacing') or 0.03)
+
+        # 0×0 = auto layout
+        if l_rows > 0 and l_cols > 0:
+            nrows, ncols = l_rows, l_cols
+        else:
+            nrows, ncols = self._auto_grid(len(figures))
+
+        # Render each figure to SVG and parse dimensions.
+        # Prefix all internal IDs per panel to avoid clashes when merging.
+        panel_svgs = []
+        for i, (label, fig) in enumerate(figures):
+            svg_bytes = self._fig_to_svg_bytes(fig)
+            svg_str = svg_bytes.decode('utf-8')
+
+            # Prefix all internal IDs to avoid collisions between panels.
+            # Must catch: id="X", url(#X), href="#X", xlink:href="#X"
+            prefix = f'p{i}_'
+            svg_str = re.sub(
+                r'\bid="([^"]+)"',
+                lambda m, _p=prefix: f'id="{_p}{m.group(1)}"',
+                svg_str)
+            svg_str = re.sub(
+                r'url\(#([^)]+)\)',
+                lambda m, _p=prefix: f'url(#{_p}{m.group(1)})',
+                svg_str)
+            svg_str = re.sub(
+                r'(xlink:)?href="#([^"]+)"',
+                lambda m, _p=prefix: f'href="#{_p}{m.group(2)}"',
+                svg_str)
+            # Remove xlink namespace usage — Qt SVG doesn't like it
+            svg_str = svg_str.replace('xlink:href=', 'href=')
+            svg_str = re.sub(r'\s*xmlns:xlink="[^"]*"', '', svg_str)
+
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(svg_str)
+            vb = root.get('viewBox')
+            if vb:
+                parts = vb.split()
+                vb_w, vb_h = float(parts[2]), float(parts[3])
+            else:
+                vb_w = float(root.get('width', '400').replace('pt', ''))
+                vb_h = float(root.get('height', '300').replace('pt', ''))
+            inner = ''.join(ET.tostring(child, encoding='unicode') for child in root)
+            # Clean any remaining xlink references from inner content
+            inner = inner.replace('xlink:href=', 'href=')
+            inner = re.sub(r'\s*xmlns:xlink="[^"]*"', '', inner)
+            panel_svgs.append({
+                'label': label, 'inner': inner,
+                'vb_w': vb_w, 'vb_h': vb_h,
+            })
+            self.set_progress(10 + int(60 * (i + 1) / len(figures)))
+
+        # Compose SVG
+        total_w = fig_w * 72
+        total_h = fig_h * 72
+        gap_x = total_w * spacing
+        gap_y = total_h * spacing
+        cell_w = (total_w - gap_x * max(ncols - 1, 0)) / ncols
+        cell_h = (total_h - gap_y * max(nrows - 1, 0)) / nrows
+
+        ns = 'http://www.w3.org/2000/svg'
+        svg_parts = [
+            f'<svg xmlns="{ns}" '
+            f'width="{total_w:.1f}" height="{total_h:.1f}" '
+            f'viewBox="0 0 {total_w:.1f} {total_h:.1f}">',
+            # White background
+            f'<rect width="{total_w:.1f}" height="{total_h:.1f}" fill="white"/>',
+        ]
+
+        for idx, panel in enumerate(panel_svgs):
+            if idx >= nrows * ncols:
+                break
+            row = idx // ncols
+            col = idx % ncols
+            x = col * (cell_w + gap_x)
+            y = row * (cell_h + gap_y)
+
+            # Scale panel to fit cell, preserving aspect ratio
+            scale_x = cell_w / panel['vb_w']
+            scale_y = cell_h / panel['vb_h']
+            scale = min(scale_x, scale_y)
+            offset_x = x + (cell_w - panel['vb_w'] * scale) / 2
+            offset_y = y + (cell_h - panel['vb_h'] * scale) / 2
+
+            svg_parts.append(
+                f'<g transform="translate({offset_x:.1f},{offset_y:.1f}) '
+                f'scale({scale:.6f})">'
+            )
+            svg_parts.append(panel['inner'])
+            svg_parts.append('</g>')
+
+            # Panel label
+            plabel = self._make_label(idx, label_style)
+            if plabel:
+                lx = x + label_px
+                ly = y + label_fs + label_py
+                svg_parts.append(
+                    f'<text x="{lx:.1f}" y="{ly:.1f}" '
+                    f'font-size="{label_fs:.0f}" font-weight="{label_fw}" '
+                    f'font-family="Arial, Helvetica, sans-serif" '
+                    f'fill="black">{plabel}</text>'
+                )
+
+        svg_parts.append('</svg>')
+        composed_svg = '\n'.join(svg_parts)
+
+        self.set_progress(90)
+
+        # Dummy matplotlib figure for the payload
+        import matplotlib.pyplot as _plt
+        dummy_fig, dummy_ax = _plt.subplots(figsize=(fig_w, fig_h))
+        dummy_ax.axis('off')
+        dummy_ax.text(0.5, 0.5, f'Multi-Panel ({len(figures)} panels)',
+                      ha='center', va='center', fontsize=12, color='gray')
+        _plt.close(dummy_fig)
+
+        self.output_values['figure'] = FigureData(
+            payload=dummy_fig,
+            svg_override=composed_svg.encode('utf-8'),
+        )
+        self.set_progress(100)
+        self.mark_clean()
+        return True, None
