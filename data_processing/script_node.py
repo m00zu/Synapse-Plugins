@@ -219,7 +219,7 @@ class PythonScriptNode(BaseExecutionNode):
         self.add_output('out_1', color=PORT_COLORS['any'])
 
         # Port count spinboxes
-        self._add_int_spinbox('n_inputs',  'Inputs',  value=1, min_val=0, max_val=8, step=1)
+        self._add_int_spinbox('n_inputs',  'Inputs',  value=1, min_val=1, max_val=8, step=1)
         self._add_int_spinbox('n_outputs', 'Outputs', value=1, min_val=1, max_val=8, step=1)
 
         # Code editor (add_custom_widget creates the property automatically)
