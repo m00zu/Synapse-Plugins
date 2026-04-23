@@ -69,7 +69,7 @@ def main():
 
     vendor_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Extracting {wheel_path.name} → {vendor_dir}/")
+    print(f"Extracting {wheel_path.name} -> {vendor_dir}/")
     with zipfile.ZipFile(wheel_path) as zf:
         members = zf.namelist()
         total   = len(members)
