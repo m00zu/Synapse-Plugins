@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    background: #1a1a2e;
+}
+#viewer {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+}
+</style>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="3Dmol-min.js"></script>
+</head>
+<body>
+<div id="viewer"></div>
+<script>
+// ── Viewer setup ────────────────────────────────────────────────────────────
+var viewer = $3Dmol.createViewer("viewer", {
+    backgroundColor: "0x1a1a2e",
+    antialias: true,
+    cartoonQuality: 8
+});
+
+// ── QWebChannel bridge (optional — only active when Python sets it up) ──────
+var bridge = null;
+if (typeof QWebChannel !== "undefined" && typeof qt !== "undefined") {
+    new QWebChannel(qt.webChannelTransport, function(channel) {
+        bridge = channel.objects.bridge;
+    });
+}
+
+// ── Click mode ──────────────────────────────────────────────────────────────
+var clickMode = "disable";  // "center", "flexible", "disable"
+
+function setClickMode(mode) {
+    clickMode = mode;
+}
+
+// ── Atom click handler ──────────────────────────────────────────────────────
+viewer.setClickable({}, true, function(atom, viewer, event, container) {
+    if (clickMode === "disable" || !bridge) return;
+    var data = JSON.stringify({
+        x: atom.x, y: atom.y, z: atom.z,
+        resn: atom.resn || "", resi: atom.resi || 0,
+        chain: atom.chain || "", atom: atom.atom || "",
+        elem: atom.elem || ""
+    });
+    bridge.onAtomClicked(data);
+});
+
+// ── Hover tooltip ───────────────────────────────────────────────────────────
+viewer.setHoverable({}, true,
+    function(atom, viewer, event, container) {
+        if (!atom.label) {
+            var text = (atom.chain || "") + ":" +
+                       (atom.resn || "") + (atom.resi || "") + "." +
+                       (atom.atom || "");
+            atom.label = viewer.addLabel(text, {
+                position: atom,
+                backgroundColor: "black",
+                backgroundOpacity: 0.75,
+                fontColor: "white",
+                fontSize: 11,
+                inFront: true
+            });
+        }
+    },
+    function(atom) {
+        if (atom.label) {
+            viewer.removeLabel(atom.label);
+            delete atom.label;
+        }
+    }
+);
+viewer.render();
+
+// ── Structure loading ───────────────────────────────────────────────────────
+function loadStructure(proteinPdb, ligandPdb) {
+    viewer.removeAllModels();
+    viewer.removeAllShapes();
+    centerShape = null;
+    boxShapes = [];
+    if (proteinPdb) {
+        var m1 = viewer.addModel(proteinPdb, "pdb");
+        viewer.setStyle({model: m1}, {cartoon: {color: "spectrum"}});
+    }
+    if (ligandPdb) {
+        var m2 = viewer.addModel(ligandPdb, "pdb");
+        viewer.setStyle({model: m2}, {stick: {radius: 0.15}});
+        viewer.addStyle({model: m2}, {sphere: {radius: 0.4, colorscheme: "default"}});
+    }
+    // Re-enable click/hover after new models loaded
+    viewer.setClickable({}, true, function(atom, viewer, event, container) {
+        if (clickMode === "disable" || !bridge) return;
+        var data = JSON.stringify({
+            x: atom.x, y: atom.y, z: atom.z,
+            resn: atom.resn || "", resi: atom.resi || 0,
+            chain: atom.chain || "", atom: atom.atom || "",
+            elem: atom.elem || ""
+        });
+        bridge.onAtomClicked(data);
+    });
+    viewer.setHoverable({}, true,
+        function(atom, viewer, event, container) {
+            if (!atom.label) {
+                var text = (atom.chain || "") + ":" +
+                           (atom.resn || "") + (atom.resi || "") + "." +
+                           (atom.atom || "");
+                atom.label = viewer.addLabel(text, {
+                    position: atom,
+                    backgroundColor: "black",
+                    backgroundOpacity: 0.75,
+                    fontColor: "white",
+                    fontSize: 11,
+                    inFront: true
+                });
+            }
+        },
+        function(atom) {
+            if (atom.label) {
+                viewer.removeLabel(atom.label);
+                delete atom.label;
+            }
+        }
+    );
+    viewer.zoomTo();
+    viewer.render();
+}
+
+// ── Shape drawing: center sphere + docking box ──────────────────────────────
+var centerShape = null;
+var boxShapes = [];
+
+function drawCenter(x, y, z) {
+    if (centerShape !== null) viewer.removeShape(centerShape);
+    centerShape = viewer.addSphere({
+        center: {x: x, y: y, z: z},
+        radius: 0.8,
+        color: "red",
+        opacity: 0.85
+    });
+    viewer.render();
+}
+
+function drawBox(cx, cy, cz, sx, sy, sz) {
+    // Remove old box shapes
+    for (var i = 0; i < boxShapes.length; i++) {
+        viewer.removeShape(boxShapes[i]);
+    }
+    boxShapes = [];
+    // Translucent fill
+    boxShapes.push(viewer.addBox({
+        center: {x: cx, y: cy, z: cz},
+        dimensions: {w: sx, h: sy, d: sz},
+        color: "yellow",
+        opacity: 0.12
+    }));
+    // Wireframe outline
+    boxShapes.push(viewer.addBox({
+        center: {x: cx, y: cy, z: cz},
+        dimensions: {w: sx, h: sy, d: sz},
+        color: "yellow",
+        opacity: 0.7,
+        wireframe: true
+    }));
+    viewer.render();
+}
+
+function clearShapes() {
+    if (centerShape !== null) {
+        viewer.removeShape(centerShape);
+        centerShape = null;
+    }
+    for (var i = 0; i < boxShapes.length; i++) {
+        viewer.removeShape(boxShapes[i]);
+    }
+    boxShapes = [];
+    viewer.render();
+}
+
+// ── Flexible residue highlighting ───────────────────────────────────────────
+function highlightResidue(chain, resi) {
+    var sel = {chain: chain, resi: resi};
+    viewer.addStyle(sel, {stick: {radius: 0.15, color: "cyan"}});
+    viewer.render();
+}
+
+// ── Style controls (unchanged) ──────────────────────────────────────────────
+function setProteinStyle(style) {
+    var models = viewer.getModel(0);
+    if (!models) return;
+    var spec = {};
+    if (style === "cartoon") spec = {cartoon: {color: "spectrum"}};
+    else if (style === "surface") spec = {surface: {opacity: 0.8, color: "white"}};
+    else if (style === "ribbon") spec = {cartoon: {style: "ribbon", color: "spectrum"}};
+    else if (style === "line") spec = {line: {colorscheme: "default"}};
+    else if (style === "stick") spec = {stick: {radius: 0.15, colorscheme: "default"}};
+    viewer.setStyle({model: 0}, spec);
+    viewer.render();
+}
+
+function setLigandStyle(style) {
+    var nModels = viewer.getNumFrames ? viewer.modelCount : 2;
+    if (nModels < 2) return;
+    var spec = {};
+    if (style === "stick") {
+        spec = {stick: {radius: 0.15}};
+        viewer.setStyle({model: 1}, spec);
+        viewer.addStyle({model: 1}, {sphere: {radius: 0.4, colorscheme: "default"}});
+    } else if (style === "sphere") {
+        spec = {sphere: {radius: 0.8, colorscheme: "default"}};
+        viewer.setStyle({model: 1}, spec);
+    } else if (style === "line") {
+        spec = {line: {colorscheme: "default"}};
+        viewer.setStyle({model: 1}, spec);
+    } else if (style === "ball_and_stick") {
+        viewer.setStyle({model: 1}, {stick: {radius: 0.1}});
+        viewer.addStyle({model: 1}, {sphere: {radius: 0.3, colorscheme: "default"}});
+    }
+    viewer.render();
+}
+
+function setBackground(hexColor) {
+    viewer.setBackgroundColor(hexColor);
+}
+
+function resetView() {
+    viewer.zoomTo();
+    viewer.render();
+}
+</script>
+</body>
+</html>

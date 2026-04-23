@@ -91,7 +91,7 @@ def _ensure_pdbfixer():
         _PDBxFile_cls = PDBxFile
     except ImportError as e:
         raise ImportError(
-            "Protein preparation requires PDBFixer and OpenMM.\n"
+            "Protein preparation requires and OpenMM.\n"
             "Install OpenMM:  pip install openmm\n"
             f"Original error: {e}"
         ) from e

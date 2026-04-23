@@ -355,34 +355,6 @@ class DrugCLIPModel:
     """
 
     DEFAULT_DIR = Path(__file__).parent / "data" / "drugclip"
-    MODELS_URL = "https://github.com/m00zu/Synapse-Plugins/releases/download/v0.1.0/drugclip_models.zip"
-
-    @classmethod
-    def _ensure_models(cls):
-        """Download DrugCLIP models if not present locally."""
-        if cls.DEFAULT_DIR.exists() and (cls.DEFAULT_DIR / "drugclip_mol.onnx").exists():
-            return
-        import requests, zipfile, io
-        print("DrugCLIP models not found. Downloading...")
-        resp = requests.get(cls.MODELS_URL, stream=True, allow_redirects=True)
-        resp.raise_for_status()
-        total = int(resp.headers.get('content-length', 0))
-        buf = io.BytesIO()
-        downloaded = 0
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):
-            buf.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                mb = downloaded / 1024 / 1024
-                total_mb = total / 1024 / 1024
-                print(f"\r  Downloading DrugCLIP models: {mb:.0f}/{total_mb:.0f} MB ({pct}%)", end="", flush=True)
-        print()
-        buf.seek(0)
-        cls.DEFAULT_DIR.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(buf) as zf:
-            zf.extractall(cls.DEFAULT_DIR.parent)
-        print(f"  Extracted to {cls.DEFAULT_DIR}")
 
     def __init__(
         self,
@@ -391,7 +363,6 @@ class DrugCLIPModel:
         logit_scale_path: Optional[str] = None,
         num_threads: int = 4,
     ):
-        self._ensure_models()
         import onnxruntime as ort
 
         d = self.DEFAULT_DIR

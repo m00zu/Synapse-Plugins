@@ -9,7 +9,8 @@ from __future__ import annotations
 import NodeGraphQt
 import numpy as np
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
+import os
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from pathlib import Path
 from PIL import Image
 from typing import Any
@@ -855,6 +856,157 @@ class MolReaderNode(BaseExecutionNode):
         self.mark_clean()
         self.set_progress(100)
         return True, f"{len(df)} molecule{'s' if len(df) != 1 else ''} loaded."
+
+
+# ── MolTable from tabular file (parallel SMILES parsing) ────────────────────
+
+def _parse_one_smiles(args):
+    """Worker for MolTableReaderNode — must be module-scope for pickling."""
+    idx, smi = args
+    if not smi:
+        return idx, None, None
+    try:
+        mol = Chem.MolFromSmiles(smi.strip())
+    except Exception:
+        return idx, None, None
+    if mol is None:
+        return idx, None, None
+    try:
+        canon = Chem.MolToSmiles(mol)
+    except Exception:
+        canon = smi
+    return idx, mol, canon
+
+
+class MolTableReaderNode(BaseExecutionNode):
+    """Read a tabular file and parse a SMILES column to a MolTable.
+
+    Supported formats: CSV, TSV, TXT, XLSX.  The user names which column
+    holds the identifier and which holds the SMILES.  SMILES are parsed
+    to RDKit Mols in parallel via a process pool.  Rows whose SMILES
+    fail to parse are dropped.
+
+    Keywords: moltable reader, csv, tsv, xlsx, smiles, parallel parse,
+              分子表, 並行解析
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.IO'
+    NODE_NAME      = 'MolTable Reader'
+    PORT_SPEC      = {'inputs': [], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        file_selector = NodeFileSelector(
+            self.view, name='file_path', label='File',
+            ext_filter='Tabular Files (*.csv *.tsv *.txt *.xlsx *.xls);;'
+                        'All Files (*)')
+        self.add_custom_widget(
+            file_selector,
+            widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value,
+            tab='Properties')
+        self.add_text_input('id_col',     'ID Column',     text='id')
+        self.add_text_input('smiles_col', 'SMILES Column', text='smiles')
+        self.add_text_input('delimiter',  'Delimiter',     text='auto')
+        self._add_int_spinbox(
+            'workers', 'Workers',
+            value=max(1, os.cpu_count() or 1),
+            min_val=1, max_val=64, step=1,
+        )
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+    def evaluate(self):
+        fpath = (self.get_property('file_path') or '').strip()
+        if not fpath:
+            return False, 'Select a tabular file.'
+        p = Path(fpath).expanduser()
+        if not p.is_file():
+            return False, f'File not found: {p}'
+
+        id_col = (self.get_property('id_col') or 'id').strip()
+        smi_col = (self.get_property('smiles_col') or 'smiles').strip()
+        if not id_col or not smi_col:
+            return False, 'ID Column and SMILES Column must both be set.'
+
+        self.set_progress(5)
+
+        # ── Load the table ───────────────────────────────────────────
+        delim_raw = (self.get_property('delimiter') or 'auto').strip().lower()
+        try:
+            ext = p.suffix.lower()
+            if ext in ('.xlsx', '.xls'):
+                df = pd.read_excel(p)
+            else:
+                if delim_raw in ('', 'auto'):
+                    sep = '\t' if ext == '.tsv' else ','
+                elif delim_raw in ('tab', r'\t'):
+                    sep = '\t'
+                else:
+                    sep = delim_raw
+                df = pd.read_csv(p, sep=sep)
+        except Exception as e:
+            return False, f'Failed to read file: {e}'
+
+        if id_col not in df.columns:
+            return False, (f"ID column '{id_col}' not found. "
+                            f"Columns: {list(df.columns)}")
+        if smi_col not in df.columns:
+            return False, (f"SMILES column '{smi_col}' not found. "
+                            f"Columns: {list(df.columns)}")
+
+        self.set_progress(15)
+        ids = df[id_col].astype(str).tolist()
+        smiles = df[smi_col].astype(str).tolist()
+        n = len(smiles)
+        if n == 0:
+            return False, 'File has no rows.'
+
+        # ── Parallel parse ───────────────────────────────────────────
+        workers = max(1, int(self.get_property('workers') or 1))
+        results: list[tuple[int, Any, str]] = []
+
+        if workers > 1 and n >= 200:
+            chunksize = max(1, min(500, n // (workers * 4) or 1))
+            try:
+                with ProcessPoolExecutor(max_workers=workers) as pool:
+                    done = 0
+                    for out in pool.map(_parse_one_smiles, enumerate(smiles),
+                                         chunksize=chunksize):
+                        results.append(out)
+                        done += 1
+                        if (done & 0x3FF) == 0:
+                            self.set_progress(15 + int(70 * done / n))
+            except Exception as e:
+                # Process pool can fail on frozen builds; fall back to serial.
+                self.set_progress(15)
+                results = [_parse_one_smiles((i, s))
+                            for i, s in enumerate(smiles)]
+        else:
+            results = [_parse_one_smiles((i, s))
+                        for i, s in enumerate(smiles)]
+
+        # ── Drop rows that failed to parse ───────────────────────────
+        good = [(ids[idx], mol, canon)
+                for (idx, mol, canon) in results
+                if mol is not None]
+        n_good = len(good)
+        n_bad = n - n_good
+        if n_good == 0:
+            return False, f'All {n} SMILES failed to parse.'
+
+        self.set_progress(90)
+        out_df = pd.DataFrame({
+            'name':   [g[0] for g in good],
+            'smiles': [g[2] for g in good],
+            'ROMol':  [g[1] for g in good],
+        })
+        self.output_values['mol_table'] = MolTableData(payload=out_df)
+        self.mark_clean()
+        self.set_progress(100)
+
+        msg = f'{n_good} molecule{"s" if n_good != 1 else ""} loaded'
+        if n_bad:
+            msg += f' ({n_bad} failed, dropped)'
+        return True, msg
 
 
 class BatchDescriptorsNode(BaseExecutionNode):

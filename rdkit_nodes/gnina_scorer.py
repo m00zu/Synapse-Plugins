@@ -806,36 +806,6 @@ class GNINAModel:
         "redock_default2018_KD":   [f"redock_default2018_KD_{i}.onnx" for i in ["1", "2", "3", "4", "5"]],
     }
 
-    # URL for auto-downloading model weights (GitHub Release or HuggingFace)
-    MODELS_URL = "https://github.com/m00zu/Synapse-Plugins/releases/download/v0.1.0/gnina_models.zip"
-
-    @classmethod
-    def _ensure_models(cls):
-        """Download GNINA models if not present locally."""
-        if cls.DEFAULT_MODELS_DIR.exists() and any(cls.DEFAULT_MODELS_DIR.glob("*.onnx")):
-            return
-        import requests, zipfile, io
-        print(f"GNINA models not found. Downloading...")
-        resp = requests.get(cls.MODELS_URL, stream=True, allow_redirects=True)
-        resp.raise_for_status()
-        total = int(resp.headers.get('content-length', 0))
-        buf = io.BytesIO()
-        downloaded = 0
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):
-            buf.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                mb = downloaded / 1024 / 1024
-                total_mb = total / 1024 / 1024
-                print(f"\r  Downloading GNINA models: {mb:.0f}/{total_mb:.0f} MB ({pct}%)", end="", flush=True)
-        print()
-        buf.seek(0)
-        cls.DEFAULT_MODELS_DIR.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(buf) as zf:
-            zf.extractall(cls.DEFAULT_MODELS_DIR.parent)
-        print(f"  Extracted to {cls.DEFAULT_MODELS_DIR}")
-
     def __init__(self, model_paths=None, ensemble=None):
         """Load one or more GNINA ONNX models.
 
@@ -845,8 +815,6 @@ class GNINAModel:
                       'crossdock_default2018_KD'). See GNINAModel.ENSEMBLES.
             If both are None, uses the default 3-model ensemble.
         """
-        self._ensure_models()
-
         if model_paths is None:
             if ensemble is not None:
                 if ensemble not in self.ENSEMBLES:

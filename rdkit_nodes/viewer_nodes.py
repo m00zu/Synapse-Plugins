@@ -1,9 +1,9 @@
 """
-viewer_nodes.py — 3D structure viewer node using 3Dmol.js + QWebEngineView.
+viewer_nodes.py — 3D structure viewer node using Mol* + QWebEngineView.
 
 Provides:
   - ViewerBridge           QObject bridge for JS↔Python communication
-  - Node3DViewerWidget     QWebEngineView widget with 3Dmol.js viewer
+  - Node3DViewerWidget     QWebEngineView widget with Mol* viewer
   - StructureViewerNode    Passive inline 3D molecular viewer
 """
 from __future__ import annotations
@@ -28,13 +28,12 @@ except ImportError:
 # ── Paths ────────────────────────────────────────────────────────────────────
 _VIEWER_DIR = Path(__file__).parent / 'viewer'
 _HTML_PATH = _VIEWER_DIR / 'viewer.html'
-_JS_PATH = _VIEWER_DIR / '3Dmol-min.js'
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _pdbqt_to_pdb_string(pdbqt_str: str) -> str:
-    """Convert PDBQT back to PDB format for 3Dmol.js display."""
+    """Convert PDBQT back to PDB format for Mol* display."""
     from .protein_utils import pdbqt_to_pdb
     _data, pdb_str = pdbqt_to_pdb(pdbqt_str)
     return pdb_str
@@ -63,7 +62,7 @@ def _extract_first_pose(multi_pdbqt: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ViewerBridge(QtCore.QObject):
-    """Bidirectional bridge between 3Dmol.js and Python via QWebChannel.
+    """Bidirectional bridge between Mol* and Python via QWebChannel.
 
     JavaScript calls ``bridge.onAtomClicked(jsonStr)`` when the user clicks
     an atom.  Python receives the data through the ``atom_clicked`` signal.
@@ -86,7 +85,7 @@ class ViewerBridge(QtCore.QObject):
 
 class Node3DViewerWidget(NodeBaseWidget):
     """
-    Embeds a QWebEngineView showing a 3Dmol.js molecular viewer.
+    Embeds a QWebEngineView showing a Mol* molecular viewer.
     Accepts dict data: {'protein_pdb': str, 'ligand_pdb': str}
 
     Optionally sets up a QWebChannel for bidirectional JS↔Python
@@ -129,12 +128,26 @@ class Node3DViewerWidget(NodeBaseWidget):
 
         # ── Optional QWebChannel for click handling ──────────────────
         self._bridge = None
-        if enable_bridge and self._has_webengine:
-            from PySide6.QtWebChannel import QWebChannel
-            self._bridge = ViewerBridge()
-            self._channel = QWebChannel()
-            self._channel.registerObject('bridge', self._bridge)
-            self._web.page().setWebChannel(self._channel)
+        if enable_bridge:
+            if not self._has_webengine:
+                print(
+                    "[rdkit_nodes] WARNING: enable_bridge=True but QtWebEngine is "
+                    "not available — atom-click dispatch will not work. "
+                    "Install PySide6-Addons to enable the 3D viewer bridge."
+                )
+            else:
+                try:
+                    from PySide6.QtWebChannel import QWebChannel
+                    self._bridge = ViewerBridge()
+                    self._channel = QWebChannel()
+                    self._channel.registerObject('bridge', self._bridge)
+                    self._web.page().setWebChannel(self._channel)
+                except Exception as e:
+                    print(
+                        f"[rdkit_nodes] WARNING: failed to construct QWebChannel "
+                        f"bridge — atom clicks will be silently dropped: {e}"
+                    )
+                    self._bridge = None
 
         self.set_custom_widget(self._container)
 
@@ -151,7 +164,7 @@ class Node3DViewerWidget(NodeBaseWidget):
             self._web = None
 
     def _load_viewer_html(self):
-        """Load viewer.html with the correct base URL so 3Dmol-min.js resolves."""
+        """Load viewer.html with the correct base URL so molstar.js/.css resolve."""
         if not self._has_webengine:
             return
         if not _HTML_PATH.exists():
@@ -217,11 +230,11 @@ class Node3DViewerWidget(NodeBaseWidget):
 class StructureViewerNode(BaseExecutionNode):
     """Interactive 3D molecular structure viewer.
 
-    Displays proteins as cartoon and ligands as ball-and-stick using 3Dmol.js.
+    Displays proteins as cartoon and ligands as ball-and-stick using Mol*.
     Connect any combination of protein, receptor, molecule, or docking result
     inputs to visualize the structure.
 
-    Keywords: 3D viewer, protein, ligand, structure, molecular viewer, 3Dmol,
+    Keywords: 3D viewer, protein, ligand, structure, molecular viewer, Mol*,
               cartoon, docking pose, complex, 蛋白質, 分子, 檢視器, 對接
     """
     __identifier__ = 'nodes.Cheminformatics.Viewer'
