@@ -77,10 +77,11 @@ jobs:
       - name: Install packaging tools
         run: pip install zstandard
 
-      - name: Download platform-specific wheels
+      - name: Install platform-specific wheels into vendor
+        shell: bash
         run: |
-          pip download onnxruntime --dest sam2_nodes/vendor/ --no-deps
-          pip download tokenizers --dest sam2_nodes/vendor/ --no-deps
+          pip install onnxruntime --no-deps --target=sam2_nodes/vendor/
+          pip install tokenizers --no-deps --target=sam2_nodes/vendor/
 
       - name: Package SAM2 plugin
         shell: bash
@@ -139,8 +140,13 @@ jobs:
           pip download rdkit --no-deps -d rdkit_wheels/
           python rdkit_nodes/setup_vendor.py $(find rdkit_wheels -name '*.whl')
 
-      - name: Download onnxruntime
-        run: pip download onnxruntime --dest rdkit_nodes/vendor/ --no-deps
+      - name: Install onnxruntime into vendor
+        shell: bash
+        run: pip install onnxruntime --no-deps --target=rdkit_nodes/vendor/
+
+      - name: Install OpenMM into vendor
+        shell: bash
+        run: pip install openmm --no-deps --target=rdkit_nodes/vendor/
 
       - name: Package RDKit plugin
         shell: bash

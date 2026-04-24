@@ -583,7 +583,7 @@ class ProteinPrepNode(BaseExecutionNode):
     def __init__(self):
         super().__init__()
         self._add_float_spinbox('ph', 'pH', value=7.0,
-                                min_val=0.0, max_val=14.0, step=0.5, decimals=1)
+                                min_val=0.0, max_val=14.0, step=0.1, decimals=1)
         self.add_checkbox('fix_missing', 'Fix Missing Atoms', state=True)
         self.add_checkbox('fill_gap', 'Fill Gaps', state=False)
         self.add_text_input('flex_residues', 'Flex Residues',
