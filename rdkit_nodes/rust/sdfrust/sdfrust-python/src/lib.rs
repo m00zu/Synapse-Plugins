@@ -156,6 +156,8 @@ fn _sdfrust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "numpy")]
     {
         m.add_function(wrap_pyfunction!(similarity::py_pairwise_similarity, m)?)?;
+        m.add_function(wrap_pyfunction!(similarity::py_pairwise_tanimoto_float, m)?)?;
+        m.add_function(wrap_pyfunction!(similarity::py_pairwise_hash_jaccard, m)?)?;
         m.add_function(wrap_pyfunction!(similarity::py_butina_cluster, m)?)?;
         m.add_function(wrap_pyfunction!(similarity::py_butina_cluster_tri, m)?)?;
         m.add_function(wrap_pyfunction!(similarity::py_butina_cluster_fps, m)?)?;

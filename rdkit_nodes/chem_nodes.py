@@ -10,7 +10,7 @@ import NodeGraphQt
 import numpy as np
 import pandas as pd
 import os
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from PIL import Image
 from typing import Any
@@ -18,17 +18,10 @@ from typing import Any
 from PySide6 import QtCore, QtGui, QtSvg
 from rdkit import Chem, DataStructs
 from rdkit.Chem.rdchem import Mol as RDMol
-from rdkit.Chem import AllChem, Descriptors, rdMolDescriptors, rdFingerprintGenerator
+from rdkit.Chem import AllChem, Descriptors, rdMolDescriptors
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Chem.Draw.rdMolDraw2D import SetDarkMode
 from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
-from rdkit.Chem.rdMolDescriptors import GetMACCSKeysFingerprint
-from rdkit.Chem.rdmolops import LayeredFingerprint, PatternFingerprint
-try:
-    from rdkit.Avalon.pyAvalonTools import GetAvalonFP as _GetAvalonFP
-    _HAS_AVALON = True
-except ImportError:
-    _HAS_AVALON = False
 import sdfrust
 
 from .meeko_ported import MoleculePreparation, PDBQTWriterLegacy
@@ -860,9 +853,8 @@ class MolReaderNode(BaseExecutionNode):
 
 # ── MolTable from tabular file (parallel SMILES parsing) ────────────────────
 
-def _parse_one_smiles(args):
-    """Worker for MolTableReaderNode — must be module-scope for pickling."""
-    idx, smi = args
+def _parse_one_smiles(idx, smi):
+    """Worker for MolTableReaderNode (threaded; RDKit releases the GIL)."""
     if not smi:
         return idx, None, None
     try:
@@ -960,29 +952,21 @@ class MolTableReaderNode(BaseExecutionNode):
         if n == 0:
             return False, 'File has no rows.'
 
-        # ── Parallel parse ───────────────────────────────────────────
+        # ── Parallel parse (threads; RDKit releases the GIL) ─────────
         workers = max(1, int(self.get_property('workers') or 1))
         results: list[tuple[int, Any, str]] = []
 
         if workers > 1 and n >= 200:
-            chunksize = max(1, min(500, n // (workers * 4) or 1))
-            try:
-                with ProcessPoolExecutor(max_workers=workers) as pool:
-                    done = 0
-                    for out in pool.map(_parse_one_smiles, enumerate(smiles),
-                                         chunksize=chunksize):
-                        results.append(out)
-                        done += 1
-                        if (done & 0x3FF) == 0:
-                            self.set_progress(15 + int(70 * done / n))
-            except Exception as e:
-                # Process pool can fail on frozen builds; fall back to serial.
-                self.set_progress(15)
-                results = [_parse_one_smiles((i, s))
-                            for i, s in enumerate(smiles)]
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                done = 0
+                for out in pool.map(_parse_one_smiles,
+                                     range(n), smiles, chunksize=200):
+                    results.append(out)
+                    done += 1
+                    if (done & 0x3FF) == 0:
+                        self.set_progress(15 + int(70 * done / n))
         else:
-            results = [_parse_one_smiles((i, s))
-                        for i, s in enumerate(smiles)]
+            results = [_parse_one_smiles(i, s) for i, s in enumerate(smiles)]
 
         # ── Drop rows that failed to parse ───────────────────────────
         good = [(ids[idx], mol, canon)
@@ -1924,28 +1908,14 @@ class BatchCatalogFilterNode(BaseExecutionNode):
 
 # ── Fingerprint helpers ──────────────────────────────────────────────────────
 
-_FP_GENERATORS = {
-    'Morgan':              lambda **kw: rdFingerprintGenerator.GetMorganGenerator(
-                               radius=kw.get('radius', 2), fpSize=kw.get('n_bits', 2048)),
-    'RDKit':               lambda **kw: rdFingerprintGenerator.GetRDKitFPGenerator(
-                               fpSize=kw.get('n_bits', 2048)),
-    'Topological Torsion': lambda **kw: rdFingerprintGenerator.GetTopologicalTorsionGenerator(
-                               fpSize=kw.get('n_bits', 2048)),
-    'Atom Pair':           lambda **kw: rdFingerprintGenerator.GetAtomPairGenerator(
-                               fpSize=kw.get('n_bits', 2048)),
-}
-
-_FP_NAMES = [
-    'Morgan', 'RDKit', 'Topological Torsion', 'Atom Pair',
-    'Layered', 'Pattern', 'MACCS',
-]
-if _HAS_AVALON:
-    _FP_NAMES.append('Avalon')
-
-_SIM_METRICS = [
-    'Tanimoto', 'Dice', 'Braun-Blanquet', 'Cosine', 'Kulczynski',
-    'McConnaughey', 'Rogot-Goldberg', 'Russel', 'Sokal', 'Tversky',
-]
+from .fingerprint_utils import (
+    FP_METHODS as _FP_NAMES,
+    SIMILARITY_METRICS as _SIM_METRICS,
+    FP_DEFAULTS,
+    default_settings as _default_fp_settings,
+    retrieve_fp_generator,
+    FingerprintParamsWidget,
+)
 
 # Crossover point: below this numpy float32 matmul is faster;
 # above this Rust packed-u64 + rayon wins.
@@ -1965,57 +1935,142 @@ def _pairwise_similarity(
     fp_matrix: np.ndarray,
     metric: str = 'tanimoto',
 ) -> np.ndarray:
-    """Dispatch to numpy (small N, Tanimoto) or Rust (large N / any metric)."""
+    """Dispatch to the kernel matching the fingerprint matrix dtype.
+
+    - ``bool``   → bit-vector popcount kernels (numpy Tanimoto for small N,
+                   sdfrust for everything else / non-Tanimoto metrics).
+    - ``float*`` → continuous Tanimoto (min/max) via ``sdfrust``.
+    - ``uint32`` → hash-Jaccard (fraction of matching positions) via ``sdfrust``.
+    """
     n = fp_matrix.shape[0]
+    dt = fp_matrix.dtype
     metric_low = metric.lower()
-    if n < _RUST_THRESHOLD and metric_low == 'tanimoto':
-        return _numpy_pairwise_tanimoto(fp_matrix)
-    return sdfrust.pairwise_similarity(fp_matrix, metric_low)
+
+    if dt == np.bool_:
+        if n < _RUST_THRESHOLD and metric_low == 'tanimoto':
+            return _numpy_pairwise_tanimoto(fp_matrix)
+        return sdfrust.pairwise_similarity(fp_matrix, metric_low)
+
+    if dt.kind == 'f':
+        # continuous Tanimoto ignores the metric selector; see node status line.
+        return sdfrust.pairwise_tanimoto_float(fp_matrix.astype(np.float64))
+
+    if dt == np.uint32:
+        return sdfrust.pairwise_hash_jaccard(fp_matrix)
+
+    raise TypeError(f"No similarity kernel for fingerprint dtype {dt}")
 
 
 def _compute_fp_matrix(
     mols: list[RDMol],
-    method: str = 'Morgan',
-    n_bits: int = 2048,
-    radius: int = 2,
+    settings: dict | None = None,
 ) -> np.ndarray:
-    """Compute (N, n_bits) boolean fingerprint matrix from RDKit Mol objects.
+    """Compute (N, fp_size) fingerprint matrix from RDKit Mol objects.
 
-    Returns a numpy bool array suitable for sdfrust.pairwise_similarity().
+    ``settings`` is a dict of the form ``{'method': str, 'params': {...}}``
+    produced by :class:`FingerprintParamsWidget`.  Falls back to Morgan
+    defaults if ``settings`` is None or missing.
+
+    dtype of the returned matrix is method-dependent:
+      - ``bool``   for bit-vector FPs (Morgan, RDKit, AtomPair, Torsion,
+                   Layered, Pattern, Avalon, MACCS, SECFP).
+      - ``float64`` for count-valued FPs (ErG).
+      - ``uint32`` for MinHash signature FPs (MHFP).
     """
-    gen_factory = _FP_GENERATORS.get(method)
+    if not settings:
+        settings = _default_fp_settings('Morgan')
+    gen_fn = retrieve_fp_generator(settings)
 
-    def _fp_to_numpy(fp) -> np.ndarray:
+    def _to_numpy(fp) -> np.ndarray:
+        if isinstance(fp, np.ndarray):
+            return fp
+        # RDKit ExplicitBitVect → bool array.
         arr = np.zeros(fp.GetNumBits(), dtype=np.uint8)
         DataStructs.ConvertToNumpyArray(fp, arr)
         return arr.astype(bool)
 
-    fps = []
+    fps: list[np.ndarray | None] = []
+    fp_size = 0
+    fp_dtype = None
     for mol in mols:
         if mol is None:
-            fps.append(np.zeros(n_bits, dtype=bool))
+            fps.append(None)
             continue
+        arr = _to_numpy(gen_fn(mol))
+        if fp_dtype is None:
+            fp_dtype = arr.dtype
+            fp_size = arr.size
+        fps.append(arr)
 
-        if gen_factory is not None:
-            # Generator-based FP types
-            gen = gen_factory(radius=radius, n_bits=n_bits)
-            fp = gen.GetFingerprint(mol)
-        elif method == 'Layered':
-            fp = LayeredFingerprint(mol, fpSize=n_bits)
-        elif method == 'Pattern':
-            fp = PatternFingerprint(mol, fpSize=n_bits)
-        elif method == 'MACCS':
-            fp = GetMACCSKeysFingerprint(mol)
-        elif method == 'Avalon' and _HAS_AVALON:
-            fp = _GetAvalonFP(mol, nBits=n_bits)
-        else:
-            # Fallback: Morgan
-            gen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=n_bits)
-            fp = gen.GetFingerprint(mol)
+    # All-None fallback: default to Morgan-sized bool vector.
+    if fp_dtype is None:
+        fp_dtype = np.bool_
+        fp_size = 2048
 
-        fps.append(_fp_to_numpy(fp))
-
+    fps = [f if f is not None else np.zeros(fp_size, dtype=fp_dtype) for f in fps]
     return np.stack(fps)
+
+
+# ── Fingerprint column node ──────────────────────────────────────────────────
+
+class FingerprintColumnNode(BaseExecutionNode):
+    """Add a fingerprint column to a MolTable, one numpy array per row.
+
+    The new column's dtype follows the chosen FP method (``bool`` for
+    bit-vector FPs, ``float64`` for ErG, ``uint32`` for MHFP).  Downstream
+    ML nodes can stack the column into an ``(N, D)`` feature matrix with
+    ``np.stack(df['fp'].tolist())``.
+
+    Keywords: fingerprint column, ML features
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Fingerprint'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self._fp_widget = FingerprintParamsWidget(
+            self.view, name='fp_settings', label='Fingerprint')
+        self.add_custom_widget(self._fp_widget)
+        self.add_text_input('column_name', 'Column Name', text='fingerprint')
+
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+    def evaluate(self):
+        in_port = self.inputs().get('mol_table')
+        if not (in_port and in_port.connected_ports()):
+            return False, "No mol_table connected."
+        src = in_port.connected_ports()[0]
+        val = src.node().output_values.get(src.name())
+        if not isinstance(val, MolTableData):
+            return False, "Expected MolTableData."
+
+        df = val.payload.copy()
+        mol_col = val.mol_col
+        n = len(df)
+        if n == 0:
+            return False, "Empty table."
+
+        fp_settings = self.get_property('fp_settings') or _default_fp_settings('Morgan')
+        method = fp_settings.get('method', 'Morgan')
+        col_name = (self.get_property('column_name') or 'fp').strip() or 'fp'
+
+        self.set_progress(10)
+        mols = df[mol_col].tolist()
+        fp_matrix = _compute_fp_matrix(mols, settings=fp_settings)
+        self.set_progress(85)
+
+        # Store one 1-D ndarray per row — object dtype column.
+        df[col_name] = list(fp_matrix)
+
+        self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
+        self.mark_clean()
+        self.set_progress(100)
+        d_str = str(fp_matrix.dtype)
+        return True, (f"Added '{col_name}' column "
+                      f"({n} × {fp_matrix.shape[1]} {d_str}, {method})")
 
 
 # ── Pairwise similarity node ─────────────────────────────────────────────────
@@ -2036,10 +2091,10 @@ class PairwiseSimilarityNode(BaseExecutionNode):
 
     def __init__(self):
         super().__init__()
-        self.add_combo_menu('fp_method', 'Fingerprint', items=_FP_NAMES)
+        self._fp_widget = FingerprintParamsWidget(
+            self.view, name='fp_settings', label='Fingerprint')
+        self.add_custom_widget(self._fp_widget)
         self.add_combo_menu('metric', 'Metric', items=_SIM_METRICS)
-        self._add_int_spinbox('n_bits', 'Bits', value=2048, min_val=64, max_val=16384)
-        self._add_int_spinbox('radius', 'Radius', value=2, min_val=1, max_val=6)
 
         self.add_input('mol_table', color=PORT_COLORS['mol_table'])
         self.add_output('table',    color=PORT_COLORS['table'])
@@ -2061,17 +2116,16 @@ class PairwiseSimilarityNode(BaseExecutionNode):
         if n > 10000:
             return False, f"Table has {n:,} rows — limit is 10 000 for pairwise similarity."
 
-        method = self.get_property('fp_method') or 'Morgan'
+        fp_settings = self.get_property('fp_settings') or _default_fp_settings('Morgan')
+        method = fp_settings.get('method', 'Morgan')
         metric = self.get_property('metric') or 'Tanimoto'
-        n_bits = int(self.get_property('n_bits') or 2048)
-        radius = int(self.get_property('radius') or 2)
 
         self.set_progress(10)
         mols = df[mol_col].tolist()
         names = df['name'].tolist() if 'name' in df.columns else [str(i) for i in range(n)]
 
         # Compute fingerprints (RDKit)
-        fp_matrix = _compute_fp_matrix(mols, method=method, n_bits=n_bits, radius=radius)
+        fp_matrix = _compute_fp_matrix(mols, settings=fp_settings)
         self.set_progress(40)
 
         # Pairwise similarity (Rust + rayon)
@@ -2104,10 +2158,10 @@ class SimilaritySearchNode(BaseExecutionNode):
 
     def __init__(self):
         super().__init__()
-        self.add_combo_menu('fp_method', 'Fingerprint', items=_FP_NAMES)
+        self._fp_widget = FingerprintParamsWidget(
+            self.view, name='fp_settings', label='Fingerprint')
+        self.add_custom_widget(self._fp_widget)
         self.add_combo_menu('metric', 'Metric', items=_SIM_METRICS)
-        self._add_int_spinbox('n_bits', 'Bits', value=2048, min_val=64, max_val=16384)
-        self._add_int_spinbox('radius', 'Radius', value=2, min_val=1, max_val=6)
         self._add_float_spinbox('min_sim', 'Min Similarity',
                                 value=0.0, min_val=0.0, max_val=1.0,
                                 step=0.05, decimals=3)
@@ -2141,17 +2195,16 @@ class SimilaritySearchNode(BaseExecutionNode):
         if n == 0:
             return False, "Empty table."
 
-        method = self.get_property('fp_method') or 'Morgan'
+        fp_settings = self.get_property('fp_settings') or _default_fp_settings('Morgan')
+        method = fp_settings.get('method', 'Morgan')
         metric = self.get_property('metric') or 'Tanimoto'
-        n_bits = int(self.get_property('n_bits') or 2048)
-        radius = int(self.get_property('radius') or 2)
         min_sim = float(self.get_property('min_sim') or 0.0)
 
         self.set_progress(10)
 
         # Compute fingerprints: query + all library mols
         all_mols = [q_val.payload] + df[mol_col].tolist()
-        fp_matrix = _compute_fp_matrix(all_mols, method=method, n_bits=n_bits, radius=radius)
+        fp_matrix = _compute_fp_matrix(all_mols, settings=fp_settings)
         self.set_progress(50)
 
         # Pairwise of query (row 0) vs all — only need first row
@@ -2192,12 +2245,12 @@ class ButinaClusterNode(BaseExecutionNode):
 
     def __init__(self):
         super().__init__()
-        self.add_combo_menu('fp_method', 'Fingerprint', items=_FP_NAMES)
+        self._fp_widget = FingerprintParamsWidget(
+            self.view, name='fp_settings', label='Fingerprint')
+        self.add_custom_widget(self._fp_widget)
         self.add_combo_menu('metric', 'Metric', items=_SIM_METRICS)
         self.add_combo_menu('cluster_method', 'Cluster Method',
                             items=self._CLUSTER_METHODS)
-        self._add_int_spinbox('n_bits', 'Bits', value=2048, min_val=64, max_val=16384)
-        self._add_int_spinbox('radius', 'Radius', value=2, min_val=1, max_val=6)
         self._add_float_spinbox('threshold', 'Similarity Threshold',
                                 value=0.35, min_val=0.0, max_val=1.0,
                                 step=0.05, decimals=3)
@@ -2220,10 +2273,9 @@ class ButinaClusterNode(BaseExecutionNode):
         if n == 0:
             return False, "Empty table."
 
-        method    = self.get_property('fp_method') or 'Morgan'
+        fp_settings = self.get_property('fp_settings') or _default_fp_settings('Morgan')
+        method    = fp_settings.get('method', 'Morgan')
         metric    = self.get_property('metric') or 'Tanimoto'
-        n_bits    = int(self.get_property('n_bits') or 2048)
-        radius    = int(self.get_property('radius') or 2)
         threshold = float(self.get_property('threshold') or 0.35)
         cluster_method = self.get_property('cluster_method') or 'Auto'
         metric_low = metric.lower()
@@ -2248,8 +2300,13 @@ class ButinaClusterNode(BaseExecutionNode):
         mols = df[mol_col].tolist()
 
         # Fingerprints (RDKit)
-        fp_matrix = _compute_fp_matrix(mols, method=method, n_bits=n_bits, radius=radius)
+        fp_matrix = _compute_fp_matrix(mols, settings=fp_settings)
         self.set_progress(30)
+
+        # butina_cluster_fps only supports bit-vector fingerprints; force
+        # matrix path for count-valued (ErG) and hash-sig (MHFP) FPs.
+        if use_fps and fp_matrix.dtype != np.bool_:
+            use_fps = False
 
         if use_fps:
             # Cluster directly from fingerprints — no NxN matrix

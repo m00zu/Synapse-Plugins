@@ -96,6 +96,8 @@ from sdfrust._sdfrust import (
     gzip_enabled,
     # Similarity functions
     pairwise_similarity,
+    pairwise_tanimoto_float,
+    pairwise_hash_jaccard,
     butina_cluster,
     butina_cluster_tri,
     butina_cluster_fps,
@@ -174,6 +176,8 @@ __all__ = [
     "gzip_enabled",
     # Similarity functions
     "pairwise_similarity",
+    "pairwise_tanimoto_float",
+    "pairwise_hash_jaccard",
     "butina_cluster",
     "butina_cluster_tri",
     "butina_cluster_fps",

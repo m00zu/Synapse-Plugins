@@ -392,6 +392,184 @@ pub fn py_butina_cluster_tri<'py>(
     Ok(PyArray1::from_vec(py, labels))
 }
 
+// ── Non-bit kernels: continuous Tanimoto (f64) and hash Jaccard (u32) ────────
+
+/// Compute an NxN pairwise continuous Tanimoto similarity matrix from a
+/// real-valued fingerprint matrix. Intended for fingerprints whose positions
+/// are non-negative counts/weights (e.g. ErG's 315-dim feature-pair vector).
+///
+/// ``sim(A, B) = Σ min(A_i, B_i) / Σ max(A_i, B_i)`` — the natural real-valued
+/// generalisation of the Jaccard/Tanimoto coefficient.  Pairs whose combined
+/// Σ max is zero (both vectors all-zero) return 0.0.
+///
+/// Args:
+///     fingerprints: 2-D float64 numpy array of shape ``(N, D)``.
+///
+/// Returns:
+///     2-D float64 numpy array of shape ``(N, N)``.
+#[cfg(feature = "numpy")]
+#[pyfunction]
+#[pyo3(name = "pairwise_tanimoto_float", signature = (fingerprints))]
+pub fn py_pairwise_tanimoto_float<'py>(
+    py: Python<'py>,
+    fingerprints: &Bound<'py, PyArray2<f64>>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let readonly = fingerprints.readonly();
+    let arr = readonly.as_array();
+    let n = arr.nrows();
+    let d = arr.ncols();
+
+    // Flatten to a contiguous row-major Vec for cache-friendly access in the
+    // rayon worker (avoids the generic-ndarray indexing overhead).
+    let flat: Vec<f64> = arr.iter().copied().collect();
+
+    let result: Vec<Vec<f64>> = py.allow_threads(|| {
+        #[cfg(feature = "rayon")]
+        let result: Vec<Vec<f64>> = {
+            use rayon::prelude::*;
+            (0..n)
+                .into_par_iter()
+                .map(|i| {
+                    let row_i = &flat[i * d..(i + 1) * d];
+                    (0..n)
+                        .map(|j| {
+                            if i == j {
+                                1.0
+                            } else {
+                                let row_j = &flat[j * d..(j + 1) * d];
+                                let mut smin = 0.0;
+                                let mut smax = 0.0;
+                                for k in 0..d {
+                                    let a = row_i[k];
+                                    let b = row_j[k];
+                                    if a < b {
+                                        smin += a;
+                                        smax += b;
+                                    } else {
+                                        smin += b;
+                                        smax += a;
+                                    }
+                                }
+                                if smax > 0.0 { smin / smax } else { 0.0 }
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let result: Vec<Vec<f64>> = (0..n)
+            .map(|i| {
+                let row_i = &flat[i * d..(i + 1) * d];
+                (0..n)
+                    .map(|j| {
+                        if i == j {
+                            1.0
+                        } else {
+                            let row_j = &flat[j * d..(j + 1) * d];
+                            let mut smin = 0.0;
+                            let mut smax = 0.0;
+                            for k in 0..d {
+                                let a = row_i[k];
+                                let b = row_j[k];
+                                if a < b { smin += a; smax += b; }
+                                else    { smin += b; smax += a; }
+                            }
+                            if smax > 0.0 { smin / smax } else { 0.0 }
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        result
+    });
+
+    PyArray2::from_vec2(py, &result).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// Compute an NxN pairwise hash-Jaccard similarity matrix from MinHash
+/// signatures. Each row of ``signatures`` is an ``n_perm``-long array of u32
+/// hash values (e.g. MHFP6 output).
+///
+/// ``sim(A, B) = (# positions where A[i] == B[i]) / n_perm`` — an unbiased
+/// estimator of the Jaccard index ``|S_A ∩ S_B| / |S_A ∪ S_B|`` over the
+/// underlying substructure (shingle) sets.
+///
+/// Args:
+///     signatures: 2-D uint32 numpy array of shape ``(N, n_perm)``.
+///
+/// Returns:
+///     2-D float64 numpy array of shape ``(N, N)``.
+#[cfg(feature = "numpy")]
+#[pyfunction]
+#[pyo3(name = "pairwise_hash_jaccard", signature = (signatures))]
+pub fn py_pairwise_hash_jaccard<'py>(
+    py: Python<'py>,
+    signatures: &Bound<'py, PyArray2<u32>>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let readonly = signatures.readonly();
+    let arr = readonly.as_array();
+    let n = arr.nrows();
+    let d = arr.ncols();
+    let d_f = d as f64;
+
+    let flat: Vec<u32> = arr.iter().copied().collect();
+
+    let result: Vec<Vec<f64>> = py.allow_threads(|| {
+        #[cfg(feature = "rayon")]
+        let result: Vec<Vec<f64>> = {
+            use rayon::prelude::*;
+            (0..n)
+                .into_par_iter()
+                .map(|i| {
+                    let row_i = &flat[i * d..(i + 1) * d];
+                    (0..n)
+                        .map(|j| {
+                            if i == j {
+                                1.0
+                            } else {
+                                let row_j = &flat[j * d..(j + 1) * d];
+                                let mut eq: u32 = 0;
+                                for k in 0..d {
+                                    eq += (row_i[k] == row_j[k]) as u32;
+                                }
+                                eq as f64 / d_f
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let result: Vec<Vec<f64>> = (0..n)
+            .map(|i| {
+                let row_i = &flat[i * d..(i + 1) * d];
+                (0..n)
+                    .map(|j| {
+                        if i == j {
+                            1.0
+                        } else {
+                            let row_j = &flat[j * d..(j + 1) * d];
+                            let mut eq: u32 = 0;
+                            for k in 0..d {
+                                eq += (row_i[k] == row_j[k]) as u32;
+                            }
+                            eq as f64 / d_f
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        result
+    });
+
+    PyArray2::from_vec2(py, &result).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// Taylor–Butina clustering directly from boolean fingerprints.
 ///
 /// Computes similarities on-the-fly — never materialises the full
