@@ -34,5 +34,9 @@
     "report_nodes": {
         "name": "AI Report",
         "description": "Create a simple scientific report with AI"
+    },
+    "sklearn_nodes": {
+        "name": "Machine Learning",
+        "description": "Train and test basic machine learning models with sklearn & xgboost"
     }
 }

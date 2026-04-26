@@ -1,0 +1,13 @@
+[package]
+name = "umap-py"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "umap_rs_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+umap-rs = { path = "../umap-rs" }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.28"

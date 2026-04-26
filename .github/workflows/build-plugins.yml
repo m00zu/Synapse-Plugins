@@ -17,6 +17,10 @@ on:
         description: 'Build rdkit plugin'
         type: boolean
         default: false
+      build_sklearn:
+        description: 'Build sklearn plugin'
+        type: boolean
+        default: false
       tag:
         description: 'Release tag (e.g. plugins-v0.1.1)'
         type: string
@@ -151,6 +155,78 @@ jobs:
       - name: Package RDKit plugin
         shell: bash
         run: mkdir -p dist && python package_plugin.py rdkit_nodes -o dist/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/*.synpkg
+
+  # ── sklearn / ML plugin (platform-specific pip wheels) ──────────────────
+  sklearn:
+    if: github.event_name == 'push' || inputs.build_sklearn
+    strategy:
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-latest]
+        python: ['3.13', '3.14']
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install packaging tools
+        run: pip install maturin zstandard
+
+      # Build umap-rs-py (Rust UMAP + KNN) and install into vendor/
+      - name: Build umap-rs-py
+        working-directory: sklearn_nodes/rust/umap-rs/umap-py
+        run: maturin build --release
+
+      - name: Install umap-rs-py into vendor
+        shell: bash
+        run: pip install $(find sklearn_nodes/rust/umap-rs/target/wheels -name '*.whl') --target=sklearn_nodes/vendor/
+
+      # Vendored ML packages — `--no-deps` so we don't drag a second numpy /
+      # scipy / pandas into vendor/.  Those four are expected to already be
+      # present in the Synapse runtime.  joblib + threadpoolctl are sklearn's
+      # only required runtime deps that aren't already present.
+      - name: Install scikit-learn into vendor
+        shell: bash
+        run: pip install scikit-learn --no-deps --target=sklearn_nodes/vendor/
+
+      - name: Install joblib + threadpoolctl into vendor
+        shell: bash
+        run: |
+          pip install joblib --no-deps --target=sklearn_nodes/vendor/
+          pip install threadpoolctl --no-deps --target=sklearn_nodes/vendor/
+
+      - name: Install xgboost into vendor
+        shell: bash
+        run: pip install xgboost --no-deps --target=sklearn_nodes/vendor/
+
+      - name: Install shap into vendor
+        shell: bash
+        run: pip install shap --no-deps --target=sklearn_nodes/vendor/
+
+      - name: Install slicer into vendor (shap dependency)
+        shell: bash
+        run: pip install slicer --no-deps --target=sklearn_nodes/vendor/
+
+      - name: Install cloudpickle into vendor (shap dependency)
+        shell: bash
+        run: pip install cloudpickle --no-deps --target=sklearn_nodes/vendor/
+
+      - name: Package sklearn plugin
+        shell: bash
+        run: mkdir -p dist && python package_plugin.py sklearn_nodes -o dist/
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
