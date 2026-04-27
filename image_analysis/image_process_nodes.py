@@ -56,7 +56,7 @@ class BitDepthConvertNode(BaseExecutionNode):
         target = int(self.get_property('target_depth') or 8)
         self.set_progress(50)
 
-        kwargs = {f: getattr(img_data, f, None) for f in img_data.model_fields if f != 'payload'}
+        kwargs = {f: getattr(img_data, f, None) for f in type(img_data).model_fields if f != 'payload'}
         kwargs['bit_depth'] = target
         self.output_values['image'] = ImageData(payload=img_data.payload, **kwargs)
         self.mark_clean()
@@ -122,7 +122,7 @@ class SetScaleNode(BaseExecutionNode):
             return False, "Scale must be > 0"
         self.set_progress(60)
 
-        kwargs = {f: getattr(img_data, f, None) for f in img_data.model_fields if f != 'payload'}
+        kwargs = {f: getattr(img_data, f, None) for f in type(img_data).model_fields if f != 'payload'}
         kwargs['scale_um'] = um_per_px
         self.output_values['image'] = ImageData(payload=img_data.payload, **kwargs)
         self.mark_clean()
@@ -1578,7 +1578,7 @@ class BrightnessContrastNode(BaseImageProcessNode):
             out = np.clip((arr.astype(np.float32) - lo) / width, 0.0, 1.0).astype(np.float32)
             upstream = self._get_input_image_data()
             if upstream:
-                kwargs = {f: getattr(upstream, f, None) for f in upstream.model_fields if f != 'payload'}
+                kwargs = {f: getattr(upstream, f, None) for f in type(upstream).model_fields if f != 'payload'}
                 return ImageData(payload=out, **kwargs)
             return ImageData(payload=out)
         except Exception:
@@ -1965,26 +1965,31 @@ class BinaryThresholdNode(BaseImageProcessNode):
     - *Below (pixel <= T)* — selected pixels are darker than the threshold
     - *Auto (Otsu)* — automatically finds the optimal threshold using Otsu's method
     - *Auto Otsu per image* — re-computes Otsu for every new input image (useful for batch workflows with varying brightness)
+    - *Apply to image (display)* — when checked the on-node preview shows the input image with mask applied; otherwise it shows the binary mask. Display only — the `masked_image` output port is always populated.
 
-    Output is binary MaskData (255 = selected, 0 = not selected).
+    Outputs:
+    - `mask` — binary MaskData (255 = selected, 0 = not selected)
+    - `masked_image` — input image with mask applied (black outside)
 
     Keywords: threshold, binary, Otsu, segmentation, foreground, 閾值, 二值化, 分割, 影像處理, 前景
     """
     __identifier__ = 'nodes.image_process.filter'
     NODE_NAME      = 'Binary Threshold'
-    PORT_SPEC      = {'inputs': ['image'], 'outputs': ['mask']}
+    PORT_SPEC      = {'inputs': ['image'], 'outputs': ['mask', 'image']}
     _UI_PROPS = BaseImageProcessNode._UI_PROPS | frozenset(
-        {'thresh_state', 'thresh_widget', 'auto_otsu_per_image'}
+        {'thresh_state', 'thresh_widget', 'auto_otsu_per_image', 'apply_to_image'}
     )
     PROP_DESCRIPTIONS = {
         'thresh_state':        '[threshold, direction] — 1=keep pixels > threshold (strictly above), 0=keep pixels <= threshold (below or equal)',
         'auto_otsu_per_image': 'set to false when using an explicit thresh_state value; default true overrides manual threshold',
+        'apply_to_image':      'true = preview shows masked input image; false = preview shows the binary mask. Display only — masked_image output is always produced.',
     }
 
     def __init__(self):
         super().__init__()
         self.add_input('image', color=PORT_COLORS['image'])
         self.add_output('mask', multi_output=True, color=PORT_COLORS['mask'])
+        self.add_output('masked_image', multi_output=True, color=PORT_COLORS['image'])
 
         self.create_property('thresh_state',    [128.0, 1])  # [threshold, above]
         self.create_property('thresh_colormap', 'gray')
@@ -1994,9 +1999,12 @@ class BinaryThresholdNode(BaseImageProcessNode):
         self._thresh_widget.inner.threshold_changed.connect(self._on_thresh_changed)
         self._thresh_widget.inner.colormap_changed.connect(self._on_colormap_changed)
         self.add_checkbox('auto_otsu_per_image', '', text='Auto Otsu per image', state=True)
+        self.add_checkbox('apply_to_image', '', text='Apply to image (display)', state=False)
 
         self.create_preview_widgets()
         self._cached_arr = None
+        self._cached_bit_depth = 8
+        self._cached_scale_um = None
 
     # ── Live drag callback ────────────────────────────────────────────────────
 
@@ -2010,6 +2018,13 @@ class BinaryThresholdNode(BaseImageProcessNode):
                 self._thresh_widget.inner.set_threshold(float(value[0]), bool(value[1]))
             except Exception:
                 pass
+        # Refresh preview immediately when apply_to_image toggles —
+        # output ports are unchanged so no downstream re-eval needed.
+        elif name == 'apply_to_image' and self._cached_arr is not None:
+            mask_data = self.output_values.get('mask')
+            if mask_data is not None and hasattr(mask_data, 'payload'):
+                self._update_preview_direct(self._build_display(
+                    self._cached_arr, mask_data.payload))
 
     def _on_thresh_changed(self, value, above):
         super(BaseExecutionNode, self).set_property(
@@ -2018,7 +2033,10 @@ class BinaryThresholdNode(BaseImageProcessNode):
             result = self._apply_threshold(self._cached_arr, value, above)
             if result is not None:
                 self.output_values['mask'] = result
-                self._update_preview_direct(result.payload)
+                self.output_values['masked_image'] = self._build_masked_image(
+                    self._cached_arr, result.payload)
+                self._update_preview_direct(self._build_display(
+                    self._cached_arr, result.payload))
                 # Propagate dirty to downstream nodes so they re-evaluate
                 for out_port in self.outputs().values():
                     for in_port in out_port.connected_ports():
@@ -2060,6 +2078,7 @@ class BinaryThresholdNode(BaseImageProcessNode):
         arr = data.payload
         self._cached_arr = arr
         self._cached_bit_depth = getattr(data, 'bit_depth', 8) or 8
+        self._cached_scale_um = getattr(data, 'scale_um', None)
         self.set_progress(20)
         is_main_thread = threading.current_thread() is threading.main_thread()
 
@@ -2095,11 +2114,48 @@ class BinaryThresholdNode(BaseImageProcessNode):
             return False, 'Processing failed'
 
         self.output_values['mask'] = result
-        self.set_display(result.payload)
+        self.output_values['masked_image'] = self._build_masked_image(arr, result.payload)
+        self.set_display(self._build_display(arr, result.payload))
         self.set_progress(100)
         return True, None
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _build_masked_image(self, arr, mask_u8):
+        """Apply binary mask to the input image. Always produced regardless of
+        the apply_to_image display toggle — that toggle only affects preview.
+        """
+        try:
+            base_f = arr.astype(np.float32)
+            if base_f.max() > 1.0001:
+                base_f = base_f / 255.0
+            mask_bool = mask_u8.astype(bool)
+            if base_f.ndim == 3:
+                masked = base_f * mask_bool[:, :, None]
+            else:
+                masked = base_f * mask_bool
+            return ImageData(
+                payload=np.clip(masked, 0.0, 1.0),
+                bit_depth=getattr(self, '_cached_bit_depth', 8),
+                scale_um=getattr(self, '_cached_scale_um', None),
+            )
+        except Exception:
+            return None
+
+    def _build_display(self, arr, mask_u8):
+        """Choose preview content based on the apply_to_image checkbox."""
+        if not bool(self.get_property('apply_to_image')):
+            return mask_u8
+        try:
+            base_f = arr.astype(np.float32)
+            if base_f.max() > 1.0001:
+                base_f = base_f / 255.0
+            mask_bool = mask_u8.astype(bool)
+            if base_f.ndim == 3:
+                return np.clip(base_f * mask_bool[:, :, None], 0.0, 1.0)
+            return np.clip(base_f * mask_bool, 0.0, 1.0)
+        except Exception:
+            return mask_u8
 
     def _apply_threshold(self, arr, thresh, above):
         """Threshold on luminance; thresh is in original bit-depth scale."""
