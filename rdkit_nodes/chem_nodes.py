@@ -13,7 +13,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from PIL import Image
-from typing import Any
+from typing import Any, Callable
 
 from PySide6 import QtCore, QtGui, QtSvg
 from rdkit import Chem, DataStructs
@@ -878,6 +878,13 @@ class MolTableReaderNode(BaseExecutionNode):
     to RDKit Mols in parallel via a process pool.  Rows whose SMILES
     fail to parse are dropped.
 
+    If **ID Column** is left blank (or the named column is missing),
+    identifiers are auto-generated as ``Mol_1``, ``Mol_2``, ....
+
+    **Property Columns** is a comma-separated list of extra columns to
+    carry through onto the MolTable (e.g. ``activity, pIC50``).  Leave
+    blank to skip.
+
     Keywords: moltable reader, csv, tsv, xlsx, smiles, parallel parse,
               分子表, 並行解析
     """
@@ -896,8 +903,9 @@ class MolTableReaderNode(BaseExecutionNode):
             file_selector,
             widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value,
             tab='Properties')
-        self.add_text_input('id_col',     'ID Column',     text='id')
+        self.add_text_input('id_col',     'ID Column (blank=auto)', text='id')
         self.add_text_input('smiles_col', 'SMILES Column', text='smiles')
+        self.add_text_input('props',      'Property Columns', text='')
         self.add_text_input('delimiter',  'Delimiter',     text='auto')
         self._add_int_spinbox(
             'workers', 'Workers',
@@ -914,10 +922,14 @@ class MolTableReaderNode(BaseExecutionNode):
         if not p.is_file():
             return False, f'File not found: {p}'
 
-        id_col = (self.get_property('id_col') or 'id').strip()
+        id_col = (self.get_property('id_col') or '').strip()
         smi_col = (self.get_property('smiles_col') or 'smiles').strip()
-        if not id_col or not smi_col:
-            return False, 'ID Column and SMILES Column must both be set.'
+        if not smi_col:
+            return False, 'SMILES Column must be set.'
+
+        props_raw = (self.get_property('props') or '').strip()
+        prop_cols = [c.strip() for c in props_raw.split(',') if c.strip()] \
+            if props_raw else []
 
         self.set_progress(5)
 
@@ -938,19 +950,24 @@ class MolTableReaderNode(BaseExecutionNode):
         except Exception as e:
             return False, f'Failed to read file: {e}'
 
-        if id_col not in df.columns:
-            return False, (f"ID column '{id_col}' not found. "
-                            f"Columns: {list(df.columns)}")
         if smi_col not in df.columns:
             return False, (f"SMILES column '{smi_col}' not found. "
                             f"Columns: {list(df.columns)}")
+        missing_props = [c for c in prop_cols if c not in df.columns]
+        if missing_props:
+            return False, (f"Property column(s) not found: {missing_props}. "
+                            f"Columns: {list(df.columns)}")
 
         self.set_progress(15)
-        ids = df[id_col].astype(str).tolist()
         smiles = df[smi_col].astype(str).tolist()
         n = len(smiles)
         if n == 0:
             return False, 'File has no rows.'
+
+        if id_col and id_col in df.columns:
+            ids = df[id_col].astype(str).tolist()
+        else:
+            ids = [f'Mol_{i + 1}' for i in range(n)]
 
         # ── Parallel parse (threads; RDKit releases the GIL) ─────────
         workers = max(1, int(self.get_property('workers') or 1))
@@ -969,7 +986,7 @@ class MolTableReaderNode(BaseExecutionNode):
             results = [_parse_one_smiles(i, s) for i, s in enumerate(smiles)]
 
         # ── Drop rows that failed to parse ───────────────────────────
-        good = [(ids[idx], mol, canon)
+        good = [(idx, ids[idx], mol, canon)
                 for (idx, mol, canon) in results
                 if mol is not None]
         n_good = len(good)
@@ -978,16 +995,140 @@ class MolTableReaderNode(BaseExecutionNode):
             return False, f'All {n} SMILES failed to parse.'
 
         self.set_progress(90)
-        out_df = pd.DataFrame({
-            'name':   [g[0] for g in good],
-            'smiles': [g[2] for g in good],
-            'ROMol':  [g[1] for g in good],
-        })
+        good_idx = [g[0] for g in good]
+        out_data: dict[str, list] = {
+            'name':   [g[1] for g in good],
+            'smiles': [g[3] for g in good],
+            'ROMol':  [g[2] for g in good],
+        }
+        for c in prop_cols:
+            out_data[c] = df[c].iloc[good_idx].tolist()
+        out_df = pd.DataFrame(out_data)
         self.output_values['mol_table'] = MolTableData(payload=out_df)
         self.mark_clean()
         self.set_progress(100)
 
         msg = f'{n_good} molecule{"s" if n_good != 1 else ""} loaded'
+        if n_bad:
+            msg += f' ({n_bad} failed, dropped)'
+        return True, msg
+
+
+class DataFrameToMolTableNode(BaseExecutionNode):
+    """Convert a TableData (DataFrame) to a MolTable by parsing a SMILES column.
+
+    Mirrors the behaviour of *MolTable Reader*, but reads from an upstream
+    table port rather than a file.
+
+    If **ID Column** is left blank (or the named column is missing),
+    identifiers are auto-generated as ``Mol_1``, ``Mol_2``, ....
+
+    **Property Columns** is a comma-separated list of extra columns to
+    carry through (e.g. ``activity, pIC50``).  Leave blank to skip.
+
+    Keywords: dataframe, table, moltable, smiles, parse
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Convert'
+    NODE_NAME      = 'Table to MolTable'
+    PORT_SPEC      = {'inputs': ['table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('table', color=PORT_COLORS['table'])
+        self._add_column_selector('id_col', label='ID Column (blank=auto)',
+                                   text='id', mode='single')
+        self._add_column_selector('smiles_col', label='SMILES Column',
+                                   text='smiles', mode='single')
+        self._add_column_selector('props', label='Property Columns',
+                                   text='', mode='multi')
+        self._add_int_spinbox(
+            'workers', 'Workers',
+            value=max(1, os.cpu_count() or 1),
+            min_val=1, max_val=64, step=1,
+        )
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+    def _get_input_df(self):
+        port = self.inputs().get('table')
+        if not port or not port.connected_ports():
+            return None
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if isinstance(data, TableData):
+            return data.df
+        return None
+
+    def evaluate(self):
+        df_in = self._get_input_df()
+        if df_in is None:
+            return False, 'No table connected.'
+
+        id_col = (self.get_property('id_col') or '').strip()
+        smi_col = (self.get_property('smiles_col') or 'smiles').strip()
+        if not smi_col:
+            return False, 'SMILES Column must be set.'
+
+        if smi_col not in df_in.columns:
+            return False, (f"SMILES column '{smi_col}' not found. "
+                            f"Columns: {list(df_in.columns)}")
+
+        props_raw = (self.get_property('props') or '').strip()
+        prop_cols = [c.strip() for c in props_raw.split(',') if c.strip()] \
+            if props_raw else []
+        missing = [c for c in prop_cols if c not in df_in.columns]
+        if missing:
+            return False, (f"Property column(s) not found: {missing}. "
+                            f"Columns: {list(df_in.columns)}")
+
+        self.set_progress(10)
+        smiles = df_in[smi_col].astype(str).tolist()
+        n = len(smiles)
+        if n == 0:
+            return False, 'Input table has no rows.'
+
+        if id_col and id_col in df_in.columns:
+            ids = df_in[id_col].astype(str).tolist()
+        else:
+            ids = [f'Mol_{i + 1}' for i in range(n)]
+
+        workers = max(1, int(self.get_property('workers') or 1))
+        results: list[tuple[int, Any, str]] = []
+        if workers > 1 and n >= 200:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                done = 0
+                for out in pool.map(_parse_one_smiles,
+                                     range(n), smiles, chunksize=200):
+                    results.append(out)
+                    done += 1
+                    if (done & 0x3FF) == 0:
+                        self.set_progress(10 + int(75 * done / n))
+        else:
+            results = [_parse_one_smiles(i, s) for i, s in enumerate(smiles)]
+
+        good = [(idx, ids[idx], mol, canon)
+                for (idx, mol, canon) in results
+                if mol is not None]
+        n_good = len(good)
+        n_bad = n - n_good
+        if n_good == 0:
+            return False, f'All {n} SMILES failed to parse.'
+
+        self.set_progress(90)
+        good_idx = [g[0] for g in good]
+        out_data: dict[str, list] = {
+            'name':   [g[1] for g in good],
+            'smiles': [g[3] for g in good],
+            'ROMol':  [g[2] for g in good],
+        }
+        for c in prop_cols:
+            out_data[c] = df_in[c].iloc[good_idx].tolist()
+        out_df = pd.DataFrame(out_data)
+        self.output_values['mol_table'] = MolTableData(payload=out_df)
+        self.mark_clean()
+        self.set_progress(100)
+
+        msg = f'{n_good} molecule{"s" if n_good != 1 else ""} converted'
         if n_bad:
             msg += f' ({n_bad} failed, dropped)'
         return True, msg
@@ -1964,6 +2105,7 @@ def _pairwise_similarity(
 def _compute_fp_matrix(
     mols: list[RDMol],
     settings: dict | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
 ) -> np.ndarray:
     """Compute (N, fp_size) fingerprint matrix from RDKit Mol objects.
 
@@ -1992,15 +2134,19 @@ def _compute_fp_matrix(
     fps: list[np.ndarray | None] = []
     fp_size = 0
     fp_dtype = None
-    for mol in mols:
+    n = len(mols)
+    step = max(1, n // 100)  # ~1% granularity
+    for i, mol in enumerate(mols):
         if mol is None:
             fps.append(None)
-            continue
-        arr = _to_numpy(gen_fn(mol))
-        if fp_dtype is None:
-            fp_dtype = arr.dtype
-            fp_size = arr.size
-        fps.append(arr)
+        else:
+            arr = _to_numpy(gen_fn(mol))
+            if fp_dtype is None:
+                fp_dtype = arr.dtype
+                fp_size = arr.size
+            fps.append(arr)
+        if progress_cb is not None and (i % step == 0 or i == n - 1):
+            progress_cb(i + 1, n)
 
     # All-None fallback: default to Morgan-sized bool vector.
     if fp_dtype is None:
@@ -2057,10 +2203,16 @@ class FingerprintColumnNode(BaseExecutionNode):
         method = fp_settings.get('method', 'Morgan')
         col_name = (self.get_property('column_name') or 'fp').strip() or 'fp'
 
-        self.set_progress(10)
+        self.set_progress(5)
         mols = df[mol_col].tolist()
-        fp_matrix = _compute_fp_matrix(mols, settings=fp_settings)
-        self.set_progress(85)
+
+        def _on_progress(done: int, total: int) -> None:
+            # Map FP loop into the 5–90% band.
+            self.set_progress(5 + int(85 * done / max(total, 1)))
+
+        fp_matrix = _compute_fp_matrix(
+            mols, settings=fp_settings, progress_cb=_on_progress)
+        self.set_progress(90)
 
         # Store one 1-D ndarray per row — object dtype column.
         df[col_name] = list(fp_matrix)

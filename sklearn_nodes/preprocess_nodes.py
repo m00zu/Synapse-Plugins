@@ -59,14 +59,30 @@ class TrainTestSplitNode(BaseExecutionNode):
 
         self.set_progress(30)
 
-        strat = df[target] if stratify_on else None
+        strat = None
+        if stratify_on:
+            counts = df[target].value_counts()
+            n_classes = len(counts)
+            min_per_class = int(counts.min()) if n_classes else 0
+            # Fail fast with a readable hint instead of sklearn's giant dump.
+            if n_classes >= 0.9 * len(df) or min_per_class < 2:
+                self.mark_error()
+                return False, (
+                    f"Cannot stratify on '{target}': {n_classes} unique values "
+                    f"in {len(df)} rows (min per class = {min_per_class}). "
+                    f"Looks like an ID/continuous column — turn off Stratify "
+                    f"or pick a class column."
+                )
+            strat = df[target]
+
         try:
             train_df, test_df = train_test_split(
                 df, test_size=test_size, random_state=seed if seed > 0 else None,
                 stratify=strat)
         except ValueError as e:
             self.mark_error()
-            return False, str(e)
+            msg = str(e).splitlines()[0][:240]
+            return False, msg
 
         self.set_progress(80)
         self.output_values['train'] = TableData(payload=train_df.reset_index(drop=True))

@@ -414,26 +414,27 @@ class LearningCurveNode(BaseExecutionNode):
 
 class ClusterVisualizationNode(BaseExecutionNode):
     """
-    2D scatter plot colored by cluster labels OR class labels.
+    2D scatter plot, optionally colored by cluster or class labels.
 
     Pick the X / Y axes from existing columns (e.g. ``umap_0`` / ``umap_1``
     after running the UMAP node).  If left blank, PCA is run on all numeric
     columns to produce 2D coordinates automatically.
 
-    Coloring source — pick one:
+    Coloring is optional:
       - ``class_column``: a true class / category column (e.g. ``activity``,
         ``label``).  Takes precedence when set.  Legend shows the raw value;
         title reads "Class Visualization".
       - ``cluster_column``: integer cluster IDs from K-Means / DBSCAN /
         Agglomerative.  Used when ``class_column`` is blank.  Legend shows
         ``Cluster N`` (and ``-1`` is rendered as ``Noise`` for DBSCAN).
-        Defaults to a column named ``cluster`` if neither selector is set.
+      - If neither selector is set, falls back to a column named ``cluster``
+        if one exists.  Otherwise a plain (uncolored) scatter is drawn.
 
     Options:
 
     - **x_column** — column for X axis (blank = auto PCA on numeric columns)
     - **y_column** — column for Y axis (blank = auto PCA on numeric columns)
-    - **cluster_column** — column with cluster labels
+    - **cluster_column** — column with cluster labels (optional)
     - **class_column** — column with true class labels (overrides cluster_column)
 
     Keywords: cluster plot, class plot, scatter, PCA, UMAP, visualization, ML
@@ -466,8 +467,9 @@ class ClusterVisualizationNode(BaseExecutionNode):
             self.mark_error()
             return False, "No table connected"
 
-        # Color column: class_column takes precedence over cluster_column.
-        # If neither is set, fall back to a default 'cluster' column.
+        # Color column is optional. class_column takes precedence over
+        # cluster_column; falls back to a 'cluster' column if present;
+        # otherwise plot an uncolored scatter.
         class_col = str(self.get_property('class_column') or '').strip()
         cluster_col = str(self.get_property('cluster_column') or '').strip()
         if class_col and class_col in df.columns:
@@ -480,15 +482,14 @@ class ClusterVisualizationNode(BaseExecutionNode):
             color_col = 'cluster'
             color_kind = 'cluster'
         else:
-            self.mark_error()
-            return False, "No class or cluster column found"
+            color_col = None
+            color_kind = None
 
         x_col = str(self.get_property('x_column') or '').strip()
         y_col = str(self.get_property('y_column') or '').strip()
 
         self.set_progress(20)
 
-        labels = df[color_col]
         use_pca = (not x_col or x_col not in df.columns or
                    not y_col or y_col not in df.columns)
 
@@ -515,26 +516,33 @@ class ClusterVisualizationNode(BaseExecutionNode):
         self.set_progress(60)
 
         fig, ax = plt.subplots(figsize=(7, 5))
-        unique_labels = sorted(set(labels), key=lambda x: (isinstance(x, str), x))
-        cmap = plt.cm.get_cmap('tab10', max(len(unique_labels), 1))
 
-        for i, lbl in enumerate(unique_labels):
-            mask = labels == lbl
-            color = cmap(i)
-            # For cluster integers, prefix "Cluster" and rename -1 → "Noise".
-            # For class columns (or any string label), show the raw value.
-            if color_kind == 'cluster' and not isinstance(lbl, str):
-                label_str = 'Noise' if lbl == -1 else f'Cluster {lbl}'
-            else:
-                label_str = str(lbl)
-            ax.scatter(x_vals[mask], y_vals[mask], c=[color], label=label_str,
-                       alpha=0.7, s=30, edgecolors='none')
+        if color_col is None:
+            ax.scatter(x_vals, y_vals, alpha=0.7, s=30, edgecolors='none')
+            title = 'Scatter'
+        else:
+            labels = df[color_col]
+            unique_labels = sorted(set(labels), key=lambda x: (isinstance(x, str), x))
+            cmap = plt.cm.get_cmap('tab10', max(len(unique_labels), 1))
+
+            for i, lbl in enumerate(unique_labels):
+                mask = labels == lbl
+                color = cmap(i)
+                if color_kind == 'cluster' and not isinstance(lbl, str):
+                    label_str = 'Noise' if lbl == -1 else f'Cluster {lbl}'
+                else:
+                    label_str = str(lbl)
+                ax.scatter(x_vals[mask], y_vals[mask], c=[color], label=label_str,
+                           alpha=0.7, s=30, edgecolors='none')
+
+            ax.legend(loc='best', fontsize=8)
+            title = ('Class Visualization' if color_kind == 'class'
+                     else 'Cluster Visualization')
+            title = f'{title}  (by {color_col})'
 
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
-        title = 'Class Visualization' if color_kind == 'class' else 'Cluster Visualization'
-        ax.set_title(f'{title}  (by {color_col})')
-        ax.legend(loc='best', fontsize=8)
+        ax.set_title(title)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
 

@@ -71,10 +71,24 @@ class PredictNode(BaseExecutionNode):
             self.mark_error()
             return False, f"Prediction failed: {e}"
 
-        self.set_progress(80)
+        self.set_progress(70)
 
         result = df.copy()
         result['prediction'] = preds
+
+        # Probabilities (classifiers only).
+        if hasattr(model, 'predict_proba'):
+            try:
+                proba = model.predict_proba(X)
+                classes = list(getattr(model, 'classes_', range(proba.shape[1])))
+                if proba.shape[1] == 2:
+                    # Binary: emit single 'prob' = P(positive class).
+                    result['prob'] = proba[:, 1]
+                else:
+                    for i, cls in enumerate(classes):
+                        result[f'prob_{cls}'] = proba[:, i]
+            except Exception:
+                pass  # not all classifiers support predict_proba reliably
 
         # If the table has the true target column, add a 'correct' column
         if target and target in df.columns:
