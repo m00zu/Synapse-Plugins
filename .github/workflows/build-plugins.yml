@@ -212,6 +212,15 @@ jobs:
         shell: bash
         run: pip install xgboost --no-deps --target=sklearn_nodes/vendor/
 
+      - name: Bundle libomp (macOS only — xgboost native lib needs it)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # macos-14 runner is arm64 with libomp from Homebrew.
+          src=$(brew --prefix libomp)/lib/libomp.dylib
+          test -f "$src" || { echo "libomp not found at $src"; exit 1; }
+          cp "$src" sklearn_nodes/vendor/libomp.dylib
+
       - name: Install shap into vendor
         shell: bash
         run: pip install shap --no-deps --target=sklearn_nodes/vendor/

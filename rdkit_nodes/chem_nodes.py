@@ -885,8 +885,7 @@ class MolTableReaderNode(BaseExecutionNode):
     carry through onto the MolTable (e.g. ``activity, pIC50``).  Leave
     blank to skip.
 
-    Keywords: moltable reader, csv, tsv, xlsx, smiles, parallel parse,
-              分子表, 並行解析
+    Keywords: moltable reader, csv, tsv, xlsx, smiles, parallel parse
     """
 
     __identifier__ = 'nodes.Cheminformatics.IO'
@@ -1461,6 +1460,83 @@ class SubstructureFilterBatchNode(BaseExecutionNode):
         self.set_progress(100)
         n = mask.sum()
         return True, f"{n} match, {len(df) - n} reject"
+
+
+class SanitizeStereoNode(BaseExecutionNode):
+    """Re-assign stereochemistry on every molecule in a MolTable.
+
+    Calls ``Chem.AssignStereochemistry(mol, cleanIt=True, force=True)`` on
+    each Mol, which strips inconsistent stereo flags (E/Z markers without
+    valid geometry, etc.).  Useful before SECFP / MHFP fingerprinting on
+    modern RDKit, which asserts on bad bond stereo in ``Canon.cpp``.
+
+    Input mols are cloned so upstream nodes are not mutated.
+
+    Keywords: stereo, sanitize, cleanIt, AssignStereochemistry, SECFP, MHFP
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Sanitize Stereo'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+        self.add_checkbox('sanitize_mol', '', text='Also Chem.SanitizeMol',
+                          state=False)
+
+    def evaluate(self):
+        in_port = self.inputs().get('mol_table')
+        if not (in_port and in_port.connected_ports()):
+            return False, "No mol_table connected."
+        src = in_port.connected_ports()[0]
+        val = src.node().output_values.get(src.name())
+        if not isinstance(val, MolTableData):
+            return False, "Expected MolTableData."
+
+        df = val.payload.copy()
+        mol_col = val.mol_col
+        n = len(df)
+        if n == 0:
+            return False, "Empty table."
+
+        also_sanitize = bool(self.get_property('sanitize_mol'))
+
+        self.set_progress(5)
+        new_mols: list[Any] = []
+        n_failed = 0
+        for i, m in enumerate(df[mol_col].tolist()):
+            if m is None:
+                new_mols.append(None)
+                continue
+            try:
+                m2 = Chem.Mol(m)  # clone — don't mutate upstream
+                if also_sanitize:
+                    Chem.SanitizeMol(m2)
+                Chem.AssignStereochemistry(m2, cleanIt=True, force=True)
+                new_mols.append(m2)
+            except Exception:
+                new_mols.append(None)
+                n_failed += 1
+            if (i & 0x3FF) == 0:
+                self.set_progress(5 + int(85 * (i + 1) / n))
+
+        df[mol_col] = new_mols
+        self.set_progress(95)
+
+        # Drop rows that failed.
+        if n_failed:
+            df = df[df[mol_col].notna()].reset_index(drop=True)
+
+        self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
+        self.mark_clean()
+        self.set_progress(100)
+
+        msg = f"{len(df)} molecule(s) cleaned"
+        if n_failed:
+            msg += f" ({n_failed} failed, dropped)"
+        return True, msg
 
 
 class MolTableToMoleculeNode(BaseExecutionNode):
@@ -2106,6 +2182,7 @@ def _compute_fp_matrix(
     mols: list[RDMol],
     settings: dict | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
+    errors_out: list[int] | None = None,
 ) -> np.ndarray:
     """Compute (N, fp_size) fingerprint matrix from RDKit Mol objects.
 
@@ -2140,11 +2217,19 @@ def _compute_fp_matrix(
         if mol is None:
             fps.append(None)
         else:
-            arr = _to_numpy(gen_fn(mol))
-            if fp_dtype is None:
-                fp_dtype = arr.dtype
-                fp_size = arr.size
-            fps.append(arr)
+            try:
+                arr = _to_numpy(gen_fn(mol))
+            except Exception:
+                # e.g. RDKit Canon.cpp asserts on bad bond stereo for SECFP.
+                # Drop the row rather than killing the whole batch.
+                if errors_out is not None:
+                    errors_out.append(i)
+                fps.append(None)
+            else:
+                if fp_dtype is None:
+                    fp_dtype = arr.dtype
+                    fp_size = arr.size
+                fps.append(arr)
         if progress_cb is not None and (i % step == 0 or i == n - 1):
             progress_cb(i + 1, n)
 
@@ -2210,9 +2295,18 @@ class FingerprintColumnNode(BaseExecutionNode):
             # Map FP loop into the 5–90% band.
             self.set_progress(5 + int(85 * done / max(total, 1)))
 
+        failed_idx: list[int] = []
         fp_matrix = _compute_fp_matrix(
-            mols, settings=fp_settings, progress_cb=_on_progress)
+            mols, settings=fp_settings, progress_cb=_on_progress,
+            errors_out=failed_idx)
         self.set_progress(90)
+
+        # Drop rows whose fingerprint failed (e.g. RDKit stereo asserts on SECFP).
+        if failed_idx:
+            keep = np.ones(n, dtype=bool)
+            keep[failed_idx] = False
+            df = df.loc[keep].reset_index(drop=True)
+            fp_matrix = fp_matrix[keep]
 
         # Store one 1-D ndarray per row — object dtype column.
         df[col_name] = list(fp_matrix)
@@ -2221,8 +2315,11 @@ class FingerprintColumnNode(BaseExecutionNode):
         self.mark_clean()
         self.set_progress(100)
         d_str = str(fp_matrix.dtype)
-        return True, (f"Added '{col_name}' column "
-                      f"({n} × {fp_matrix.shape[1]} {d_str}, {method})")
+        msg = (f"Added '{col_name}' column "
+               f"({len(df)} × {fp_matrix.shape[1]} {d_str}, {method})")
+        if failed_idx:
+            msg += f" — {len(failed_idx)} mol(s) failed and were dropped"
+        return True, msg
 
 
 # ── Pairwise similarity node ─────────────────────────────────────────────────

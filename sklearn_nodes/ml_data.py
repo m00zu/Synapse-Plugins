@@ -8,8 +8,11 @@ from typing import Any, Optional
 from data_models import NodeData, TableData
 import pandas as pd
 
+from nodes.base import PORT_COLORS
+
 # Port color for sklearn model connections (gold)
 SKLEARN_PORT_COLOR = (241, 196, 15)
+PORT_COLORS.setdefault('sklearn_model', SKLEARN_PORT_COLOR)
 
 
 class SklearnModelData(NodeData):

@@ -134,9 +134,14 @@ class SplitRGBNode(BaseImageProcessNode):
     """
     Splits an RGB image into its individual Red, Green, and Blue channels.
 
-    Each output is a single-channel grayscale image corresponding to one color plane.
+    By default each output is a single-channel grayscale image corresponding
+    to one color plane. Enable **Colorized output** to instead produce a
+    3-channel RGB image per output where only the matching colour plane is
+    populated (R channel → red-only image, G → green-only, B → blue-only) —
+    useful when feeding the result into downstream nodes that expect RGB or
+    when compositing channels back together visually.
 
-    Keywords: split, channel, red, green, blue, 色彩分離, 通道, 灰階, 影像處理, 色調
+    Keywords: split, channel, red, green, blue, colorize, RGB, 色彩分離, 通道, 灰階, 著色, 影像處理, 色調
     """
     __identifier__ = 'nodes.image_process.color'
     NODE_NAME = 'Split RGB'
@@ -149,6 +154,7 @@ class SplitRGBNode(BaseImageProcessNode):
         self.add_output('red', color=PORT_COLORS.get('image', (200, 50, 50)))
         self.add_output('green', color=PORT_COLORS.get('image', (50, 200, 50)))
         self.add_output('blue', color=PORT_COLORS.get('image', (50, 50, 200)))
+        self.add_checkbox('colorized', '', text='Colorized output (RGB instead of grayscale)', state=False)
         self.create_preview_widgets()
 
     def evaluate(self):
@@ -159,10 +165,10 @@ class SplitRGBNode(BaseImageProcessNode):
             return False, "No input connected"
         up_node = in_port.connected_ports()[0].node()
         data = up_node.output_values.get(in_port.connected_ports()[0].name())
-        
+
         if not isinstance(data, ImageData):
             return False, "Input must be ImageData"
-            
+
         arr = data.payload
         if arr.ndim == 2:
             # Grayscale — treat as all three channels identical
@@ -175,9 +181,17 @@ class SplitRGBNode(BaseImageProcessNode):
         blue  = arr[:, :, 2]
 
         self.set_progress(70)
-        self._make_image_output(red, 'red')
-        self._make_image_output(green, 'green')
-        self._make_image_output(blue, 'blue')
+
+        colorized = bool(self.get_property('colorized'))
+        if colorized:
+            z = np.zeros_like(red)
+            self._make_image_output(np.stack([red,   z, z], axis=-1), 'red')
+            self._make_image_output(np.stack([z, green,  z], axis=-1), 'green')
+            self._make_image_output(np.stack([z, z,  blue], axis=-1), 'blue')
+        else:
+            self._make_image_output(red, 'red')
+            self._make_image_output(green, 'green')
+            self._make_image_output(blue, 'blue')
 
         # Build 2x2 preview: original + R/G/B colorized
         h, w = red.shape
@@ -367,8 +381,13 @@ class GaussianBlurNode(BaseImageProcessNode):
             
         arr = data.payload
         self.set_progress(30)
-        # skimage gaussian preserves range if preserve_range=True
-        res = gaussian(arr, sigma=sigma, preserve_range=True)
+        # For RGB/RGBA images, channel_axis=-1 blurs each channel
+        # independently — otherwise skimage treats the channel axis as a
+        # 3rd spatial dimension and mixes colors at edges.
+        if arr.ndim == 3 and arr.shape[-1] in (3, 4):
+            res = gaussian(arr, sigma=sigma, preserve_range=True, channel_axis=-1)
+        else:
+            res = gaussian(arr, sigma=sigma, preserve_range=True)
         self.set_progress(90)
 
         out_arr = res.astype(arr.dtype)
@@ -4249,6 +4268,792 @@ class MultiChannelBCNode(BaseImageProcessNode):
 
 
 # ===========================================================================
+# Multi-Channel Threshold — per-channel thresholding with AND/OR combine
+# ===========================================================================
+
+class _MiniChannelThreshold(QtWidgets.QWidget):
+    """Compact threshold controls for a single channel: mini histogram + threshold line + direction + Otsu."""
+    params_changed = QtCore.Signal(int, float, bool)        # channel_idx, threshold, above
+    enabled_changed = QtCore.Signal(int, bool)              # channel_idx, use_in_combine
+
+    def __init__(self, ch_idx: int, default_color=(255, 255, 255), parent=None):
+        super().__init__(parent)
+        self._ch_idx = ch_idx
+        self._full_range = 255.0
+        self._above = True
+        self._updating = False
+        self._color = default_color
+        self._hist_counts = None
+        self._hist_edges = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(4)
+
+        # ── Header: use checkbox + label + Otsu/Reset ─────────────
+        header = QtWidgets.QHBoxLayout()
+        header.setSpacing(4)
+        header.setContentsMargins(0, 0, 0, 0)
+        self._use_cb = QtWidgets.QCheckBox()
+        self._use_cb.setChecked(True)
+        self._use_cb.setToolTip('Use this channel in the combined mask')
+        self._use_cb.setFixedSize(14, 18)
+        self._use_cb.toggled.connect(self._on_use_toggled)
+        header.addWidget(self._use_cb)
+        self._lbl = QtWidgets.QLabel(f'Ch{ch_idx + 1}')
+        r, g, b = default_color
+        self._lbl.setStyleSheet(
+            f'background: rgb({r},{g},{b}); color: white; font-size: 8pt; '
+            f'padding: 2px 6px; border-radius: 2px;'
+        )
+        self._lbl.setFixedHeight(18)
+        header.addWidget(self._lbl)
+        header.addStretch()
+        self._btn_otsu = QtWidgets.QPushButton('Otsu')
+        self._btn_otsu.setToolTip('Auto Otsu threshold for this channel')
+        self._btn_otsu.setFixedSize(36, 16)
+        self._btn_otsu.setStyleSheet('font-size: 7px; padding: 0px;')
+        self._btn_otsu.clicked.connect(self._auto_otsu)
+        self._btn_reset = QtWidgets.QPushButton('Reset')
+        self._btn_reset.setToolTip('Reset to mid-range')
+        self._btn_reset.setFixedSize(36, 16)
+        self._btn_reset.setStyleSheet('font-size: 7px; padding: 0px;')
+        self._btn_reset.clicked.connect(self._reset)
+        header.addWidget(self._btn_otsu)
+        header.addWidget(self._btn_reset)
+        layout.addLayout(header)
+
+        # ── Mini histogram with single threshold line + green region ────
+        self._plot = pg.PlotWidget(background='#1a1a1a')
+        self._plot.setFixedHeight(48)
+        self._plot.setMaximumWidth(250)
+        self._plot.hideAxis('left')
+        self._plot.hideAxis('bottom')
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.setMenuEnabled(False)
+        self._plot.getViewBox().setDefaultPadding(0)
+
+        self._hist_curve = self._plot.plot(
+            pen=pg.mkPen(r, g, b, 180, width=1),
+            fillLevel=0,
+            brush=pg.mkBrush(r, g, b, 60),
+            stepMode='center',
+        )
+        self._region = pg.LinearRegionItem(
+            values=(128, 255),
+            brush=pg.mkBrush(80, 200, 100, 60),
+            pen=pg.mkPen(None),
+            movable=False,
+        )
+        self._plot.addItem(self._region)
+        self._line = pg.InfiniteLine(
+            pos=128, angle=90, movable=True,
+            pen=pg.mkPen('#f1c40f', width=1.5),
+        )
+        self._plot.addItem(self._line)
+        self._line.sigPositionChanged.connect(self._on_line_moved)
+        layout.addWidget(self._plot)
+
+        # ── Slider + spinbox row ───────────────────────────────────
+        ctrl_row = QtWidgets.QHBoxLayout()
+        ctrl_row.setSpacing(2)
+        ctrl_row.setContentsMargins(0, 0, 0, 0)
+        lbl_t = QtWidgets.QLabel('T')
+        lbl_t.setStyleSheet('color: #aaa; font-size: 7px;')
+        lbl_t.setFixedWidth(10)
+        self._sld = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._sld.setRange(0, 255)
+        self._sld.setValue(128)
+        self._spn = QtWidgets.QSpinBox()
+        self._spn.setRange(0, 255)
+        self._spn.setValue(128)
+        self._spn.setFixedWidth(52)
+        self._spn.setStyleSheet('font-size: 7px; color: #ccc;')
+        ctrl_row.addWidget(lbl_t)
+        ctrl_row.addWidget(self._sld)
+        ctrl_row.addWidget(self._spn)
+        layout.addLayout(ctrl_row)
+
+        # ── Direction combo ────────────────────────────────────────
+        dir_row = QtWidgets.QHBoxLayout()
+        dir_row.setSpacing(2)
+        dir_row.setContentsMargins(0, 0, 0, 0)
+        lbl_d = QtWidgets.QLabel('Dir')
+        lbl_d.setStyleSheet('color: #aaa; font-size: 7px;')
+        lbl_d.setFixedWidth(16)
+        self._combo = QtWidgets.QComboBox()
+        self._combo.addItems(['Above (> T)', 'Below (≤ T)'])
+        self._combo.setStyleSheet('font-size: 7px;')
+        self._combo.setFixedHeight(18)
+        dir_row.addWidget(lbl_d)
+        dir_row.addWidget(self._combo, 1)
+        layout.addLayout(dir_row)
+
+        # ── Wire signals ───────────────────────────────────────────
+        self._sld.valueChanged.connect(self._on_slider)
+        self._spn.valueChanged.connect(self._on_spinbox)
+        self._combo.currentIndexChanged.connect(self._on_direction_changed)
+
+    # ── Public API ─────────────────────────────────────────────────
+
+    def set_histogram(self, arr_flat, full_range=255):
+        old_full = self._full_range
+        self._full_range = float(full_range)
+        num_bins = min(256, int(full_range) + 1)
+        counts, edges = np.histogram(arr_flat, bins=num_bins, range=(0, float(full_range)))
+        self._hist_counts = counts
+        self._hist_edges = edges
+        self._hist_curve.setData(x=edges, y=np.log1p(counts.astype(float)))
+        self._plot.setXRange(0, full_range, padding=0)
+        irange = int(full_range)
+        self._sld.setRange(0, irange)
+        self._spn.setRange(0, irange)
+        # Reset threshold to mid-range when bit depth changes
+        if self._full_range != old_full:
+            self._set_thresh(self._full_range / 2.0)
+            self._update_region(self._full_range / 2.0)
+
+    def set_threshold(self, value, above=True):
+        self._updating = True
+        try:
+            self._line.setValue(value)
+            self._sld.setValue(int(round(value)))
+            self._spn.setValue(int(round(value)))
+            self._above = above
+            self._combo.setCurrentIndex(0 if above else 1)
+            self._update_region(value)
+        finally:
+            self._updating = False
+
+    def get_threshold(self):
+        return float(self._line.value()), self._above
+
+    def is_use_enabled(self) -> bool:
+        return self._use_cb.isChecked()
+
+    def set_use_enabled(self, enabled: bool):
+        self._updating = True
+        try:
+            self._use_cb.setChecked(bool(enabled))
+            self._apply_use_visual(bool(enabled))
+        finally:
+            self._updating = False
+
+    # ── Internals ──────────────────────────────────────────────────
+
+    def _on_use_toggled(self, checked: bool):
+        self._apply_use_visual(checked)
+        if self._updating:
+            return
+        self.enabled_changed.emit(self._ch_idx, bool(checked))
+
+    def _apply_use_visual(self, enabled: bool):
+        # Dim the colored label when disabled — controls remain interactive
+        # so the user can still preview-adjust without committing.
+        r, g, b = self._color
+        if enabled:
+            self._lbl.setStyleSheet(
+                f'background: rgb({r},{g},{b}); color: white; font-size: 8pt; '
+                f'padding: 2px 6px; border-radius: 2px;'
+            )
+        else:
+            self._lbl.setStyleSheet(
+                f'background: rgba({r},{g},{b},80); color: #888; font-size: 8pt; '
+                f'padding: 2px 6px; border-radius: 2px;'
+            )
+
+
+    def _set_thresh(self, val):
+        self._updating = True
+        try:
+            self._line.setValue(val)
+            self._sld.setValue(int(round(val)))
+            self._spn.setValue(int(round(val)))
+            self._update_region(val)
+        finally:
+            self._updating = False
+
+    def _update_region(self, thresh):
+        if self._above:
+            self._region.setRegion((thresh, self._full_range))
+        else:
+            self._region.setRegion((0, thresh))
+
+    def _on_line_moved(self):
+        if self._updating:
+            return
+        val = float(self._line.value())
+        self._updating = True
+        try:
+            self._sld.setValue(int(round(val)))
+            self._spn.setValue(int(round(val)))
+            self._update_region(val)
+        finally:
+            self._updating = False
+        self.params_changed.emit(self._ch_idx, val, self._above)
+
+    def _on_slider(self, int_val):
+        if self._updating:
+            return
+        val = float(int_val)
+        self._updating = True
+        self._spn.setValue(int_val)
+        self._updating = False
+        self._line.setValue(val)
+        self._update_region(val)
+        self.params_changed.emit(self._ch_idx, val, self._above)
+
+    def _on_spinbox(self, int_val):
+        if self._updating:
+            return
+        val = float(int_val)
+        self._updating = True
+        self._sld.setValue(int_val)
+        self._updating = False
+        self._line.setValue(val)
+        self._update_region(val)
+        self.params_changed.emit(self._ch_idx, val, self._above)
+
+    def _on_direction_changed(self, idx):
+        if self._updating:
+            return
+        self._above = (idx == 0)
+        self._update_region(float(self._line.value()))
+        self.params_changed.emit(self._ch_idx, float(self._line.value()), self._above)
+
+    def _auto_otsu(self):
+        if self._hist_counts is None:
+            return
+        counts = self._hist_counts.astype(float)
+        total = counts.sum()
+        if total == 0:
+            return
+        sum_total = float(np.dot(np.arange(len(counts)), counts))
+        w_bg = sum_bg = 0.0
+        best_val = best_var = 0.0
+        for i, c in enumerate(counts):
+            w_bg += c
+            w_fg = total - w_bg
+            if w_bg == 0 or w_fg == 0:
+                continue
+            sum_bg += i * c
+            mu_bg = sum_bg / w_bg
+            mu_fg = (sum_total - sum_bg) / w_fg
+            var = w_bg * w_fg * (mu_bg - mu_fg) ** 2
+            if var > best_var:
+                best_var = var
+                best_val = float(self._hist_edges[i])
+        self._set_thresh(best_val)
+        self.params_changed.emit(self._ch_idx, best_val, self._above)
+
+    def _reset(self):
+        val = self._full_range / 2.0
+        self._set_thresh(val)
+        self._above = True
+        self._combo.setCurrentIndex(0)
+        self._update_region(val)
+        self.params_changed.emit(self._ch_idx, val, True)
+
+
+class _NodeMultiChannelThresholdWidget(NodeBaseWidget):
+    """Container widget embedding 4 _MiniChannelThreshold panels in a 2x2 grid."""
+    _set_data_sig = QtCore.Signal(int, object, float)
+    _enable_sig = QtCore.Signal(int, bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, name='mc_thresh_widget', label='')
+        container = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+
+        defaults = [
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (255, 0, 255),
+        ]
+        self._panels: list[_MiniChannelThreshold] = []
+        for i, color in enumerate(defaults):
+            panel = _MiniChannelThreshold(i, default_color=color)
+            panel.setEnabled(False)
+            grid.addWidget(panel, i // 2, i % 2)
+            self._panels.append(panel)
+
+        self.set_custom_widget(container)
+        self._set_data_sig.connect(self._set_histogram_main,
+                                    QtCore.Qt.ConnectionType.QueuedConnection)
+        self._enable_sig.connect(self._set_enabled_main,
+                                  QtCore.Qt.ConnectionType.QueuedConnection)
+
+    def panel(self, idx) -> _MiniChannelThreshold:
+        return self._panels[idx]
+
+    def set_channel_enabled_threadsafe(self, panel_idx: int, enabled: bool):
+        if threading.current_thread() is threading.main_thread():
+            self._set_enabled_main(panel_idx, enabled)
+        else:
+            self._enable_sig.emit(panel_idx, enabled)
+
+    def set_histogram_threadsafe(self, panel_idx, arr_flat, full_range=255):
+        if threading.current_thread() is threading.main_thread():
+            self._set_histogram_main(panel_idx, arr_flat, full_range)
+        else:
+            self._set_data_sig.emit(panel_idx, arr_flat, float(full_range))
+
+    def _set_enabled_main(self, panel_idx, enabled):
+        if 0 <= panel_idx < len(self._panels):
+            p = self._panels[panel_idx]
+            p.setEnabled(enabled)
+            p.setStyleSheet('' if enabled else 'QWidget { color: #555; }')
+            if not enabled:
+                p._hist_curve.setData(x=[], y=[])
+
+    def _set_histogram_main(self, panel_idx, arr_flat, full_range):
+        if 0 <= panel_idx < len(self._panels):
+            self._panels[panel_idx].set_histogram(arr_flat, full_range)
+
+    def get_value(self):
+        return {
+            'thresholds': [p.get_threshold() for p in self._panels],
+        }
+
+    def set_value(self, value):
+        if not isinstance(value, dict):
+            return
+        for i, (t, ab) in enumerate(value.get('thresholds', [])[:4]):
+            self._panels[i].set_threshold(float(t), bool(ab))
+
+
+class MultiChannelThresholdNode(BaseImageProcessNode):
+    """
+    Per-channel thresholding with combined mask output.
+
+    Connect 1–4 grayscale channels (or a single multi-channel image) and threshold
+    each channel independently. Each panel has its own histogram with a draggable
+    threshold line, slider/spinbox, direction selector (above/below), Otsu
+    auto-threshold button, and a "Use" checkbox to include/exclude that channel
+    from the combined mask without disconnecting it.
+
+    The combined output merges the per-channel masks using either AND
+    (intersection — pixel must pass every active channel's threshold) or OR
+    (union — pixel passes if any active channel selects it).
+
+    Outputs
+    
+    - `mask_ch1`–`mask_ch4` — individual binary masks (one per active channel)
+    - `combined_mask` — AND/OR-merged binary mask
+    - `masked_image` — input image with `combined_mask` applied (black outside)
+
+    Display
+    
+    - **Combine mode** — AND or OR for merging per-channel masks
+    - **Apply to image (display)** — when checked the on-node preview shows the masked input image; otherwise it shows the combined mask. The `masked_image` output port is always populated regardless of this toggle.
+
+    Keywords: threshold, multi-channel, mask, segmentation, AND, OR, Otsu, 多通道, 閾值, 二值化, 分割
+    """
+
+    __identifier__ = 'nodes.image_process.filter'
+    NODE_NAME = 'Multi-Channel Threshold'
+    PORT_SPEC = {
+        'inputs': ['image', 'image', 'image', 'image', 'image'],
+        'outputs': ['mask', 'mask', 'mask', 'mask', 'mask', 'image'],
+    }
+
+    _UI_PROPS = BaseImageProcessNode._UI_PROPS | frozenset({
+        'mc_thresh_widget',
+        'thresh_state_ch1', 'thresh_state_ch2',
+        'thresh_state_ch3', 'thresh_state_ch4',
+    })
+    PROP_DESCRIPTIONS = {
+        'thresh_state_ch1': '[threshold, direction, enabled] for ch1 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip. Legacy 2-element [threshold, direction] is also accepted (defaults enabled=1).',
+        'thresh_state_ch2': '[threshold, direction, enabled] for ch2 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
+        'thresh_state_ch3': '[threshold, direction, enabled] for ch3 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
+        'thresh_state_ch4': '[threshold, direction, enabled] for ch4 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
+        'combine_mode':     "'AND' or 'OR' — how to merge active per-channel masks",
+        'apply_to_image':   'true = preview shows masked image; false = preview shows combined mask. Display only — masked_image output is always produced.',
+    }
+
+    _PREVIEW_MAX_PX = 512 * 512
+
+    def __init__(self):
+        super().__init__()
+        # Inputs
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_input('ch1', color=PORT_COLORS['image'])
+        self.add_input('ch2', color=PORT_COLORS['image'])
+        self.add_input('ch3', color=PORT_COLORS['image'])
+        self.add_input('ch4', color=PORT_COLORS['image'])
+
+        # Outputs
+        self.add_output('mask_ch1', color=PORT_COLORS['mask'], multi_output=True)
+        self.add_output('mask_ch2', color=PORT_COLORS['mask'], multi_output=True)
+        self.add_output('mask_ch3', color=PORT_COLORS['mask'], multi_output=True)
+        self.add_output('mask_ch4', color=PORT_COLORS['mask'], multi_output=True)
+        self.add_output('combined_mask', color=PORT_COLORS['mask'], multi_output=True)
+        self.add_output('masked_image', color=PORT_COLORS['image'], multi_output=True)
+
+        # Per-channel persistent state — [threshold, above, enabled]
+        # (legacy 2-element values [threshold, above] are also accepted)
+        self.create_property('thresh_state_ch1', [128.0, 1, 1])
+        self.create_property('thresh_state_ch2', [128.0, 1, 1])
+        self.create_property('thresh_state_ch3', [128.0, 1, 1])
+        self.create_property('thresh_state_ch4', [128.0, 1, 1])
+
+        # Multi-panel widget
+        self._mc_widget = _NodeMultiChannelThresholdWidget(self.view)
+        self.add_custom_widget(self._mc_widget)
+        for i in range(4):
+            panel = self._mc_widget.panel(i)
+            panel.params_changed.connect(self._on_channel_changed)
+            panel.enabled_changed.connect(self._on_channel_enabled_changed)
+
+        # Combine mode + apply-to-image display toggle
+        self.add_combo_menu('combine_mode', 'Combine', items=['AND', 'OR'])
+        self.add_checkbox('apply_to_image', '', text='Apply to image (display)', state=False)
+
+        self.create_preview_widgets()
+        self._cached_channels: list[np.ndarray | None] = [None] * 4
+        self._cached_channels_small: list[np.ndarray | None] = [None] * 4
+        self._cached_bit_depths: list[int] = [8, 8, 8, 8]
+        self._cached_scale_ums: list[float | None] = [None, None, None, None]
+        self._cached_base_image: np.ndarray | None = None  # for masked_image output
+
+        # Debounce: instant preview during drag, full output after settling
+        self._dbnc = QtCore.QTimer()
+        self._dbnc.setSingleShot(True)
+        self._dbnc.setInterval(120)
+        self._dbnc.timeout.connect(self._on_debounce_fire)
+
+    # ── Sync widget when properties are set externally ───────────────
+
+    def set_property(self, name, value, push_undo=True):
+        super().set_property(name, value, push_undo)
+        if name in ('thresh_state_ch1', 'thresh_state_ch2',
+                    'thresh_state_ch3', 'thresh_state_ch4') and hasattr(self, '_mc_widget'):
+            try:
+                idx = int(name[-1]) - 1
+                panel = self._mc_widget.panel(idx)
+                panel.set_threshold(float(value[0]), bool(value[1]))
+                # Backwards-compatible: legacy 2-element tuples default enabled=True
+                enabled = bool(value[2]) if len(value) >= 3 else True
+                panel.set_use_enabled(enabled)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _state_tuple(value, default_thresh=128.0):
+        """Parse a thresh_state_chN property value into (threshold, above, enabled)."""
+        try:
+            t = float(value[0])
+            ab = bool(value[1])
+            en = bool(value[2]) if len(value) >= 3 else True
+            return t, ab, en
+        except Exception:
+            return default_thresh, True, True
+
+    # ── Live update on user interaction ──────────────────────────────
+
+    def _persist_state(self, ch_idx, threshold, above, enabled):
+        prop = f'thresh_state_ch{ch_idx + 1}'
+        super(BaseExecutionNode, self).set_property(
+            prop, [float(threshold), int(bool(above)), int(bool(enabled))],
+            push_undo=False,
+        )
+
+    def _on_channel_changed(self, ch_idx, threshold, above):
+        panel = self._mc_widget.panel(ch_idx)
+        self._persist_state(ch_idx, threshold, above, panel.is_use_enabled())
+        if self._cached_channels[ch_idx] is None:
+            return
+        # Fast preview on downsampled data
+        preview = self._build_display(use_small=True)
+        if preview is not None:
+            self.set_display(preview)
+        self._dbnc.start()
+
+    def _on_channel_enabled_changed(self, ch_idx, enabled):
+        panel = self._mc_widget.panel(ch_idx)
+        t, ab = panel.get_threshold()
+        self._persist_state(ch_idx, t, ab, enabled)
+        if self._cached_channels[ch_idx] is None:
+            return
+        preview = self._build_display(use_small=True)
+        if preview is not None:
+            self.set_display(preview)
+        self._dbnc.start()
+
+    def _on_debounce_fire(self):
+        ok = self._build_outputs()
+        if ok:
+            disp = self._build_display(use_small=False)
+            if disp is not None:
+                self.set_display(disp)
+            for out_port in self.outputs().values():
+                for in_port in out_port.connected_ports():
+                    dn = in_port.node()
+                    if hasattr(dn, 'mark_dirty'):
+                        dn.mark_dirty()
+
+    # ── Evaluate ─────────────────────────────────────────────────────
+
+    def evaluate(self):
+        self._eval_version_at_start = self._eval_version
+        self.reset_progress()
+
+        channels: list[np.ndarray | None] = [None] * 4
+        base_image = None
+        base_bit_depth = 8
+        base_scale_um = None
+
+        # Single multi-channel image input
+        img_port = self.inputs().get('image')
+        if img_port and img_port.connected_ports():
+            cp = img_port.connected_ports()[0]
+            data = cp.node().output_values.get(cp.name())
+            if isinstance(data, ImageData):
+                arr = data.payload
+                bd = getattr(data, 'bit_depth', 8) or 8
+                sc = getattr(data, 'scale_um', None)
+                base_image = arr
+                base_bit_depth = bd
+                base_scale_um = sc
+                if arr.ndim == 3:
+                    for i in range(min(4, arr.shape[2])):
+                        channels[i] = arr[:, :, i]
+                        self._cached_bit_depths[i] = bd
+                        self._cached_scale_ums[i] = sc
+                elif arr.ndim == 2:
+                    channels[0] = arr
+                    self._cached_bit_depths[0] = bd
+                    self._cached_scale_ums[0] = sc
+
+        # Individual channel inputs (override multi-channel)
+        for i, port_name in enumerate(['ch1', 'ch2', 'ch3', 'ch4']):
+            port = self.inputs().get(port_name)
+            if port and port.connected_ports():
+                cp = port.connected_ports()[0]
+                data = cp.node().output_values.get(cp.name())
+                if isinstance(data, ImageData):
+                    arr = data.payload
+                    if arr.ndim == 3:
+                        arr = arr.mean(axis=2)
+                    channels[i] = arr.astype(np.float32)
+                    self._cached_bit_depths[i] = getattr(data, 'bit_depth', 8) or 8
+                    self._cached_scale_ums[i] = getattr(data, 'scale_um', None)
+
+        n_active = sum(1 for c in channels if c is not None)
+        if n_active == 0:
+            return False, "No channels connected"
+
+        # Build base image for masked_image output if no combined input
+        if base_image is None:
+            base_image = self._build_base_from_channels(channels)
+            base_bit_depth = max(self._cached_bit_depths[i]
+                                 for i, c in enumerate(channels) if c is not None)
+            base_scale_um = next((self._cached_scale_ums[i]
+                                  for i, c in enumerate(channels) if c is not None
+                                  and self._cached_scale_ums[i] is not None), None)
+
+        self._cached_channels = channels
+        self._cached_channels_small = self._downsample_channels(channels)
+        self._cached_base_image = base_image
+        self._cached_base_bit_depth = base_bit_depth
+        self._cached_base_scale_um = base_scale_um
+
+        self.set_progress(20)
+
+        # Update histograms and panel enabled state
+        for i in range(4):
+            if channels[i] is not None:
+                max_possible = (1 << self._cached_bit_depths[i]) - 1
+                flat_scaled = channels[i].ravel().astype(np.float32) * max_possible
+                self._mc_widget.set_histogram_threadsafe(i, flat_scaled, full_range=max_possible)
+                self._mc_widget.set_channel_enabled_threadsafe(i, True)
+                # Sync widget to stored thresh state (incl. enabled flag)
+                state = self.get_property(f'thresh_state_ch{i + 1}')
+                t, ab, en = self._state_tuple(state)
+                t = float(np.clip(t, 0, max_possible))
+                panel = self._mc_widget.panel(i)
+                panel.set_threshold(t, ab)
+                panel.set_use_enabled(en)
+            else:
+                self._mc_widget.set_channel_enabled_threadsafe(i, False)
+
+        self.set_progress(60)
+
+        self._build_outputs()
+        disp = self._build_display(use_small=False)
+        if disp is not None:
+            self.set_display(disp)
+        self.set_progress(100)
+        return True, None
+
+    # ── Helpers ──────────────────────────────────────────────────────
+
+    def _downsample_channels(self, channels):
+        small: list[np.ndarray | None] = [None] * 4
+        for i, ch in enumerate(channels):
+            if ch is None:
+                continue
+            h, w = ch.shape[:2]
+            total = h * w
+            if total <= self._PREVIEW_MAX_PX:
+                small[i] = ch
+            else:
+                factor = max(2, int(np.sqrt(total / self._PREVIEW_MAX_PX) + 0.5))
+                small[i] = ch[::factor, ::factor]
+        return small
+
+    def _build_base_from_channels(self, channels):
+        """Compose a base image (RGB) from individual channel inputs, used as
+        the source for the masked_image output when no `image` input is present.
+        """
+        defaults = [
+            np.array([1.0, 0.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([1.0, 0.0, 1.0]),
+        ]
+        h, w = 0, 0
+        for c in channels:
+            if c is not None:
+                h, w = c.shape[:2]
+                break
+        if h == 0:
+            return None
+        comp = np.zeros((h, w, 3), dtype=np.float32)
+        for i in range(4):
+            if channels[i] is None:
+                continue
+            ch = channels[i].astype(np.float32)
+            for c in range(3):
+                comp[:, :, c] += ch * defaults[i][c]
+        return np.clip(comp, 0.0, 1.0)
+
+    def _per_channel_masks(self, channels, bds):
+        """Return list of bool masks (or None) for each channel using current panel state.
+
+        Channels that are disconnected OR have their 'Use' checkbox unchecked
+        return None — they will be excluded from the AND/OR combine and their
+        per-channel mask output port will be None.
+        """
+        masks = [None] * 4
+        for i in range(4):
+            if channels[i] is None:
+                continue
+            panel = self._mc_widget.panel(i)
+            if not panel.is_use_enabled():
+                continue
+            t, ab = panel.get_threshold()
+            max_val = float((1 << bds[i]) - 1) if bds[i] > 0 else 255.0
+            t_float = float(t) / max_val
+            arr = channels[i]
+            if arr.ndim == 3:
+                arr = arr.mean(axis=2)
+            arr = arr.astype(np.float32)
+            masks[i] = (arr > t_float) if ab else (arr <= t_float)
+        return masks
+
+    def _combine_masks(self, masks, mode):
+        """AND/OR-merge per-channel boolean masks. Inactive channels are skipped."""
+        active = [m for m in masks if m is not None]
+        if not active:
+            return None
+        # All active masks share shape (taken from first non-None channel)
+        if mode == 'AND':
+            combined = active[0].copy()
+            for m in active[1:]:
+                combined &= m
+        else:  # OR
+            combined = active[0].copy()
+            for m in active[1:]:
+                combined |= m
+        return combined
+
+    def _build_outputs(self):
+        if self._is_eval_stale():
+            return False
+        channels = self._cached_channels
+        bds = self._cached_bit_depths
+        if all(c is None for c in channels):
+            return False
+
+        masks = self._per_channel_masks(channels, bds)
+
+        # Per-channel mask outputs
+        for i in range(4):
+            port = f'mask_ch{i + 1}'
+            if masks[i] is None:
+                self.output_values[port] = None
+            else:
+                self.output_values[port] = MaskData(
+                    payload=(masks[i].astype(np.uint8) * 255))
+
+        # Combined mask
+        mode = str(self.get_property('combine_mode') or 'AND').upper()
+        combined = self._combine_masks(masks, mode)
+        if combined is None:
+            return False
+        combined_u8 = combined.astype(np.uint8) * 255
+        self.output_values['combined_mask'] = MaskData(payload=combined_u8)
+
+        # Masked image: input × combined_mask
+        base = self._cached_base_image
+        if base is not None:
+            base_f = base.astype(np.float32)
+            if base_f.ndim == 3:
+                masked = base_f * combined[:, :, None]
+            else:
+                masked = base_f * combined
+            self.output_values['masked_image'] = ImageData(
+                payload=np.clip(masked, 0.0, 1.0).astype(base_f.dtype),
+                bit_depth=getattr(self, '_cached_base_bit_depth', 8),
+                scale_um=getattr(self, '_cached_base_scale_um', None),
+            )
+        self.mark_clean()
+        return True
+
+    def _build_display(self, use_small=False):
+        """Build the on-node preview image. If 'apply_to_image' is checked,
+        show the masked input image; otherwise show the combined mask.
+        """
+        channels = self._cached_channels_small if use_small else self._cached_channels
+        bds = self._cached_bit_depths
+        if all(c is None for c in channels):
+            return None
+
+        masks = self._per_channel_masks(channels, bds)
+        mode = str(self.get_property('combine_mode') or 'AND').upper()
+        combined = self._combine_masks(masks, mode)
+        if combined is None:
+            return None
+
+        if not bool(self.get_property('apply_to_image')):
+            return combined.astype(np.uint8) * 255
+
+        # Apply mask to base image (downsampled if requested)
+        base = self._cached_base_image
+        if base is None:
+            return combined.astype(np.uint8) * 255
+        if use_small:
+            h, w = combined.shape[:2]
+            bh, bw = base.shape[:2]
+            if (bh, bw) != (h, w):
+                fy = max(1, bh // h)
+                fx = max(1, bw // w)
+                base = base[::fy, ::fx]
+                # Trim/pad to exact match
+                base = base[:h, :w]
+                if base.shape[:2] != (h, w):
+                    return combined.astype(np.uint8) * 255
+        base_f = base.astype(np.float32)
+        if base_f.ndim == 3:
+            return np.clip(base_f * combined[:, :, None], 0.0, 1.0)
+        return np.clip(base_f * combined, 0.0, 1.0)
+
+
+# ===========================================================================
 # Merge Image Node — additive blend of multiple images
 # ===========================================================================
 
@@ -4330,3 +5135,535 @@ class MergeImageNode(BaseImageProcessNode):
         self.set_progress(100)
         self.mark_clean()
         return True, None
+
+
+# ===========================================================================
+# HSV Range Mask — colour-based segmentation via H/S/V ranges
+# ===========================================================================
+
+class _HueRangeBar(QtWidgets.QWidget):
+    """Horizontal hue gradient (0–360°) with two draggable handles for H min/max.
+
+    Supports wraparound: when h_min > h_max the selected region wraps around
+    the 0/360 boundary (useful for selecting reds, which span ~340–20°).
+    """
+    range_changed = QtCore.Signal(float, float)
+
+    BAR_HEIGHT = 28
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._h_min = 0.0
+        self._h_max = 360.0
+        self._dragging = None  # 'min' | 'max' | None
+        self.setMinimumHeight(self.BAR_HEIGHT)
+        self.setMinimumWidth(180)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+
+    def set_range(self, h_min, h_max):
+        self._h_min = float(h_min) % 360.0
+        self._h_max = float(h_max) % 360.0
+        self.update()
+
+    def get_range(self):
+        return self._h_min, self._h_max
+
+    # ── Painting ────────────────────────────────────────────────────
+
+    def paintEvent(self, ev):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+        w = max(1, self.width())
+        h = self.height()
+
+        # Hue gradient — draw 360 vertical strips (cheap, smooth enough)
+        # Use QLinearGradient for a single-shot gradient fill
+        gradient = QtGui.QLinearGradient(0, 0, w, 0)
+        for stop in range(0, 361, 10):
+            color = QtGui.QColor.fromHsvF(stop / 360.0, 1.0, 1.0)
+            gradient.setColorAt(stop / 360.0, color)
+        p.fillRect(0, 0, w, h, QtGui.QBrush(gradient))
+
+        x_min = self._deg_to_x(self._h_min, w)
+        x_max = self._deg_to_x(self._h_max, w)
+
+        # Darken outside the selection
+        overlay = QtGui.QColor(0, 0, 0, 130)
+        if self._h_min <= self._h_max:
+            if x_min > 0:
+                p.fillRect(0, 0, x_min, h, overlay)
+            if x_max < w:
+                p.fillRect(x_max, 0, w - x_max, h, overlay)
+        else:
+            # Wraparound: dark in the middle band
+            p.fillRect(x_max, 0, max(0, x_min - x_max), h, overlay)
+
+        # Handles — white line with black outline
+        for x in (x_min, x_max):
+            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 220), 3))
+            p.drawLine(x, 0, x, h)
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 230), 1))
+            p.drawLine(x, 0, x, h)
+
+    @staticmethod
+    def _deg_to_x(deg, w):
+        return int(round((deg % 360.0) / 360.0 * w))
+
+    @staticmethod
+    def _x_to_deg(x, w):
+        return float(np.clip(x, 0, w)) / max(w, 1) * 360.0
+
+    # ── Mouse handling ──────────────────────────────────────────────
+
+    def mousePressEvent(self, ev):
+        if ev.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        x = int(ev.position().x())
+        w = self.width()
+        x_min = self._deg_to_x(self._h_min, w)
+        x_max = self._deg_to_x(self._h_max, w)
+        # Snap to closest handle
+        self._dragging = 'min' if abs(x - x_min) <= abs(x - x_max) else 'max'
+        self._update_drag(x)
+
+    def mouseMoveEvent(self, ev):
+        if self._dragging is None:
+            return
+        self._update_drag(int(ev.position().x()))
+
+    def mouseReleaseEvent(self, ev):
+        self._dragging = None
+
+    def _update_drag(self, x):
+        deg = self._x_to_deg(x, self.width())
+        if self._dragging == 'min':
+            self._h_min = deg
+        elif self._dragging == 'max':
+            self._h_max = deg
+        self.update()
+        self.range_changed.emit(self._h_min, self._h_max)
+
+
+class _HsvRangeWidget(QtWidgets.QWidget):
+    """Combined H/S/V range selector with hue bar + S/V min-max sliders."""
+    params_changed = QtCore.Signal(float, float, float, float, float, float)
+    # h_min, h_max (deg), s_min, s_max (%), v_min, v_max (%)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._updating = False
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # ── Hue bar with handles + numeric readout ──────────────────
+        self._hue_bar = _HueRangeBar()
+        self._hue_bar.range_changed.connect(self._on_hue_changed)
+        layout.addWidget(self._hue_bar)
+
+        h_row = QtWidgets.QHBoxLayout()
+        h_row.setSpacing(4)
+        lbl_h = QtWidgets.QLabel('H (°)')
+        lbl_h.setStyleSheet('color: #cccccc; font-size: 8pt;')
+        lbl_h.setFixedWidth(36)
+        self._spn_h_min = QtWidgets.QSpinBox()
+        self._spn_h_min.setRange(0, 360)
+        self._spn_h_min.setValue(0)
+        self._spn_h_min.setFixedWidth(56)
+        self._spn_h_max = QtWidgets.QSpinBox()
+        self._spn_h_max.setRange(0, 360)
+        self._spn_h_max.setValue(360)
+        self._spn_h_max.setFixedWidth(56)
+        self._spn_h_min.valueChanged.connect(self._on_hue_spin)
+        self._spn_h_max.valueChanged.connect(self._on_hue_spin)
+        h_row.addWidget(lbl_h)
+        h_row.addWidget(QtWidgets.QLabel('min'))
+        h_row.addWidget(self._spn_h_min)
+        h_row.addStretch()
+        h_row.addWidget(QtWidgets.QLabel('max'))
+        h_row.addWidget(self._spn_h_max)
+        layout.addLayout(h_row)
+
+        # ── S row ────────────────────────────────────────────────────
+        self._sld_s_min, self._spn_s_min = self._make_slider_pair(0, 100, 0)
+        self._sld_s_max, self._spn_s_max = self._make_slider_pair(0, 100, 100)
+        layout.addLayout(self._build_minmax_row('S (%)', self._sld_s_min, self._spn_s_min,
+                                                 self._sld_s_max, self._spn_s_max))
+
+        # ── V row ────────────────────────────────────────────────────
+        self._sld_v_min, self._spn_v_min = self._make_slider_pair(0, 100, 0)
+        self._sld_v_max, self._spn_v_max = self._make_slider_pair(0, 100, 100)
+        layout.addLayout(self._build_minmax_row('V (%)', self._sld_v_min, self._spn_v_min,
+                                                 self._sld_v_max, self._spn_v_max))
+
+        # ── Color swatch preview ────────────────────────────────────
+        sw_row = QtWidgets.QHBoxLayout()
+        sw_row.setSpacing(4)
+        sw_lbl = QtWidgets.QLabel('Preview')
+        sw_lbl.setStyleSheet('color: #cccccc; font-size: 8pt;')
+        sw_lbl.setFixedWidth(54)
+        self._swatch = QtWidgets.QLabel()
+        self._swatch.setFixedHeight(16)
+        self._swatch.setMinimumWidth(140)
+        self._swatch.setStyleSheet('background: #888; border-radius: 2px;')
+        sw_row.addWidget(sw_lbl)
+        sw_row.addWidget(self._swatch, 1)
+        layout.addLayout(sw_row)
+
+        # Wire S/V sliders + spinboxes
+        for sld, spn, _which in [
+            (self._sld_s_min, self._spn_s_min, 's_min'),
+            (self._sld_s_max, self._spn_s_max, 's_max'),
+            (self._sld_v_min, self._spn_v_min, 'v_min'),
+            (self._sld_v_max, self._spn_v_max, 'v_max'),
+        ]:
+            sld.valueChanged.connect(lambda v, s=spn: self._sync_sld_to_spn(v, s))
+            spn.valueChanged.connect(lambda v, s=sld: self._sync_spn_to_sld(v, s))
+
+        self._update_swatch()
+
+    # ── Helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_slider_pair(min_v, max_v, value):
+        sld = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        sld.setRange(min_v, max_v)
+        sld.setValue(value)
+        spn = QtWidgets.QSpinBox()
+        spn.setRange(min_v, max_v)
+        spn.setValue(value)
+        spn.setFixedWidth(56)
+        return sld, spn
+
+    @staticmethod
+    def _build_minmax_row(label_text, sld_min, spn_min, sld_max, spn_max):
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(4)
+        lbl = QtWidgets.QLabel(label_text)
+        lbl.setStyleSheet('color: #cccccc; font-size: 8pt;')
+        lbl.setFixedWidth(36)
+        row.addWidget(lbl)
+        row.addWidget(QtWidgets.QLabel('min'))
+        row.addWidget(sld_min, 1)
+        row.addWidget(spn_min)
+        row.addWidget(QtWidgets.QLabel('max'))
+        row.addWidget(sld_max, 1)
+        row.addWidget(spn_max)
+        return row
+
+    def _sync_sld_to_spn(self, val, spn):
+        if self._updating:
+            return
+        self._updating = True
+        spn.setValue(int(val))
+        self._updating = False
+        self._emit()
+
+    def _sync_spn_to_sld(self, val, sld):
+        if self._updating:
+            return
+        self._updating = True
+        sld.setValue(int(val))
+        self._updating = False
+        self._emit()
+
+    def _on_hue_changed(self, h_min, h_max):
+        if self._updating:
+            return
+        self._updating = True
+        self._spn_h_min.setValue(int(round(h_min)))
+        self._spn_h_max.setValue(int(round(h_max)))
+        self._updating = False
+        self._emit()
+
+    def _on_hue_spin(self, _val):
+        if self._updating:
+            return
+        self._updating = True
+        self._hue_bar.set_range(self._spn_h_min.value(), self._spn_h_max.value())
+        self._updating = False
+        self._emit()
+
+    def _emit(self):
+        h_min, h_max = self._hue_bar.get_range()
+        params = (
+            float(h_min), float(h_max),
+            float(self._spn_s_min.value()), float(self._spn_s_max.value()),
+            float(self._spn_v_min.value()), float(self._spn_v_max.value()),
+        )
+        self._update_swatch()
+        self.params_changed.emit(*params)
+
+    def _update_swatch(self):
+        # Preview the midpoint colour of the selected H/S/V box
+        h_min, h_max = self._hue_bar.get_range()
+        # Hue midpoint with wraparound
+        if h_min <= h_max:
+            h_mid = (h_min + h_max) / 2.0
+        else:
+            h_mid = ((h_min + h_max + 360.0) / 2.0) % 360.0
+        s_mid = (self._spn_s_min.value() + self._spn_s_max.value()) / 2.0
+        v_mid = (self._spn_v_min.value() + self._spn_v_max.value()) / 2.0
+        c = QtGui.QColor.fromHsvF(h_mid / 360.0, s_mid / 100.0, v_mid / 100.0)
+        self._swatch.setStyleSheet(
+            f'background: {c.name()}; border: 1px solid #555; border-radius: 2px;'
+        )
+
+    # ── Public API for node ─────────────────────────────────────────
+
+    def get_params(self):
+        h_min, h_max = self._hue_bar.get_range()
+        return (
+            float(h_min), float(h_max),
+            float(self._spn_s_min.value()), float(self._spn_s_max.value()),
+            float(self._spn_v_min.value()), float(self._spn_v_max.value()),
+        )
+
+    def set_params(self, h_min, h_max, s_min, s_max, v_min, v_max):
+        self._updating = True
+        try:
+            self._hue_bar.set_range(h_min, h_max)
+            self._spn_h_min.setValue(int(round(h_min)))
+            self._spn_h_max.setValue(int(round(h_max)))
+            for sld, spn, val in [
+                (self._sld_s_min, self._spn_s_min, s_min),
+                (self._sld_s_max, self._spn_s_max, s_max),
+                (self._sld_v_min, self._spn_v_min, v_min),
+                (self._sld_v_max, self._spn_v_max, v_max),
+            ]:
+                sld.setValue(int(round(val)))
+                spn.setValue(int(round(val)))
+        finally:
+            self._updating = False
+        self._update_swatch()
+
+
+class _NodeHsvRangeWidget(NodeBaseWidget):
+    """Embeds _HsvRangeWidget on the node surface."""
+    def __init__(self, parent=None):
+        super().__init__(parent, name='hsv_range_widget', label='')
+        self._inner = _HsvRangeWidget()
+        self.set_custom_widget(self._inner)
+
+    @property
+    def inner(self) -> _HsvRangeWidget:
+        return self._inner
+
+    def get_value(self):
+        return list(self._inner.get_params())
+
+    def set_value(self, value):
+        if isinstance(value, (list, tuple)) and len(value) == 6:
+            self._inner.set_params(*[float(v) for v in value])
+
+
+class HsvRangeMaskNode(BaseImageProcessNode):
+    """
+    HSV-based colour range mask.
+
+    Converts the input RGB image to HSV and produces a binary mask of pixels
+    whose hue, saturation, and value all fall within user-defined ranges.
+
+    Controls
+    
+    - **Hue bar** — horizontal gradient with two draggable handles. When the min handle sits to the right of the max handle the selection wraps around the 0°/360° boundary (e.g. min=340, max=20 selects reds).
+    - **S min/max** — saturation range in percent. Set min high to exclude muted/grey pixels, set max low to keep only pastel colours.
+    - **V min/max** — value (brightness) range in percent. Set min high to exclude dark pixels, set max low to exclude blown highlights.
+    - **Mode** — *Include* keeps pixels inside the H∩S∩V box; *Exclude* keeps pixels outside it.
+    - **Apply to image (display)** — when checked the on-node preview shows the masked image; otherwise it shows the raw mask. Display only — the `masked_image` output is always populated.
+
+    Outputs
+    
+    - `mask` — binary MaskData
+    - `masked_image` — input image with mask applied (black outside)
+
+    Keywords: HSV, hue, saturation, value, color mask, threshold, range, segmentation, include, exclude, 色相, 飽和度, 顏色遮罩, 範圍, 分割
+    """
+
+    __identifier__ = 'nodes.image_process.color'
+    NODE_NAME = 'HSV Range Mask'
+    PORT_SPEC = {'inputs': ['image'], 'outputs': ['mask', 'image']}
+    _UI_PROPS = BaseImageProcessNode._UI_PROPS | frozenset({
+        'hsv_range_widget', 'hsv_state',
+    })
+    PROP_DESCRIPTIONS = {
+        'hsv_state':      '[h_min, h_max, s_min, s_max, v_min, v_max] — H in 0–360°, S/V in 0–100%. h_min > h_max wraps around.',
+        'mode':           "'Include' = mask is inside the H∩S∩V box; 'Exclude' = mask is outside.",
+        'apply_to_image': 'Display-only toggle. masked_image output is always produced.',
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('image', color=PORT_COLORS['image'])
+        self.add_output('mask', multi_output=True, color=PORT_COLORS['mask'])
+        self.add_output('masked_image', multi_output=True, color=PORT_COLORS['image'])
+
+        self.create_property('hsv_state', [0.0, 360.0, 0.0, 100.0, 0.0, 100.0])
+
+        self._hsv_widget = _NodeHsvRangeWidget(self.view)
+        self.add_custom_widget(self._hsv_widget)
+        self._hsv_widget.inner.params_changed.connect(self._on_params_changed)
+
+        self.add_combo_menu('mode', 'Mode', items=['Include', 'Exclude'])
+        self.add_checkbox('apply_to_image', '', text='Apply to image (display)', state=False)
+
+        self.create_preview_widgets()
+        self._cached_arr: np.ndarray | None = None
+        self._cached_bit_depth = 8
+        self._cached_scale_um: float | None = None
+
+        self._dbnc = QtCore.QTimer()
+        self._dbnc.setSingleShot(True)
+        self._dbnc.setInterval(120)
+        self._dbnc.timeout.connect(self._on_debounce_fire)
+
+    # ── External property sync ──────────────────────────────────────
+
+    def set_property(self, name, value, push_undo=True):
+        super().set_property(name, value, push_undo)
+        if name == 'hsv_state' and hasattr(self, '_hsv_widget'):
+            try:
+                if isinstance(value, (list, tuple)) and len(value) == 6:
+                    self._hsv_widget.inner.set_params(*[float(v) for v in value])
+            except Exception:
+                pass
+
+    # ── Live updates ────────────────────────────────────────────────
+
+    def _on_params_changed(self, h_min, h_max, s_min, s_max, v_min, v_max):
+        super(BaseExecutionNode, self).set_property(
+            'hsv_state',
+            [float(h_min), float(h_max),
+             float(s_min), float(s_max),
+             float(v_min), float(v_max)],
+            push_undo=False,
+        )
+        if self._cached_arr is None:
+            return
+        # Fast preview
+        mask = self._compute_mask(self._cached_arr)
+        if mask is not None:
+            disp = self._build_display(self._cached_arr, mask)
+            if disp is not None:
+                self.set_display(disp)
+        self._dbnc.start()
+
+    def _on_debounce_fire(self):
+        ok = self._build_outputs()
+        if ok:
+            for out_port in self.outputs().values():
+                for in_port in out_port.connected_ports():
+                    dn = in_port.node()
+                    if hasattr(dn, 'mark_dirty'):
+                        dn.mark_dirty()
+
+    # ── Evaluate ────────────────────────────────────────────────────
+
+    def evaluate(self):
+        self._eval_version_at_start = self._eval_version
+        self.reset_progress()
+        in_port = self.inputs().get('image')
+        if not in_port or not in_port.connected_ports():
+            return False, 'No image connected'
+        cp = in_port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if not isinstance(data, ImageData):
+            return False, 'Input must be ImageData'
+
+        arr = data.payload
+        if arr.ndim != 3 or arr.shape[-1] not in (3, 4):
+            return False, 'HSV mask requires an RGB image'
+
+        self._cached_arr = arr
+        self._cached_bit_depth = getattr(data, 'bit_depth', 8) or 8
+        self._cached_scale_um = getattr(data, 'scale_um', None)
+        self.set_progress(20)
+
+        # Sync widget from saved state
+        state = self.get_property('hsv_state')
+        try:
+            if isinstance(state, (list, tuple)) and len(state) == 6:
+                self._hsv_widget.inner.set_params(*[float(v) for v in state])
+        except Exception:
+            pass
+
+        self.set_progress(40)
+        if not self._build_outputs():
+            return False, 'Mask computation failed'
+        self.set_progress(100)
+        return True, None
+
+    # ── Mask computation ────────────────────────────────────────────
+
+    def _compute_mask(self, rgb_arr):
+        if rgb_arr is None or rgb_arr.ndim != 3:
+            return None
+        from skimage.color import rgb2hsv
+        rgb = rgb_arr[..., :3].astype(np.float32)
+        if rgb.max() > 1.0001:
+            rgb = rgb / 255.0
+        rgb = np.clip(rgb, 0.0, 1.0)
+        hsv = rgb2hsv(rgb)
+        h = hsv[..., 0] * 360.0
+        s = hsv[..., 1] * 100.0
+        v = hsv[..., 2] * 100.0
+
+        h_min, h_max, s_min, s_max, v_min, v_max = self._hsv_widget.inner.get_params()
+
+        if h_min <= h_max:
+            h_mask = (h >= h_min) & (h <= h_max)
+        else:
+            h_mask = (h >= h_min) | (h <= h_max)
+        s_mask = (s >= s_min) & (s <= s_max)
+        v_mask = (v >= v_min) & (v <= v_max)
+        mask = h_mask & s_mask & v_mask
+
+        mode = str(self.get_property('mode') or 'Include')
+        if mode == 'Exclude':
+            mask = ~mask
+        return mask
+
+    def _build_outputs(self):
+        if self._is_eval_stale():
+            return False
+        if self._cached_arr is None:
+            return False
+        mask = self._compute_mask(self._cached_arr)
+        if mask is None:
+            return False
+        mask_u8 = mask.astype(np.uint8) * 255
+        self.output_values['mask'] = MaskData(payload=mask_u8)
+
+        # masked_image: always produced
+        base = self._cached_arr
+        base_f = base.astype(np.float32)
+        if base_f.max() > 1.0001:
+            base_f = base_f / 255.0
+        if base_f.ndim == 3:
+            masked = base_f * mask[:, :, None]
+        else:
+            masked = base_f * mask
+        self.output_values['masked_image'] = ImageData(
+            payload=np.clip(masked, 0.0, 1.0),
+            bit_depth=self._cached_bit_depth,
+            scale_um=self._cached_scale_um,
+        )
+
+        # Display
+        disp = self._build_display(base, mask)
+        if disp is not None:
+            self.set_display(disp)
+        self.mark_clean()
+        return True
+
+    def _build_display(self, base, mask):
+        if not bool(self.get_property('apply_to_image')):
+            return mask.astype(np.uint8) * 255
+        base_f = base.astype(np.float32)
+        if base_f.max() > 1.0001:
+            base_f = base_f / 255.0
+        if base_f.ndim == 3:
+            return np.clip(base_f * mask[:, :, None], 0.0, 1.0)
+        return np.clip(base_f * mask, 0.0, 1.0)

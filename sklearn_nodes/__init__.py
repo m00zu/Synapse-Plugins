@@ -22,6 +22,20 @@ _vendor = pathlib.Path(__file__).parent / 'vendor'
 if _vendor.is_dir() and str(_vendor) not in sys.path:
     sys.path.insert(0, str(_vendor))
 
+# ── macOS libomp preload (xgboost native lib needs OpenMP runtime) ───────────
+# CI bundles libomp.dylib alongside vendored xgboost so users without
+# Homebrew's libomp can still load xgboost.  RTLD_GLOBAL exposes the
+# symbols process-wide so libxgboost.dylib finds them when it's loaded.
+import platform as _platform
+if _platform.system() == 'Darwin':
+    import ctypes as _ctypes
+    _libomp = _vendor / 'libomp.dylib'
+    if _libomp.is_file():
+        try:
+            _ctypes.CDLL(str(_libomp), mode=_ctypes.RTLD_GLOBAL)
+        except OSError:
+            pass
+
 # ── Node imports ──────────────────────────────────────────────────────────────
 from .ml_data import *
 from .preprocess_nodes import *
