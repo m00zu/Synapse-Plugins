@@ -22,6 +22,7 @@ from rdkit.Chem import AllChem, Descriptors, rdMolDescriptors
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Chem.Draw.rdMolDraw2D import SetDarkMode
 from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
+from rdkit.Chem.Scaffolds import MurckoScaffold
 import sdfrust
 
 from .meeko_ported import MoleculePreparation, PDBQTWriterLegacy
@@ -1536,6 +1537,85 @@ class SanitizeStereoNode(BaseExecutionNode):
         msg = f"{len(df)} molecule(s) cleaned"
         if n_failed:
             msg += f" ({n_failed} failed, dropped)"
+        return True, msg
+
+
+class MurckoScaffoldNode(BaseExecutionNode):
+    """Add a Murcko scaffold SMILES column to every row of a MolTable.
+
+    The Murcko scaffold of a molecule is its ring system together with the
+    linker atoms that connect those rings — substituents are stripped.
+    Useful for scaffold-based diversity analysis or for non-leaky
+    scaffold-aware train/test splits.
+
+    The optional **Generic** flag additionally strips atom identities
+    (every atom becomes carbon, every bond becomes single) — coarser
+    grouping that captures topology only.
+
+    Output: input MolTable + a new ``scaffold`` column (SMILES string).
+
+    Keywords: Murcko, scaffold, generic scaffold, framework, diversity
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Murcko Scaffold'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+        self.add_text_input('column_name', 'Column Name', text='scaffold')
+        self.add_checkbox('generic', '', text='Generic (strip atom types)',
+                          state=False)
+
+    def evaluate(self):
+        in_port = self.inputs().get('mol_table')
+        if not (in_port and in_port.connected_ports()):
+            return False, "No mol_table connected."
+        src = in_port.connected_ports()[0]
+        val = src.node().output_values.get(src.name())
+        if not isinstance(val, MolTableData):
+            return False, "Expected MolTableData."
+
+        df = val.payload.copy()
+        mol_col = val.mol_col
+        n = len(df)
+        if n == 0:
+            return False, "Empty table."
+
+        col_name = (self.get_property('column_name') or 'scaffold').strip() or 'scaffold'
+        generic = bool(self.get_property('generic'))
+
+        self.set_progress(5)
+        scaffolds: list[str | None] = []
+        n_failed = 0
+        for i, m in enumerate(df[mol_col].tolist()):
+            if m is None:
+                scaffolds.append(None)
+                continue
+            try:
+                sc = MurckoScaffold.GetScaffoldForMol(m)
+                if generic:
+                    sc = MurckoScaffold.MakeScaffoldGeneric(sc)
+                scaffolds.append(Chem.MolToSmiles(sc))
+            except Exception:
+                scaffolds.append(None)
+                n_failed += 1
+            if (i & 0x3FF) == 0:
+                self.set_progress(5 + int(85 * (i + 1) / n))
+
+        df[col_name] = scaffolds
+        self.set_progress(95)
+
+        self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
+        self.mark_clean()
+        self.set_progress(100)
+
+        n_unique = len({s for s in scaffolds if s})
+        msg = f"{n_unique} unique scaffold(s) over {n} molecule(s)"
+        if n_failed:
+            msg += f" — {n_failed} failed"
         return True, msg
 
 
