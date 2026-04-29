@@ -140,17 +140,19 @@ _FORMAT_EXTENSIONS = {
 }
 
 
-def _rdkit_mol_to_sdfrust(mol, name: str = '') -> sdfrust.Molecule:
+def _rdkit_mol_to_sdfrust(mol, name: str = '', conf_id: int = -1) -> sdfrust.Molecule:
     """Convert an RDKit Mol (with 3D conformer) to a sdfrust.Molecule.
 
     The molecule is kekulized first so aromatic bonds become explicit
     single/double alternation.  MOL2's ``ar`` bond type causes kekulization
     failures when read back by RDKit, so explicit Kekulé form is safer.
+
+    ``conf_id`` selects which conformer to write (-1 = first/default).
     """
     mol = Chem.RWMol(mol)
     Chem.Kekulize(mol, clearAromaticFlags=False)
 
-    conf = mol.GetConformer()
+    conf = mol.GetConformer(conf_id)
     sdf_mol = sdfrust.Molecule(name or Chem.MolToSmiles(Chem.RemoveHs(mol)))
 
     for i, atom in enumerate(mol.GetAtoms()):
@@ -261,21 +263,29 @@ def embed_mol_3d(
     return mol
 
 
-def mol_to_format(mol, fmt: str, name: str = '') -> str:
+def mol_to_format(mol, fmt: str, name: str = '', conf_id: int = -1) -> str:
     """Convert an RDKit Mol (with 3D conformer) to a string in the given format.
 
     Supported formats: 'mol2', 'sdf', 'pdb', 'xyz', 'smi', 'pdbqt' (requires meeko).
+
+    If ``name`` is provided, it is written into the mol's ``_Name`` property
+    (used by SDF/MOL2 title lines) on a clone so the input is not mutated.
+    ``conf_id`` selects which conformer to write (-1 = first/default).
     """
     fmt = fmt.lower().strip()
+    if name:
+        mol = Chem.Mol(mol)
+        mol.SetProp('_Name', str(name))
+
     if fmt == 'mol2':
-        sdf_mol = _rdkit_mol_to_sdfrust(mol, name=name)
+        sdf_mol = _rdkit_mol_to_sdfrust(mol, name=name, conf_id=conf_id)
         return sdfrust.write_mol2_string(sdf_mol)
     elif fmt == 'sdf':
-        return Chem.MolToMolBlock(mol) + '$$$$\n'
+        return Chem.MolToMolBlock(mol, confId=conf_id) + '$$$$\n'
     elif fmt == 'pdb':
-        return Chem.MolToPDBBlock(mol)
+        return Chem.MolToPDBBlock(mol, confId=conf_id)
     elif fmt == 'xyz':
-        return Chem.MolToXYZBlock(mol)
+        return Chem.MolToXYZBlock(mol, confId=conf_id)
     elif fmt == 'smi':
         return f'{Chem.MolToSmiles(mol)} {name}\n'
     elif fmt == 'pdbqt':
@@ -288,6 +298,25 @@ def mol_to_format(mol, fmt: str, name: str = '') -> str:
         raise RuntimeError(f"Meeko PDBQT conversion failed: {err_msg}")
     else:
         raise ValueError(f"Unsupported format: '{fmt}'")
+
+
+def _format_all_conformers(mol, fmt: str, name: str = '') -> list[str]:
+    """Emit one record per conformer for multi-conf formats (SDF, PDB, XYZ).
+
+    For other formats (or single-conformer mols), emits a single record.
+    Pose-1 keeps the bare name; subsequent poses get ``_poseN`` suffixes.
+    """
+    multi_supported = fmt.lower() in ('sdf', 'pdb', 'xyz', 'mol2')
+    n = mol.GetNumConformers()
+    if n <= 1 or not multi_supported:
+        return [mol_to_format(mol, fmt, name=name)]
+
+    out = []
+    for i, conf in enumerate(mol.GetConformers()):
+        pose_name = name if i == 0 else f'{name}_pose{i + 1}'
+        out.append(mol_to_format(mol, fmt, name=pose_name,
+                                 conf_id=conf.GetId()))
+    return out
 
 
 # ── Node definitions ──────────────────────────────────────────────────────────
@@ -1697,16 +1726,20 @@ class BatchFileWriterNode(BaseExecutionNode):
             out_file.parent.mkdir(parents=True, exist_ok=True)
 
             parts = []
+            n_mols = 0
             for _, row in df.iterrows():
                 mol = row[mol_col]
                 name = row.get('name', '')
                 if mol is None:
                     continue
-                parts.append(mol_to_format(mol, fmt, name=name))
+                parts.extend(_format_all_conformers(mol, fmt, name=name))
+                n_mols += 1
             out_file.write_text(''.join(parts))
             self.mark_clean()
             self.set_progress(100)
-            return True, f"{len(parts)} molecules written to {out_file.name}"
+            n_records = len(parts)
+            extra = f" ({n_records} pose records)" if n_records != n_mols else ""
+            return True, f"{n_mols} molecules written to {out_file.name}{extra}"
 
         else:  # One File Per Mol
             dir_path = (self.get_property('dir_path') or '').strip()
@@ -1724,8 +1757,9 @@ class BatchFileWriterNode(BaseExecutionNode):
                 # Sanitize filename
                 safe = "".join(c if c.isalnum() or c in '-_.' else '_' for c in name)
                 fpath = out_dir / (safe + ext)
-                text = mol_to_format(mol, fmt, name=name)
-                fpath.write_text(text)
+                # Pack all conformers into one file when the format supports it.
+                fpath.write_text(''.join(
+                    _format_all_conformers(mol, fmt, name=name)))
                 written += 1
             self.mark_clean()
             self.set_progress(100)
@@ -1859,6 +1893,207 @@ class SanitizeStereoNode(BaseExecutionNode):
         if n_failed:
             msg += f" ({n_failed} failed, dropped)"
         return True, msg
+
+
+class LargestFragmentNode(BaseExecutionNode):
+    """Replace each molecule in a MolTable with its largest connected fragment.
+
+    Useful upstream of docking: salts (``CC(=O)O.[Na]``), counter-ions,
+    and solvents in disconnected SMILES break PDBQT round-trips and
+    embedding.  This node uses ``rdMolStandardize.LargestFragmentChooser``,
+    which picks the largest fragment by heavy-atom count and breaks ties by
+    molecular weight.
+
+    The ``smiles`` column is also rewritten to the canonical SMILES of the
+    chosen fragment so downstream nodes see a consistent identifier.
+
+    Single-fragment molecules pass through untouched.
+
+    Keywords: largest fragment, salt strip, desalt, MolStandardize, neutralize
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Largest Fragment'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+    def evaluate(self):
+        in_port = self.inputs().get('mol_table')
+        if not (in_port and in_port.connected_ports()):
+            return False, "No mol_table connected."
+        src = in_port.connected_ports()[0]
+        val = src.node().output_values.get(src.name())
+        if not isinstance(val, MolTableData):
+            return False, "Expected MolTableData."
+
+        df = val.payload.copy()
+        mol_col = val.mol_col
+        n = len(df)
+        if n == 0:
+            return False, "Empty table."
+
+        try:
+            from rdkit.Chem.MolStandardize import rdMolStandardize
+            chooser = rdMolStandardize.LargestFragmentChooser()
+        except Exception as e:
+            return False, f"rdMolStandardize unavailable: {e}"
+
+        self.set_progress(5)
+        new_mols: list[Any] = []
+        new_smiles: list[str | None] = []
+        n_modified = 0
+        n_failed = 0
+        has_smiles_col = 'smiles' in df.columns
+
+        for i, m in enumerate(df[mol_col].tolist()):
+            if m is None:
+                new_mols.append(None)
+                new_smiles.append(None)
+                continue
+            try:
+                # Fast path: single-fragment mols pass through.
+                frags = Chem.GetMolFrags(m, asMols=False)
+                if len(frags) <= 1:
+                    new_mols.append(m)
+                    new_smiles.append(Chem.MolToSmiles(m) if has_smiles_col else None)
+                    continue
+
+                largest = chooser.choose(m)
+                new_mols.append(largest)
+                new_smiles.append(Chem.MolToSmiles(largest))
+                n_modified += 1
+            except Exception:
+                new_mols.append(None)
+                new_smiles.append(None)
+                n_failed += 1
+            if (i & 0x3FF) == 0:
+                self.set_progress(5 + int(85 * (i + 1) / n))
+
+        df[mol_col] = new_mols
+        if has_smiles_col:
+            df['smiles'] = new_smiles
+
+        self.set_progress(95)
+
+        # Drop rows that failed; keep singletons untouched.
+        if n_failed:
+            df = df[df[mol_col].notna()].reset_index(drop=True)
+
+        self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
+        self.mark_clean()
+        self.set_progress(100)
+
+        msg = f"{n_modified} molecule(s) reduced to largest fragment"
+        if n_failed:
+            msg += f" ({n_failed} failed, dropped)"
+        if not n_modified and not n_failed:
+            msg = f"{n} molecule(s) — all single-fragment, no changes"
+        return True, msg
+
+
+def _apply_hydrogen_op(node, op_name: str, op_fn) -> tuple[bool, str]:
+    """Shared evaluate-body for AddHs / RemoveHs nodes.
+
+    ``op_fn`` is a callable ``(mol) -> mol`` that returns a new Mol.
+    """
+    in_port = node.inputs().get('mol_table')
+    if not (in_port and in_port.connected_ports()):
+        return False, "No mol_table connected."
+    src = in_port.connected_ports()[0]
+    val = src.node().output_values.get(src.name())
+    if not isinstance(val, MolTableData):
+        return False, "Expected MolTableData."
+
+    df = val.payload.copy()
+    mol_col = val.mol_col
+    n = len(df)
+    if n == 0:
+        return False, "Empty table."
+
+    node.set_progress(5)
+    new_mols: list[Any] = []
+    n_failed = 0
+    for i, m in enumerate(df[mol_col].tolist()):
+        if m is None:
+            new_mols.append(None)
+            continue
+        try:
+            new_mols.append(op_fn(m))
+        except Exception:
+            new_mols.append(None)
+            n_failed += 1
+        if (i & 0x3FF) == 0:
+            node.set_progress(5 + int(85 * (i + 1) / n))
+
+    df[mol_col] = new_mols
+    node.set_progress(95)
+
+    if n_failed:
+        df = df[df[mol_col].notna()].reset_index(drop=True)
+
+    node.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
+    node.mark_clean()
+    node.set_progress(100)
+
+    msg = f"{len(df)} molecule(s) {op_name}"
+    if n_failed:
+        msg += f" ({n_failed} failed, dropped)"
+    return True, msg
+
+
+class AddHydrogensNode(BaseExecutionNode):
+    """Add explicit hydrogen atoms to every molecule in a MolTable.
+
+    Uses ``Chem.AddHs(mol, addCoords=True)`` — when 3D conformers are present,
+    the new H atoms get reasonable positions; for 2D / no-conformer mols the
+    flag is a no-op and Hs are added without coordinates.
+
+    Useful before docking (PDBQT requires explicit Hs) or before any node
+    that needs a hydrogen-complete representation (Mol 3D Embed, GNINA, etc.).
+
+    Keywords: hydrogens, AddHs, explicit hydrogens, protonate
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Add Hydrogens'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+    def evaluate(self):
+        return _apply_hydrogen_op(
+            self, 'with hydrogens added',
+            lambda m: Chem.AddHs(m, addCoords=True))
+
+
+class RemoveHydrogensNode(BaseExecutionNode):
+    """Remove explicit hydrogen atoms from every molecule in a MolTable.
+
+    Calls ``Chem.RemoveHs(mol)``.  Useful for slimming representations before
+    fingerprinting / SMILES export, or for cleanup after docking.
+
+    Keywords: hydrogens, RemoveHs, strip Hs, deprotonate
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Remove Hydrogens'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+    def evaluate(self):
+        return _apply_hydrogen_op(
+            self, 'with hydrogens removed', Chem.RemoveHs)
 
 
 _FILENAME_BAD_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')

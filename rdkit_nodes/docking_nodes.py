@@ -1717,17 +1717,23 @@ class BatchDockNode(BaseExecutionNode):
                 mol_list = RDKitMolCreate.from_pdbqt_mol(pdbqt_mol)
                 docked_mols[i] = RDKitMolCreate.combine_rdkit_mols(mol_list)
             except Exception:
-                pass
+                # Docking succeeded (we have a score) but the pose couldn't
+                # be converted back to an RDKit Mol.  Flag this so users can
+                # filter on it instead of silently losing the row.
+                if statuses[i] == 'success':
+                    statuses[i] = 'mol_conversion_failed'
 
         df['dock_score'] = best_energies
         df['dock_n_poses'] = n_poses_list
         df['dock_status'] = statuses
-        df['dock_mol'] = docked_mols
+        # Replace the original mol column with the docked Mol (poses as
+        # conformers).  Failed rows get None — filter via dock_status if needed.
+        df[mol_col] = docked_mols
 
         self.set_progress(97)
 
-        # Results table (without Mol columns)
-        result_df = df.drop(columns=[mol_col, 'dock_mol'], errors='ignore')
+        # Results table (without the Mol column).
+        result_df = df.drop(columns=[mol_col], errors='ignore')
         self.output_values['results'] = TableData(payload=result_df)
         self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
 
@@ -1758,7 +1764,7 @@ class GNINARescoreNode(BaseExecutionNode):
 
     Accepts:
       - MoleculeData (single docked molecule from VinaDockNode, conformers = poses)
-      - MolTableData (batch results from BatchDockNode, uses dock_mol conformers)
+      - MolTableData (batch results from BatchDockNode; uses mol_col conformers)
       - DockingResultData (legacy PDBQT poses)
 
     Outputs a scores table and (for batch mode) an updated mol_table with
@@ -1973,14 +1979,18 @@ class GNINARescoreNode(BaseExecutionNode):
                       f'CNNaffinity={best_aff:.1f}')
 
     def _score_batch(self, model, rec_coords, rec_types, mt_val):
-        """Score batch docking results from MolTableData with dock_mol column."""
+        """Score batch docking results from MolTableData (uses mol_col for poses)."""
         from .gnina_scorer import process_molecule
 
         df = mt_val.payload.copy()
         mol_col = mt_val.mol_col
 
-        if 'dock_mol' not in df.columns:
-            return False, 'MolTableData has no dock_mol column (run BatchDock first).'
+        # BatchDockNode now stores docked poses (as conformers) directly on
+        # mol_col; older workflows kept them in a separate 'dock_mol' column.
+        pose_col = mol_col if mol_col in df.columns else 'dock_mol'
+        if pose_col not in df.columns:
+            return False, ('MolTable has no docked poses '
+                            '(run Batch Dock first).')
 
         score_mode = self.get_property('score_mode') or 'best_pose'
         all_poses = (score_mode == 'all_poses')
@@ -2002,7 +2012,7 @@ class GNINARescoreNode(BaseExecutionNode):
         mol_pose_data: list[tuple[int, list, list] | None] = []
         # Each entry: (mol_idx, mol_poses, valid_conf_ids) or None
         for mol_idx in range(n):
-            dock_mol = df['dock_mol'].iloc[mol_idx]
+            dock_mol = df[pose_col].iloc[mol_idx]
             if dock_mol is None or dock_mol.GetNumConformers() == 0:
                 mol_pose_data.append(None)
                 progress_rows[mol_idx] = {'name': names[mol_idx],
@@ -2122,7 +2132,7 @@ class GNINARescoreNode(BaseExecutionNode):
                 self.set_progress(int(5 + (count + 1) / n * 85))
 
         if not all_rows:
-            return False, 'No valid poses found in dock_mol column.'
+            return False, f"No valid poses found in '{pose_col}' column."
 
         scores_df = pd.DataFrame(all_rows)
         scores_df = scores_df.sort_values(
