@@ -10,6 +10,7 @@ import NodeGraphQt
 import numpy as np
 import pandas as pd
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from PIL import Image
@@ -854,6 +855,63 @@ class MolReaderNode(BaseExecutionNode):
 
 # ── MolTable from tabular file (parallel SMILES parsing) ────────────────────
 
+_PUBCHEM_BASE = ('https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/'
+                 '{name}/property/{prop}/TXT')
+
+
+def _resolve_iupac_to_smiles(idx: int, name: str, timeout: float = 10.0):
+    """Fetch SMILES for a chemical name from PubChem PUG REST.
+
+    Tries CanonicalSMILES first; falls back to IsomericSMILES if the former
+    isn't returned (some entries only expose one).  Returns ``(idx,
+    smiles_or_None, mol_or_None, canonical_smiles_or_None,
+    error_message_or_None)``.
+    """
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError
+    from urllib.parse import quote
+
+    if not name or not str(name).strip():
+        return idx, None, None, None, 'empty name'
+
+    encoded = quote(str(name).strip(), safe='')
+
+    smi_raw = None
+    last_err = None
+    for prop in ('CanonicalSMILES', 'IsomericSMILES'):
+        url = _PUBCHEM_BASE.format(name=encoded, prop=prop)
+        try:
+            req = Request(url, headers={'User-Agent': 'Synapse-RDKit-Plugin/1.0'})
+            with urlopen(req, timeout=timeout) as resp:
+                smi_raw = resp.read().decode('utf-8').strip()
+                if smi_raw:
+                    break
+        except HTTPError as e:
+            last_err = f'HTTP {e.code}: {e.reason}'
+            # 404 = name unknown to PubChem; no point trying the other prop.
+            if e.code == 404:
+                break
+        except Exception as e:
+            last_err = f'{type(e).__name__}: {e}'
+
+    if not smi_raw:
+        return idx, None, None, None, last_err or 'no SMILES returned'
+    if '\n' in smi_raw:
+        smi_raw = smi_raw.splitlines()[0].strip()
+
+    try:
+        mol = Chem.MolFromSmiles(smi_raw)
+    except Exception as e:
+        return idx, smi_raw, None, None, f'rdkit parse: {e}'
+    if mol is None:
+        return idx, smi_raw, None, None, 'rdkit returned None'
+    try:
+        canon = Chem.MolToSmiles(mol)
+    except Exception:
+        canon = smi_raw
+    return idx, smi_raw, mol, canon, None
+
+
 def _parse_one_smiles(idx, smi):
     """Worker for MolTableReaderNode (threaded; RDKit releases the GIL)."""
     if not smi:
@@ -1011,6 +1069,269 @@ class MolTableReaderNode(BaseExecutionNode):
         msg = f'{n_good} molecule{"s" if n_good != 1 else ""} loaded'
         if n_bad:
             msg += f' ({n_bad} failed, dropped)'
+        return True, msg
+
+
+class IUPACToSMILESNode(BaseExecutionNode):
+    """Resolve a column of chemical names / IUPAC strings to SMILES via PubChem.
+
+    Sends each name to PubChem PUG REST
+    (``https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/<name>/property/CanonicalSMILES/TXT``)
+    in a thread pool and parses the returned SMILES into RDKit Mols.  Outputs a
+    standard MolTable (with ``name`` / ``smiles`` / ``ROMol`` columns and any
+    user-selected property columns carried through).
+
+    PubChem allows up to 5 requests/second per IP — keep ``Workers`` ≤ 5.
+
+    **Network access required.**  Names that fail to resolve (HTTP 404,
+    timeout, or invalid SMILES) are dropped.
+
+    Property Columns: comma-separated list of extra columns from the input
+    table to carry forward.  Leave blank to keep only name / smiles / ROMol.
+
+    Keywords: IUPAC, name to SMILES, PubChem, PUG REST, chemical resolver
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.IO'
+    NODE_NAME      = 'IUPAC to SMILES'
+    PORT_SPEC      = {'inputs': ['table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('table',     color=PORT_COLORS['table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+        self._add_column_selector('name_col', label='IUPAC Column',
+                                   text='IUPAC', mode='single')
+        self._add_column_selector('id_col', label='ID Column (blank=auto)',
+                                   text='', mode='single')
+        self._add_column_selector('props', label='Property Columns',
+                                   text='', mode='multi')
+        self._add_int_spinbox('workers', 'Workers',
+                              value=4, min_val=1, max_val=32, step=1)
+        self._add_int_spinbox('timeout', 'Timeout (s)',
+                              value=10, min_val=1, max_val=120)
+
+    def _get_input_df(self):
+        port = self.inputs().get('table')
+        if not port or not port.connected_ports():
+            return None
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if isinstance(data, TableData):
+            return data.df
+        return None
+
+    def evaluate(self):
+        df_in = self._get_input_df()
+        if df_in is None:
+            return False, 'No table connected.'
+
+        name_col = (self.get_property('name_col') or '').strip()
+        if not name_col or name_col not in df_in.columns:
+            return False, (f"Name column '{name_col}' not found. "
+                            f"Columns: {list(df_in.columns)}")
+
+        id_col = (self.get_property('id_col') or '').strip()
+
+        props_raw = (self.get_property('props') or '').strip()
+        prop_cols = [c.strip() for c in props_raw.split(',') if c.strip()] \
+            if props_raw else []
+        missing = [c for c in prop_cols if c not in df_in.columns]
+        if missing:
+            return False, (f"Property column(s) not found: {missing}. "
+                            f"Columns: {list(df_in.columns)}")
+
+        names = df_in[name_col].astype(str).tolist()
+        n = len(names)
+        if n == 0:
+            return False, 'Input table has no rows.'
+
+        if id_col and id_col in df_in.columns:
+            ids = df_in[id_col].astype(str).tolist()
+        else:
+            ids = [f'Mol_{i + 1}' for i in range(n)]
+
+        workers = max(1, int(self.get_property('workers') or 4))
+        timeout = float(self.get_property('timeout') or 10)
+
+        self.set_progress(5)
+        results: list[tuple] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_resolve_iupac_to_smiles, i, names[i], timeout)
+                       for i in range(n)]
+            done = 0
+            for fut in futures:
+                results.append(fut.result())
+                done += 1
+                if (done & 0x3F) == 0 or done == n:
+                    self.set_progress(5 + int(85 * done / n))
+
+        results.sort(key=lambda r: r[0])
+
+        good = [(idx, ids[idx], mol, canon)
+                for (idx, _smi, mol, canon, _err) in results
+                if mol is not None]
+        n_good = len(good)
+        n_bad = n - n_good
+        if n_good == 0:
+            # Surface the first error so users can diagnose (network, SSL, etc.)
+            first_err = next((e for (_, _, _, _, e) in results if e), 'unknown')
+            return False, f'All {n} name(s) failed. First error: {first_err}'
+
+        self.set_progress(92)
+        good_idx = [g[0] for g in good]
+        out_data: dict[str, list] = {
+            'name':   [g[1] for g in good],
+            'smiles': [g[3] for g in good],
+            'ROMol':  [g[2] for g in good],
+        }
+        for c in prop_cols:
+            out_data[c] = df_in[c].iloc[good_idx].tolist()
+        out_df = pd.DataFrame(out_data)
+        self.output_values['mol_table'] = MolTableData(payload=out_df)
+        self.mark_clean()
+        self.set_progress(100)
+
+        msg = f'{n_good} name(s) resolved'
+        if n_bad:
+            msg += f' ({n_bad} failed, dropped)'
+        return True, msg
+
+
+def _resolve_smiles_to_iupac(idx: int, smiles: str, timeout: float = 10.0):
+    """Fetch the preferred IUPAC name for a SMILES from PubChem PUG REST.
+
+    Returns ``(idx, iupac_or_None, error_or_None)``.
+    """
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError
+    from urllib.parse import quote
+
+    if not smiles or not str(smiles).strip():
+        return idx, None, 'empty smiles'
+    smi = str(smiles).strip()
+    encoded = quote(smi, safe='')
+    url = (f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/'
+           f'{encoded}/property/IUPACName/TXT')
+    try:
+        req = Request(url, headers={'User-Agent': 'Synapse-RDKit-Plugin/1.0'})
+        with urlopen(req, timeout=timeout) as resp:
+            txt = resp.read().decode('utf-8').strip()
+    except HTTPError as e:
+        return idx, None, f'HTTP {e.code}: {e.reason}'
+    except Exception as e:
+        return idx, None, f'{type(e).__name__}: {e}'
+    if not txt:
+        return idx, None, 'empty response'
+    return idx, txt.splitlines()[0].strip(), None
+
+
+class SMILESToIUPACNode(BaseExecutionNode):
+    """Resolve a SMILES column to IUPAC names via PubChem.
+
+    For each row, queries PubChem PUG REST
+    (``/compound/smiles/<smiles>/property/IUPACName/TXT``) to retrieve the
+    preferred IUPAC name and stores it in a new column on the output table.
+
+    Accepts either a ``mol_table`` (uses its ``smiles`` column) or any
+    ``table`` with a SMILES column you select.
+
+    PubChem allows up to 5 requests/second per IP — keep ``Workers`` ≤ 5.
+
+    **Network access required.**  Rows whose lookup fails get ``None`` in
+    the IUPAC column; the original row is preserved.
+
+    Keywords: SMILES to IUPAC, name resolver, PubChem, PUG REST
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.IO'
+    NODE_NAME      = 'SMILES to IUPAC'
+    PORT_SPEC      = {'inputs': ['table'], 'outputs': ['table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('table',  color=PORT_COLORS['table'])
+        self.add_output('table', color=PORT_COLORS['table'])
+
+        self._add_column_selector('smiles_col', label='SMILES Column',
+                                   text='smiles', mode='single')
+        self.add_text_input('output_col', 'Output Column', text='iupac_name')
+        self._add_int_spinbox('workers', 'Workers',
+                              value=4, min_val=1, max_val=32, step=1)
+        self._add_int_spinbox('timeout', 'Timeout (s)',
+                              value=10, min_val=1, max_val=120)
+
+    def _get_input_df(self):
+        port = self.inputs().get('table')
+        if not port or not port.connected_ports():
+            return None
+        cp = port.connected_ports()[0]
+        data = cp.node().output_values.get(cp.name())
+        if isinstance(data, TableData):
+            return data.df
+        return None
+
+    def evaluate(self):
+        df_in = self._get_input_df()
+        if df_in is None:
+            return False, 'No table connected.'
+
+        smi_col = (self.get_property('smiles_col') or 'smiles').strip()
+        if smi_col not in df_in.columns:
+            return False, (f"SMILES column '{smi_col}' not found. "
+                            f"Columns: {list(df_in.columns)}")
+
+        out_col = (self.get_property('output_col') or 'iupac_name').strip() \
+            or 'iupac_name'
+
+        smiles_list = df_in[smi_col].astype(str).tolist()
+        n = len(smiles_list)
+        if n == 0:
+            return False, 'Input table has no rows.'
+
+        workers = max(1, int(self.get_property('workers') or 4))
+        timeout = float(self.get_property('timeout') or 10)
+
+        self.set_progress(5)
+        results: list[tuple[int, str | None, str | None]] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_resolve_smiles_to_iupac, i,
+                                    smiles_list[i], timeout)
+                       for i in range(n)]
+            done = 0
+            for fut in futures:
+                results.append(fut.result())
+                done += 1
+                if (done & 0x3F) == 0 or done == n:
+                    self.set_progress(5 + int(85 * done / n))
+
+        results.sort(key=lambda r: r[0])
+        names = [r[1] for r in results]
+        n_ok = sum(1 for v in names if v)
+
+        if n_ok == 0:
+            first_err = next((e for (_, _, e) in results if e), 'unknown')
+            return False, f'All {n} lookup(s) failed. First error: {first_err}'
+
+        out_df = df_in.copy()
+        out_df[out_col] = names
+        # Pass through MolTable shape if input was a MolTable.
+        port = self.inputs().get('table')
+        cp = port.connected_ports()[0] if port and port.connected_ports() else None
+        upstream = cp.node().output_values.get(cp.name()) if cp else None
+        if isinstance(upstream, MolTableData):
+            self.output_values['table'] = MolTableData(
+                payload=out_df, mol_col=upstream.mol_col)
+        else:
+            self.output_values['table'] = TableData(payload=out_df)
+        self.mark_clean()
+        self.set_progress(100)
+
+        n_fail = n - n_ok
+        msg = f"{n_ok} IUPAC name(s) resolved into '{out_col}'"
+        if n_fail:
+            msg += f" ({n_fail} failed, left as None)"
         return True, msg
 
 
@@ -1537,6 +1858,184 @@ class SanitizeStereoNode(BaseExecutionNode):
         msg = f"{len(df)} molecule(s) cleaned"
         if n_failed:
             msg += f" ({n_failed} failed, dropped)"
+        return True, msg
+
+
+_FILENAME_BAD_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def _sanitize_filename(name: str, fallback: str) -> str:
+    """Strip filesystem-illegal chars; fall back to a default if empty."""
+    s = _FILENAME_BAD_CHARS.sub('_', str(name)).strip().strip('.')
+    return s or fallback
+
+
+class BatchMolDrawerNode(BaseExecutionNode):
+    """Render every molecule in a MolTable to a PNG or SVG file on disk.
+
+    Writes one image per row to **Output Folder**, named from the chosen
+    **Filename Column** (sanitised).  Adds an ``image_path`` column to the
+    output MolTable so downstream nodes can find the files.
+
+    Optional features:
+      - **Legend Column**: caption rendered under each structure.
+      - **Highlight SMARTS**: matched atoms drawn in red.
+      - **Dark Mode**: dark background (matches the single-mol viewer node).
+
+    Filename collisions get a ``_1``, ``_2`` suffix.  Empty / missing
+    filenames fall back to ``mol_<row_index>``.
+
+    Keywords: batch draw, molecule png, svg, render, structure image, legend, highlight
+    """
+
+    __identifier__ = 'nodes.Cheminformatics.Batch'
+    NODE_NAME      = 'Batch Mol Drawer'
+    PORT_SPEC      = {'inputs': ['mol_table'], 'outputs': ['mol_table']}
+
+    def __init__(self):
+        super().__init__()
+        self.add_input('mol_table',  color=PORT_COLORS['mol_table'])
+        self.add_output('mol_table', color=PORT_COLORS['mol_table'])
+
+        dir_selector = NodeDirSelector(self.view, name='dir_path', label='Output Folder')
+        self.add_custom_widget(
+            dir_selector,
+            widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value,
+            tab='Properties')
+        self.add_combo_menu('format', 'Format', items=['PNG', 'SVG'])
+        self._add_column_selector('filename_col',
+                                   label='Filename Column',
+                                   text='name', mode='single')
+        self._add_column_selector('legend_col',
+                                   label='Legend Column (optional)',
+                                   text='', mode='single')
+        self.add_text_input('highlight_smarts',
+                            'Highlight SMARTS (optional)', text='')
+        self._add_int_spinbox('size', 'Size (px)',
+                              value=600, min_val=100, max_val=4096)
+        self.add_checkbox('dark_mode', '', text='Dark Mode', state=False)
+
+    def evaluate(self):
+        in_port = self.inputs().get('mol_table')
+        if not (in_port and in_port.connected_ports()):
+            return False, "No mol_table connected."
+        src = in_port.connected_ports()[0]
+        val = src.node().output_values.get(src.name())
+        if not isinstance(val, MolTableData):
+            return False, "Expected MolTableData."
+
+        df = val.payload.copy()
+        mol_col = val.mol_col
+        n = len(df)
+        if n == 0:
+            return False, "Empty table."
+
+        out_dir = (self.get_property('dir_path') or '').strip()
+        if not out_dir:
+            return False, "Pick an output folder."
+        out_path = Path(out_dir).expanduser()
+        try:
+            out_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return False, f"Cannot create output folder: {e}"
+
+        fmt = (self.get_property('format') or 'PNG').upper()
+        if fmt not in ('PNG', 'SVG'):
+            fmt = 'PNG'
+        ext = '.png' if fmt == 'PNG' else '.svg'
+
+        filename_col = (self.get_property('filename_col') or '').strip()
+        legend_col = (self.get_property('legend_col') or '').strip()
+        smarts_str = (self.get_property('highlight_smarts') or '').strip()
+        size = int(self.get_property('size') or 600)
+        dark = bool(self.get_property('dark_mode'))
+
+        # Validate filename / legend columns up front (but allow blank).
+        if filename_col and filename_col not in df.columns:
+            return False, (f"Filename column '{filename_col}' not found. "
+                            f"Columns: {list(df.columns)}")
+        if legend_col and legend_col not in df.columns:
+            return False, (f"Legend column '{legend_col}' not found. "
+                            f"Columns: {list(df.columns)}")
+
+        # Parse highlight SMARTS once.
+        query = None
+        if smarts_str:
+            query = Chem.MolFromSmarts(smarts_str)
+            if query is None:
+                return False, f"Invalid SMARTS: '{smarts_str}'"
+
+        self.set_progress(5)
+
+        used_names: set[str] = set()
+        paths: list[str | None] = []
+        n_failed = 0
+
+        for i, row in enumerate(df.itertuples(index=False)):
+            mol = getattr(row, mol_col, None)
+            if mol is None:
+                paths.append(None)
+                continue
+
+            # Filename — sanitise + dedupe with _1, _2, ...
+            raw = (getattr(row, filename_col, '') if filename_col else '')
+            base = _sanitize_filename(str(raw) if raw is not None else '',
+                                      fallback=f'mol_{i}')
+            name = base
+            k = 1
+            while name in used_names:
+                name = f'{base}_{k}'
+                k += 1
+            used_names.add(name)
+
+            legend = ''
+            if legend_col:
+                lv = getattr(row, legend_col, '')
+                legend = '' if lv is None else str(lv)
+
+            highlight = []
+            if query is not None:
+                try:
+                    highlight = list(mol.GetSubstructMatch(query))
+                except Exception:
+                    highlight = []
+
+            try:
+                if fmt == 'PNG':
+                    drawer = rdMolDraw2D.MolDraw2DCairo(size, size)
+                else:
+                    drawer = rdMolDraw2D.MolDraw2DSVG(size, size)
+                if dark:
+                    SetDarkMode(drawer)
+                drawer.drawOptions().legendFontSize = max(12, size // 40)
+                drawer.DrawMolecule(mol, legend=legend,
+                                     highlightAtoms=highlight)
+                drawer.FinishDrawing()
+
+                fpath = out_path / f'{name}{ext}'
+                if fmt == 'PNG':
+                    drawer.WriteDrawingText(str(fpath))
+                else:
+                    fpath.write_text(drawer.GetDrawingText(), encoding='utf-8')
+                paths.append(str(fpath))
+            except Exception:
+                paths.append(None)
+                n_failed += 1
+
+            if (i & 0x3F) == 0:
+                self.set_progress(5 + int(90 * (i + 1) / n))
+
+        df['image_path'] = paths
+        self.set_progress(98)
+
+        self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
+        self.mark_clean()
+        self.set_progress(100)
+
+        n_ok = sum(1 for p in paths if p)
+        msg = f"{n_ok} {fmt} file(s) written to {out_path}"
+        if n_failed:
+            msg += f" ({n_failed} failed)"
         return True, msg
 
 
