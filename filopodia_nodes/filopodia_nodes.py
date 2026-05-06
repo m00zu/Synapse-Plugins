@@ -434,16 +434,22 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
     - Measure total cell edge length via `skimage.measure.perimeter`
 
     Outputs:
-    - `table` — TableData with columns: `x`, `y`, `filopodia_length_px`, `edge_length_px` (one row per detected filopodium skeleton branch)
+    - `table` — TableData with columns: `x`, `y`, `filopodia_length_px`,
+      `edge_length_px`, `filopodia_length_um`, `edge_length_um` (one row per
+      detected filopodium skeleton branch).  The `_um` columns are populated
+      when the input mask carries ``scale_um`` (micrometers per pixel,
+      typically set by image readers from microscope metadata); otherwise
+      they're NaN.
     - `visualization` — colour composite (dark background, green = cell body, cyan = isolated filopodia mask, magenta = skeleton)
 
-    Keywords: filopodia analysis, skeleton length, branch measurement, protrusion quantification, edge length, 絲足, 分析, 骨架, 細胞邊緣, 量測
+    Keywords: filopodia analysis, skeleton length, branch measurement, protrusion quantification, edge length, micrometers, 絲足, 分析, 骨架, 細胞邊緣, 量測
     """
     __identifier__ = 'plugins.Plugins.filopodia'
     NODE_NAME      = 'Filopodia Analyze'
     PORT_SPEC      = {'inputs': ['mask', 'mask'], 'outputs': ['table', 'image']}
     OUTPUT_COLUMNS = {
-        'table': ['x', 'y', 'filopodia_length_px', 'edge_length_px']
+        'table': ['x', 'y', 'filopodia_length_px', 'edge_length_px',
+                  'filopodia_length_um', 'edge_length_um']
     }
 
     def __init__(self):
@@ -522,6 +528,17 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
         from skimage.measure import perimeter as _perimeter
         edge_length_px = float(_perimeter(cell_arr, neighborhood=8))
 
+        # Pull microns-per-pixel from input metadata (filopodia mask first;
+        # fall back to cell mask).  None / 0 / negative → no µm conversion.
+        scale_um = getattr(filo_md, 'scale_um', None)
+        if not scale_um or scale_um <= 0:
+            scale_um = getattr(cell_md, 'scale_um', None)
+        if not scale_um or scale_um <= 0:
+            scale_um = None
+
+        edge_length_um = (round(edge_length_px * scale_um, 2)
+                           if scale_um is not None else float('nan'))
+
         # Build results table
         rows = [
             {
@@ -529,13 +546,20 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
                 'y':                   b['y'],
                 'filopodia_length_px': round(b['length_px'], 2),
                 'edge_length_px':      round(edge_length_px, 2),
+                'filopodia_length_um': (round(b['length_px'] * scale_um, 2)
+                                         if scale_um is not None
+                                         else float('nan')),
+                'edge_length_um':      edge_length_um,
             }
             for b in branches
         ]
         df = (
             pd.DataFrame(rows)
             if rows
-            else pd.DataFrame(columns=['x', 'y', 'filopodia_length_px', 'edge_length_px'])
+            else pd.DataFrame(columns=['x', 'y', 'filopodia_length_px',
+                                        'edge_length_px',
+                                        'filopodia_length_um',
+                                        'edge_length_um'])
         )
         self.output_values['table'] = TableData(payload=df)
         self.set_progress(90)
