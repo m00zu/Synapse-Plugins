@@ -12,6 +12,9 @@ from data_models import TableData, FigureData, StatData
 import pandas as pd
 import numpy as np
 from nodes.base import BaseExecutionNode, PORT_COLORS, ColorPickerButtonWidget, NodeToolBoxWidget
+from synapse.widgets.spec import (
+    TextField, CheckBox, NumberField, ComboBox, Custom,
+)
 
 # Set Arial as default font for consistent rendering between matplotlib and SVG
 import matplotlib
@@ -1934,6 +1937,7 @@ class PlotToolboxMixin:
         layout.addWidget(edit)
         self.toolbox.add_widget_to_page(page, container)
         self._toolbox_widgets[name] = edit
+        self._spec_builder.append(TextField(prop=name, label=label, default=str(default), tab=page))
 
     def _tb_column_selector(self, name, label, page, default=''):
         """Text input + dropdown button for column selection inside toolbox."""
@@ -1992,6 +1996,11 @@ class PlotToolboxMixin:
         if not hasattr(self, '_tb_col_buttons'):
             self._tb_col_buttons = {}
         self._tb_col_buttons[name] = btn
+        self._spec_builder.append(Custom(
+            component_id="column_selector",
+            props={"prop": name, "label": label, "default": str(default), "mode": "single"},
+            tab=page,
+        ))
 
     def _tb_refresh_columns(self, df, *prop_names):
         """Update toolbox column selector dropdowns with DataFrame columns."""
@@ -2013,6 +2022,7 @@ class PlotToolboxMixin:
         cb.stateChanged.connect(lambda s, n=name: self.set_property(n, bool(s)))
         self.toolbox.add_widget_to_page(page, cb)
         self._toolbox_widgets[name] = cb
+        self._spec_builder.append(CheckBox(prop=name, label=label, default=bool(default), tab=page))
 
     def _tb_spinbox(self, name, label, page, default,
                     min_val=0, max_val=999999, step=1.0, decimals=3):
@@ -2038,6 +2048,11 @@ class PlotToolboxMixin:
         layout.addWidget(sb)
         self.toolbox.add_widget_to_page(page, container)
         self._toolbox_widgets[name] = sb
+        self._spec_builder.append(NumberField(
+            prop=name, label=label,
+            min=float(min_val), max=float(max_val), step=float(step),
+            decimals=int(decimals), default=float(default), tab=page,
+        ))
 
     def _tb_color(self, name, label, page):
         current_val = self.get_property(name)
@@ -2054,6 +2069,11 @@ class PlotToolboxMixin:
         layout.addWidget(btn)
         self.toolbox.add_widget_to_page(page, container)
         self._toolbox_widgets[name] = btn
+        self._spec_builder.append(Custom(
+            component_id="color_picker",
+            props={"prop": name, "label": label},
+            tab=page,
+        ))
 
     def _tb_combo(self, name, label, page, items):
         container = QtWidgets.QWidget()
@@ -2076,6 +2096,11 @@ class PlotToolboxMixin:
         layout.addWidget(combo)
         self.toolbox.add_widget_to_page(page, container)
         self._toolbox_widgets[name] = combo
+        self._spec_builder.append(ComboBox(
+            prop=name, label=label, options=list(items),
+            default=items[0] if items else None,
+            tab=page,
+        ))
 
     @staticmethod
     def _parse_csv_order(value):
@@ -2260,6 +2285,11 @@ class PlotToolboxMixin:
 
         self.toolbox.add_widget_to_page(page, container)
         self._toolbox_widgets[name] = lst
+        self._spec_builder.append(Custom(
+            component_id="order_list",
+            props={"prop": name, "label": label},
+            tab=page,
+        ))
 
     def _tb_add_stats_page(self, page='Stats Annotations'):
         """Add standard stat-annotation controls to a toolbox page."""

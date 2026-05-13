@@ -954,6 +954,29 @@ class PairwiseComparisonNode(BaseExecutionNode):
     __identifier__ = 'nodes.analysis'
     NODE_NAME = 'Pairwise Comparison'
     PORT_SPEC = {'inputs': ['table'], 'outputs': ['table']}
+    PROP_DESCRIPTIONS = {
+        'selected_pairs': (
+            "Which group pairs to compare.  Format: comma-separated "
+            "'A|B' pairs, where A and B are values from the Group "
+            "Column.  Example: 'control|test, control|drug, test|drug'.  "
+            "Pairs are sorted alphabetically within each pair.  Leave "
+            "empty to compare every possible pair."
+        ),
+        'method': (
+            "Statistical test to use.  T-tests assume normal data; "
+            "Mann-Whitney is non-parametric; Tukey HSD / Dunn are post-"
+            "hoc tests after ANOVA; Fisher's Z compares correlations."
+        ),
+        'alternative': (
+            "One-sided or two-sided test.  Tukey HSD and Dunn ignore "
+            "this and are always two-sided."
+        ),
+        'p_adj_method': (
+            "Multiple-comparison correction.  Use 'fdr_bh' for "
+            "discovery-style analyses, 'bonferroni' for strict control, "
+            "'none' for raw p-values."
+        ),
+    }
 
     def __init__(self):
         super(PairwiseComparisonNode, self).__init__()
