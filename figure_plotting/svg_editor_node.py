@@ -1,7 +1,7 @@
 """
 plugins/figure_plotting/svg_editor_node.py
 ==========================================
-Interactive SVG editor node — extracted from nodes/display_nodes.py.
+Interactive SVG editor node -- extracted from nodes/display_nodes.py.
 Allows element-level editing of matplotlib figures rendered as SVG.
 """
 import re
@@ -74,7 +74,7 @@ def _get_mpl_text_scale(elem):
     """Extract the font scale factor from a matplotlib text group.
 
     Matplotlib encodes font size as ``scale(S -S)`` on an inner ``<g>``
-    transform — NOT via CSS ``font-size``.  Returns ``(scale_float, inner_g_elem)``
+    transform -- NOT via CSS ``font-size``.  Returns ``(scale_float, inner_g_elem)``
     or ``(None, None)`` if the pattern is not found.
     """
     for ch in elem.iter():
@@ -91,7 +91,7 @@ def _is_draggable(elem, tick_text_ids=frozenset()) -> bool:
     """Determine if an SVG overlay should be movable (draggable).
 
     Returns True for:
-      - text groups  (text_N, <text>) — EXCEPT tick labels and axis groups
+      - text groups  (text_N, <text>) -- EXCEPT tick labels and axis groups
       - stat-annotation text  (stat_text:*)
       - user-added annotations  (annotation_*)
 
@@ -204,10 +204,10 @@ def _change_marker_shape_for_group(group_elem, new_d, svg_root):
             break
 
     if not other_refs:
-        # No other group uses this path — safe to modify in place
+        # No other group uses this path -- safe to modify in place
         path_elem.set('d', new_d)
     else:
-        # Shared path — clone with a new ID
+        # Shared path -- clone with a new ID
         import copy as _copy
         new_path = _copy.deepcopy(path_elem)
         # Generate unique ID
@@ -382,7 +382,7 @@ def _make_svg_overlay(eid: str, tag: str, rect, sx: float, sy: float,
                     (abs(delta.x()) > 0.5 or abs(delta.y()) > 0.5)):
                 dx_svg = delta.x() / self._sx
                 dy_svg = delta.y() / self._sy
-                self.setPos(0.0, 0.0)   # reset – rerender will reposition
+                self.setPos(0.0, 0.0)   # reset - rerender will reposition
                 self._mov_cb(self.eid, dx_svg, dy_svg)
 
         # ── double-click → properties panel ───────────────────────────────
@@ -443,7 +443,7 @@ def _build_qpath_from_elem(elem, sx, sy, vx, vy):
 def _make_svg_path_overlay(eid: str, tag: str, qpath, sx: float, sy: float,
                             movable: bool = False):
     """Factory: QGraphicsPathItem overlay that follows the actual SVG path
-    outline — used for line-like elements instead of a bounding rect."""
+    outline -- used for line-like elements instead of a bounding rect."""
     from PySide6 import QtWidgets, QtCore, QtGui
 
     NO_PEN  = QtGui.QPen(QtCore.Qt.PenStyle.NoPen)
@@ -541,7 +541,7 @@ def _is_line_like(elem):
                     return False
                 found_path = True
             if _ltag(ch) == 'use':
-                # <use> references are rendered content — not line-like
+                # <use> references are rendered content -- not line-like
                 return False
             result = _walk(ch)
             if result is False:
@@ -560,9 +560,9 @@ class _SvgEditorView(object):
 
     Signals
     -------
-    element_selected(str)           – emitted when the user clicks an element
-    element_double_clicked(str)     – emitted on double-click
-    element_moved(str, float, float)– emitted when a text group is dragged
+    element_selected(str)           - emitted when the user clicks an element
+    element_double_clicked(str)     - emitted on double-click
+    element_moved(str, float, float)- emitted when a text group is dragged
                                       args: (element_id, dx_svg, dy_svg)
     """
 
@@ -732,7 +732,7 @@ class _SvgEditorView(object):
                 vx, vy = self._vbox.x(), self._vbox.y()
                 vw, vh = self._vbox.width(), self._vbox.height()
                 sx, sy = self._sx, self._sy
-                MIN_A   = 9.0    # min area in scene px² — skip invisible/tiny items
+                MIN_A   = 9.0    # min area in scene px² -- skip invisible/tiny items
                 MAX_COV = 0.90   # skip elements covering >70% of SVG area (containers)
                 total_svg_area = vw * vh if (vw > 0 and vh > 0) else 1.0
 
@@ -747,7 +747,7 @@ class _SvgEditorView(object):
                             if eid_d:
                                 defs_ids.add(eid_d)
 
-                # Build set of text IDs inside tick groups — these must
+                # Build set of text IDs inside tick groups -- these must
                 # NOT be draggable (axis tick labels stay locked).
                 _TICK_RE = re.compile(r'^(xtick|ytick)_\d+$')
                 tick_text_ids: set = set()
@@ -759,7 +759,7 @@ class _SvgEditorView(object):
                             if _tdid and _has_text_descendant(_td):
                                 tick_text_ids.add(_tdid)
 
-                # Structural containers — no overlay, children handled individually
+                # Structural containers -- no overlay, children handled individually
                 # Note: matplotlib.axis groups ARE selectable (for tick styling)
                 _STRUCTURAL_RE = re.compile(
                     r'^(figure|axes|subplot|inset_axes|polar_axes'
@@ -781,7 +781,7 @@ class _SvgEditorView(object):
                                 return True
                     return False
 
-                # Semantic groups — get ONE overlay; non-semantic children
+                # Semantic groups -- get ONE overlay; non-semantic children
                 # are suppressed to avoid overlapping "blocks".
                 _SEMANTIC_RE = re.compile(
                     r'^(line2d|PathCollection|QuadMesh|PolyCollection'
@@ -823,7 +823,7 @@ class _SvgEditorView(object):
                         continue  # figure/axes white background rect
 
                     # Groups with inline <defs> confuse QSvgRenderer
-                    # — the defs paths near SVG origin inflate the box.
+                    # -- the defs paths near SVG origin inflate the box.
                     # Compute bounds manually from rendered children.
                     _has_defs = any(
                         _ltag(c) == 'defs' for c in elem)
@@ -845,7 +845,7 @@ class _SvgEditorView(object):
                         continue
 
                     # Detect line-like elements BEFORE coverage filter so
-                    # they are not rejected — a regression line spanning
+                    # they are not rejected -- a regression line spanning
                     # the full axes has a large bounding rect but uses
                     # QPainterPathStroker for hit-testing (thin clickable
                     # strip), so it won't block smaller elements.
@@ -868,7 +868,7 @@ class _SvgEditorView(object):
 
                 # Sort by area DESCENDING so larger items get lower z-values.
                 # Smaller elements (text, markers) end up on top and are always
-                # clickable — this prevents large overlays from blocking them.
+                # clickable -- this prevents large overlays from blocking them.
                 candidates.sort(key=lambda c: c[3], reverse=True)
 
                 for i, (eid, tag, sr, area, movable, line_like, elem) \
@@ -923,7 +923,7 @@ class _SvgEditorView(object):
                         self.horizontalScrollBar().value() - delta)
                     e.accept()
                 else:
-                    # Plain scroll — vertical pan
+                    # Plain scroll -- vertical pan
                     super().wheelEvent(e)
 
             # Signal for add-shape requests (handled by parent widget)
@@ -941,7 +941,7 @@ class _SvgEditorView(object):
                 if item is not None and item is not self._bg and hasattr(item, 'eid'):
                     eid = item.eid
 
-                    # Format action — select and show property panel
+                    # Format action -- select and show property panel
                     fmt_act = menu.addAction("Format...")
                     fmt_act.triggered.connect(
                         lambda: self.element_selected.emit(eid))
@@ -1151,7 +1151,7 @@ class _SvgEditorView(object):
                     self.zoom_fit()
                     e.accept()
                     return
-                # Delete/Backspace — only for deletable elements
+                # Delete/Backspace -- only for deletable elements
                 if e.key() in (QtCore.Qt.Key.Key_Delete,
                                QtCore.Qt.Key.Key_Backspace):
                     for it in self._sc.selectedItems():
@@ -1197,7 +1197,7 @@ class _SvgPropsPanel(object):
 
     Signal
     ------
-    apply_requested(str)  – element id; panel has already written changes to
+    apply_requested(str)  - element id; panel has already written changes to
                             the xml_elem in-place; caller should rerender.
     """
 
@@ -1291,7 +1291,7 @@ class _SvgPropsPanel(object):
                 btn_row.addWidget(self._reset_btn)
                 outer.addLayout(btn_row)
 
-                # Auto-apply with debounce — changes fire after a short
+                # Auto-apply with debounce -- changes fire after a short
                 # pause so the user sees live updates without excessive
                 # rerenders during rapid spinbox clicks.
                 self._debounce = QtCore.QTimer(self)
@@ -1318,7 +1318,7 @@ class _SvgPropsPanel(object):
                     return
 
                 tag   = _ltag(xml_elem)
-                short = eid if len(eid) <= 30 else eid[:27] + '…'
+                short = eid if len(eid) <= 30 else eid[:27] + '...'
                 self._title.setText(f'<{tag}>  {short}')
                 self._apply_btn.setEnabled(True)
 
@@ -1423,7 +1423,7 @@ class _SvgPropsPanel(object):
                 ]
                 if is_text:
                     # Matplotlib SVG text encodes font size via
-                    # transform="…scale(S -S)" on an inner <g>, NOT
+                    # transform="...scale(S -S)" on an inner <g>, NOT
                     # CSS font-size.  Read the scale factor and convert
                     # to an approximate pt value (scale × 100 ≈ pt).
                     scale_val, _inner = _get_mpl_text_scale(xml_elem)
@@ -1451,7 +1451,7 @@ class _SvgPropsPanel(object):
                     fields.append(
                         ('stroke-dasharray', 'text', ''))
 
-                # Render fields — use CSS value when present, else default
+                # Render fields -- use CSS value when present, else default
                 for prop, kind, default in fields:
                     val = css.get(prop, '') or default
                     # Never show font-size as 0 (Qt warning)
@@ -1494,7 +1494,7 @@ class _SvgPropsPanel(object):
                     lbl_ms.setStyleSheet("color: #aaa; font-size: 9pt;")
                     self._fl.addRow(lbl_ms, combo)
 
-                    # Marker size — scale factor on <use> transforms
+                    # Marker size -- scale factor on <use> transforms
                     cur_size = 1.0
                     for _u in xml_elem.iter():
                         _ut = _u.get('transform', '')
@@ -1952,7 +1952,7 @@ class _SvgPropsPanel(object):
                             pass
 
                 # ── Handle font-size ──
-                # With svg.fonttype='none', text is real <text> elements —
+                # With svg.fonttype='none', text is real <text> elements --
                 # CSS font-size works directly. For old glyph-path text,
                 # try scale transform as fallback.
                 if 'font-size' in user_changed:
@@ -1973,7 +1973,7 @@ class _SvgPropsPanel(object):
                                 # Scale text: don't use CSS font-size
                                 css.pop('font-size', None)
                                 user_changed.pop('font-size', None)
-                            # else: real <text> element — CSS font-size will
+                            # else: real <text> element -- CSS font-size will
                             # be applied below via the normal CSS write path
                     except (ValueError, TypeError):
                         pass
@@ -1984,8 +1984,8 @@ class _SvgPropsPanel(object):
 
                 # Propagate user-changed properties to ALL leaf descendants.
                 # Critical for groups: children have their own style attrs
-                # that override the parent — we must force-set on leaves.
-                # Skip <defs> descendants — those are shared marker/clip
+                # that override the parent -- we must force-set on leaves.
+                # Skip <defs> descendants -- those are shared marker/clip
                 # definitions that must not be mutated.
                 if user_changed and tag == 'g':
                     _LEAF = {'path', 'line', 'circle', 'ellipse',
@@ -2032,8 +2032,8 @@ class NodeSvgEditorWidget(object):
 
     Signal
     ------
-    svg_modified(str) – emitted after each user edit with the new SVG string
-    reset_requested() – emitted when the user clicks "Reset SVG"
+    svg_modified(str) - emitted after each user edit with the new SVG string
+    reset_requested() - emitted when the user clicks "Reset SVG"
     """
 
     def __new__(cls, parent=None):
@@ -2296,7 +2296,7 @@ class NodeSvgEditorWidget(object):
                               for c in p}
                 parent = parent_map.get(elem)
                 if parent is None:
-                    return  # root — don't delete
+                    return  # root -- don't delete
                 self._snapshot()
                 parent.remove(elem)
                 self._tip.setText(f"Deleted: {eid}")
@@ -2310,7 +2310,7 @@ class NodeSvgEditorWidget(object):
 
             # ── slots ─────────────────────────────────────────────────────
             def _on_selected(self, eid: str):
-                short = eid if len(eid) <= 34 else eid[:31] + '…'
+                short = eid if len(eid) <= 34 else eid[:31] + '...'
                 self._tip.setText(f"Selected: {short}")
                 if self._sp.sizes()[1] < 50:
                     total = sum(self._sp.sizes())
@@ -2359,7 +2359,7 @@ class NodeSvgEditorWidget(object):
                     fn()
 
             def _on_inline_text_edit(self, eid: str, new_text: str):
-                """Handle inline text edit completion — update SVG and rerender."""
+                """Handle inline text edit completion -- update SVG and rerender."""
                 if self._view.svg_root is None:
                     return
                 elem = _find_id(self._view.svg_root, eid)
@@ -2558,7 +2558,7 @@ class NodeSvgEditorWidget(object):
                     return style_str.rstrip(';') + f';{prop}:{color}'
 
                 # Collect candidate elements: <g> groups that contain <path>
-                # or <use> children — these are matplotlib series groups
+                # or <use> children -- these are matplotlib series groups
                 root = self._view.svg_root
                 series_groups = []
                 for g in root.iter(self._ns('g')):

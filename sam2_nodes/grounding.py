@@ -1,5 +1,5 @@
 """
-grounding.py — GroundingDINO engine + nodes (detection and text-prompted segmentation).
+grounding.py -- GroundingDINO engine + nodes (detection and text-prompted segmentation).
 
 Combines the ONNX inference engine (formerly grounding_engine.py) with the
 GroundingDINO and SAM2 Text Segment nodes.

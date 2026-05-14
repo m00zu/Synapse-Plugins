@@ -20,8 +20,8 @@ class ROCCurveNode(BaseExecutionNode):
 
     Options:
 
-    - **true_column** — column with true labels
-    - **pred_column** — column with prediction probabilities or scores
+    - **true_column** -- column with true labels
+    - **pred_column** -- column with prediction probabilities or scores
 
     Keywords: ROC, AUC, receiver operating characteristic, classification, ML, machine learning
     """
@@ -119,8 +119,8 @@ class PrecisionRecallCurveNode(BaseExecutionNode):
 
     Options:
 
-    - **true_column** — column with true labels
-    - **pred_column** — column with prediction probabilities or scores
+    - **true_column** -- column with true labels
+    - **pred_column** -- column with prediction probabilities or scores
 
     Keywords: precision, recall, AUPRC, PR curve, classification, ML, machine learning
     """
@@ -297,9 +297,9 @@ class LearningCurveNode(BaseExecutionNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **cv_folds** — number of cross-validation folds (default 5)
-    - **scoring** — scoring metric (accuracy, f1_macro, r2, etc.)
+    - **target_column** -- column to predict
+    - **cv_folds** -- number of cross-validation folds (default 5)
+    - **scoring** -- scoring metric (accuracy, f1_macro, r2, etc.)
 
     Keywords: learning curve, overfitting, underfitting, bias, variance, ML, machine learning
     """
@@ -432,10 +432,10 @@ class ClusterVisualizationNode(BaseExecutionNode):
 
     Options:
 
-    - **x_column** — column for X axis (blank = auto PCA on numeric columns)
-    - **y_column** — column for Y axis (blank = auto PCA on numeric columns)
-    - **cluster_column** — column with cluster labels (optional)
-    - **class_column** — column with true class labels (overrides cluster_column)
+    - **x_column** -- column for X axis (blank = auto PCA on numeric columns)
+    - **y_column** -- column for Y axis (blank = auto PCA on numeric columns)
+    - **cluster_column** -- column with cluster labels (optional)
+    - **class_column** -- column with true class labels (overrides cluster_column)
 
     Keywords: cluster plot, class plot, scatter, PCA, UMAP, visualization, ML
     """
@@ -570,8 +570,8 @@ class RegressionScatterNode(BaseExecutionNode):
 
     Options:
 
-    - **true_column** — column with true values
-    - **pred_column** — column with predicted values
+    - **true_column** -- column with true values
+    - **pred_column** -- column with predicted values
 
     Keywords: regression scatter, true vs predicted, residual, regression, ML, machine learning
     """

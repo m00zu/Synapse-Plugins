@@ -445,7 +445,7 @@ class _GridSearchBase(BaseExecutionNode):
 
         if not param_grid:
             self.mark_error()
-            return False, ("No params to sweep — fill in at least one Values "
+            return False, ("No params to sweep -- fill in at least one Values "
                             "cell (e.g. n_estimators: 50, 100, 200).")
 
         cv = int(self.get_property('cv_folds') or 5)
@@ -468,7 +468,7 @@ class _GridSearchBase(BaseExecutionNode):
 
         self.set_progress(85)
 
-        # Build results table — one row per combo, with separate columns.
+        # Build results table -- one row per combo, with separate columns.
         cv_results = gs.cv_results_
         rows: dict[str, Any] = {
             'rank':            cv_results['rank_test_score'],

@@ -25,7 +25,7 @@ class BitDepthConvertNode(BaseExecutionNode):
 
     Options:
 
-    - **target_depth** — output bit depth (8, 12, 14, 16)
+    - **target_depth** -- output bit depth (8, 12, 14, 16)
 
     Keywords: bit depth, convert, 8-bit, 16-bit, 12-bit, dynamic range
     """
@@ -72,9 +72,9 @@ class SetScaleNode(BaseExecutionNode):
 
     Options:
 
-    - **um_per_pixel** — micrometers per pixel
-    - **known_distance** — a known real-world distance in µm
-    - **distance_pixels** — the same distance measured in pixels
+    - **um_per_pixel** -- micrometers per pixel
+    - **known_distance** -- a known real-world distance in µm
+    - **distance_pixels** -- the same distance measured in pixels
 
     If both known_distance and distance_pixels are set, um_per_pixel is calculated automatically.
 
@@ -137,7 +137,7 @@ class SplitRGBNode(BaseImageProcessNode):
     By default each output is a single-channel grayscale image corresponding
     to one color plane. Enable **Colorized output** to instead produce a
     3-channel RGB image per output where only the matching colour plane is
-    populated (R channel → red-only image, G → green-only, B → blue-only) —
+    populated (R channel → red-only image, G → green-only, B → blue-only) --
     useful when feeding the result into downstream nodes that expect RGB or
     when compositing channels back together visually.
 
@@ -171,7 +171,7 @@ class SplitRGBNode(BaseImageProcessNode):
 
         arr = data.payload
         if arr.ndim == 2:
-            # Grayscale — treat as all three channels identical
+            # Grayscale -- treat as all three channels identical
             arr = np.stack([arr, arr, arr], axis=-1)
         elif arr.ndim == 3 and arr.shape[2] == 4:
             arr = arr[:, :, :3]
@@ -270,7 +270,7 @@ class EqualizeAdapthistNode(BaseImageProcessNode):
     """
     Applies CLAHE (Contrast Limited Adaptive Histogram Equalization) to enhance local contrast.
 
-    **clip_limit** — controls contrast amplification; lower values produce subtler enhancement (default: 0.01).
+    **clip_limit** -- controls contrast amplification; lower values produce subtler enhancement (default: 0.01).
 
     Keywords: CLAHE, equalize, adaptive, histogram, contrast, 均衡化, 對比, 自適應, 亮度, 影像處理
     """
@@ -328,7 +328,7 @@ class EqualizeAdapthistNode(BaseImageProcessNode):
 
         if not rs_ok:
             from skimage.exposure import equalize_adapthist
-            # Data is float [0,1] — skimage handles this directly
+            # Data is float [0,1] -- skimage handles this directly
             res = equalize_adapthist(arr.astype(float), clip_limit=clip_limit)
             out_arr = res.astype(np.float32)
 
@@ -344,7 +344,7 @@ class GaussianBlurNode(BaseImageProcessNode):
     """
     Applies a Gaussian blur to smooth the image.
 
-    **sigma** — standard deviation of the Gaussian kernel; larger values produce stronger blurring (default: 10.0).
+    **sigma** -- standard deviation of the Gaussian kernel; larger values produce stronger blurring (default: 10.0).
 
     Keywords: blur, smooth, gaussian, filter, denoise, 模糊, 平滑, 高斯, 去噪, 影像處理
     """
@@ -382,7 +382,7 @@ class GaussianBlurNode(BaseImageProcessNode):
         arr = data.payload
         self.set_progress(30)
         # For RGB/RGBA images, channel_axis=-1 blurs each channel
-        # independently — otherwise skimage treats the channel axis as a
+        # independently -- otherwise skimage treats the channel axis as a
         # 3rd spatial dimension and mixes colors at edges.
         if arr.ndim == 3 and arr.shape[-1] in (3, 4):
             res = gaussian(arr, sigma=sigma, preserve_range=True, channel_axis=-1)
@@ -403,7 +403,7 @@ class ThresholdLocalNode(BaseImageProcessNode):
 
     Computes a threshold for each pixel based on its local neighbourhood, making it robust to uneven illumination.
 
-    **block_size** — size of the local neighbourhood (must be odd; default: 25).
+    **block_size** -- size of the local neighbourhood (must be odd; default: 25).
 
     Keywords: local, adaptive, threshold, segmentation, binary, 閾值, 自適應, 分割, 二值化, 影像處理
     """
@@ -463,7 +463,7 @@ class RemoveSmallObjectsNode(BaseImageProcessNode):
 
     Objects with area at or below the threshold are discarded. Useful for cleaning noise after thresholding.
 
-    **max_size** — maximum object area in pixels to remove (default: 500).
+    **max_size** -- maximum object area in pixels to remove (default: 500).
 
     Keywords: remove, small, objects, noise, clean, 移除, 去噪, 影像處理, 粒子, 遮罩
     """
@@ -568,7 +568,7 @@ class KeepMaxIntensityRegionNode(BaseImageProcessNode):
 
     Finds all connected components in the mask, sums each region's pixel intensities from the intensity image input, and retains only the brightest regions as a binary mask.
 
-    **top_n** — number of highest-intensity regions to keep (default: 5).
+    **top_n** -- number of highest-intensity regions to keep (default: 5).
 
     Keywords: brightest, intensity, max, keep, single region, 亮度, 強度, 保留, 區域, 遮罩
     """
@@ -651,7 +651,7 @@ class DistanceRingMaskNode(BaseImageProcessNode):
 
     Computes the Euclidean distance transform of the background and selects pixels within the given range, producing a ring-shaped region around the original mask.
 
-    **local_distance** — maximum expansion distance in pixels (default: 200).
+    **local_distance** -- maximum expansion distance in pixels (default: 200).
 
     Keywords: distance, ring, annular, expand, zone, 距離, 環狀, 遮罩, 膨脹, 區域
     """
@@ -716,26 +716,26 @@ class ImageMathNode(BaseImageProcessNode):
 
     Two-input operations (connect both A and B):
 
-    - *A + B* — add and clip to [0, 1]
-    - *A - B* — subtract and clip to [0, 1]
-    - *A x B (image)* — element-wise multiply
-    - *A x B (apply mask)* — mask A by B: `A * (B > 0)`
-    - *A AND B* — mask intersection
-    - *A OR B* — mask union
-    - *Max(A, B)* — element-wise maximum
-    - *Min(A, B)* — element-wise minimum
-    - *Blend* — weighted blend: `A*v + B*(1-v)`
+    - *A + B* -- add and clip to [0, 1]
+    - *A - B* -- subtract and clip to [0, 1]
+    - *A x B (image)* -- element-wise multiply
+    - *A x B (apply mask)* -- mask A by B: `A * (B > 0)`
+    - *A AND B* -- mask intersection
+    - *A OR B* -- mask union
+    - *Max(A, B)* -- element-wise maximum
+    - *Min(A, B)* -- element-wise minimum
+    - *Blend* -- weighted blend: `A*v + B*(1-v)`
 
     Single-input operations (only A is required):
 
-    - *Invert A* — `1 - A`
-    - *Normalize A* — stretch to [0, 1]
-    - *Gamma A^v* — `A^v` where v is the scalar value
-    - *Threshold A > v* — binary threshold
+    - *Invert A* -- `1 - A`
+    - *Normalize A* -- stretch to [0, 1]
+    - *Gamma A^v* -- `A^v` where v is the scalar value
+    - *Threshold A > v* -- binary threshold
 
     Custom expression mode:
 
-    - *Custom Expression* — type any math using A, B, v as variables.
+    - *Custom Expression* -- type any math using A, B, v as variables.
       Available functions: abs, sqrt, log, log2, log10, exp, sin, cos, clip, max, min, mean, std.
       Example: `A ** 2 + B`, `clip(A * 2, 0, 1)`, `sqrt(A)`
 
@@ -819,7 +819,7 @@ class ImageMathNode(BaseImageProcessNode):
         if op in self._TWO_INPUT_OPS:
             b_arr, err = self._get_arr(self.inputs().get('B (mask)'))
             if err:
-                return False, f"Operation '{op}' needs B — {err}"
+                return False, f"Operation '{op}' needs B -- {err}"
             if a_arr.shape[:2] != b_arr.shape[:2]:
                 return False, (f"A and B must be the same size "
                                f"(A={a_arr.shape[:2]}, B={b_arr.shape[:2]})")
@@ -913,7 +913,7 @@ class ImageMathNode(BaseImageProcessNode):
 # ── Colormap helpers (shared by BC and Threshold nodes) ───────────────────────
 
 _COLORMAPS = [
-    'gray',     # No colour — passes through unchanged
+    'gray',     # No colour -- passes through unchanged
     'viridis',  # Perceptually uniform dark→light
     'plasma',   # Perceptually uniform purple→yellow
     'inferno',  # Black→red→yellow
@@ -997,10 +997,10 @@ class HistogramBCWidget(QtWidgets.QWidget):
     Each parameter has a slider + spinbox pair that syncs with the InfiniteLines on the plot. Dragging any control triggers a live image update immediately.
 
     Controls:
-    - Red line / **Min** — pixels below this value become 0
-    - Cyan line / **Max** — pixels above this value become 255
-    - **Brightness** — shifts the centre of the window
-    - **Contrast** — narrows or widens the window
+    - Red line / **Min** -- pixels below this value become 0
+    - Cyan line / **Max** -- pixels above this value become 255
+    - **Brightness** -- shifts the centre of the window
+    - **Contrast** -- narrows or widens the window
 
     Emits `params_changed(min_val, max_val)` on any user interaction.
     """
@@ -1104,13 +1104,13 @@ class HistogramBCWidget(QtWidgets.QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setColumnStretch(1, 1)
 
-        # Min / Max  –  integer values in [0, full_range]
+        # Min / Max  -  integer values in [0, full_range]
         self._sld_min = self._make_int_slider(0, 255, 0)
         self._spn_min = self._make_int_spinbox(0, 255, 0)
         self._sld_max = self._make_int_slider(0, 255, 255)
         self._spn_max = self._make_int_spinbox(0, 255, 255)
 
-        # Brightness / Contrast  –  float in [-100, 100], slider ×10 precision
+        # Brightness / Contrast  -  float in [-100, 100], slider ×10 precision
         self._sld_brightness = self._make_float_slider(-100, 100, 0.0)
         self._spn_brightness = self._make_float_spinbox(-100.0, 100.0, 0.0)
         self._sld_contrast   = self._make_float_slider(-100, 100, 0.0)
@@ -1451,8 +1451,8 @@ class BrightnessContrastNode(BaseImageProcessNode):
     Works with 8-bit and 16-bit input images. For 16-bit input the histogram spans 0-65535 and the handles can be placed anywhere in that range.
 
     Convenience controls:
-    - **Brightness** (-100 to +100) — shifts the window centre up or down
-    - **Contrast** (-100 to +100) — narrows or widens the window symmetrically
+    - **Brightness** (-100 to +100) -- shifts the window centre up or down
+    - **Contrast** (-100 to +100) -- narrows or widens the window symmetrically
 
     Keywords: brightness, contrast, adjust, enhance, levels, 亮度, 對比, 調整, 增強, 影像處理
     """
@@ -1618,10 +1618,10 @@ class HistogramThresholdWidget(QtWidgets.QWidget):
     A slider + spinbox pair syncs with the InfiniteLine on the plot. Dragging any control triggers a live mask update.
 
     Controls:
-    - Yellow line / **Threshold** slider — threshold value
-    - Green shaded region — selected pixels
-    - **Direction** combo — above or below
-    - **Auto (Otsu)** — automatic threshold
+    - Yellow line / **Threshold** slider -- threshold value
+    - Green shaded region -- selected pixels
+    - **Direction** combo -- above or below
+    - **Auto (Otsu)** -- automatic threshold
 
     Emits `threshold_changed(value, above_threshold)` on any user interaction.
     """
@@ -1801,7 +1801,7 @@ class HistogramThresholdWidget(QtWidgets.QWidget):
         if self._updating:
             return
         val = float(self._line.value())
-        # Sync slider/spinbox/region WITHOUT calling _line.setValue — that would
+        # Sync slider/spinbox/region WITHOUT calling _line.setValue -- that would
         # interrupt the active pyqtgraph drag and prevent smooth tracking.
         self._updating = True
         try:
@@ -1961,15 +1961,15 @@ class BinaryThresholdNode(BaseImageProcessNode):
     Drag the yellow threshold line on the histogram to select pixels. The green-shaded region shows which pixels will be included in the output mask. Works with 8-bit and 16-bit input images; the threshold value is in the original pixel-value space.
 
     Direction modes:
-    - *Above (pixel > T)* — selected pixels are brighter than the threshold
-    - *Below (pixel <= T)* — selected pixels are darker than the threshold
-    - *Auto (Otsu)* — automatically finds the optimal threshold using Otsu's method
-    - *Auto Otsu per image* — re-computes Otsu for every new input image (useful for batch workflows with varying brightness)
-    - *Apply to image (display)* — when checked the on-node preview shows the input image with mask applied; otherwise it shows the binary mask. Display only — the `masked_image` output port is always populated.
+    - *Above (pixel > T)* -- selected pixels are brighter than the threshold
+    - *Below (pixel <= T)* -- selected pixels are darker than the threshold
+    - *Auto (Otsu)* -- automatically finds the optimal threshold using Otsu's method
+    - *Auto Otsu per image* -- re-computes Otsu for every new input image (useful for batch workflows with varying brightness)
+    - *Apply to image (display)* -- when checked the on-node preview shows the input image with mask applied; otherwise it shows the binary mask. Display only -- the `masked_image` output port is always populated.
 
     Outputs:
-    - `mask` — binary MaskData (255 = selected, 0 = not selected)
-    - `masked_image` — input image with mask applied (black outside)
+    - `mask` -- binary MaskData (255 = selected, 0 = not selected)
+    - `masked_image` -- input image with mask applied (black outside)
 
     Keywords: threshold, binary, Otsu, segmentation, foreground, 閾值, 二值化, 分割, 影像處理, 前景
     """
@@ -1980,9 +1980,9 @@ class BinaryThresholdNode(BaseImageProcessNode):
         {'thresh_state', 'thresh_widget', 'auto_otsu_per_image', 'apply_to_image'}
     )
     PROP_DESCRIPTIONS = {
-        'thresh_state':        '[threshold, direction] — 1=keep pixels > threshold (strictly above), 0=keep pixels <= threshold (below or equal)',
+        'thresh_state':        '[threshold, direction] -- 1=keep pixels > threshold (strictly above), 0=keep pixels <= threshold (below or equal)',
         'auto_otsu_per_image': 'set to false when using an explicit thresh_state value; default true overrides manual threshold',
-        'apply_to_image':      'true = preview shows masked input image; false = preview shows the binary mask. Display only — masked_image output is always produced.',
+        'apply_to_image':      'true = preview shows masked input image; false = preview shows the binary mask. Display only -- masked_image output is always produced.',
     }
 
     def __init__(self):
@@ -2018,7 +2018,7 @@ class BinaryThresholdNode(BaseImageProcessNode):
                 self._thresh_widget.inner.set_threshold(float(value[0]), bool(value[1]))
             except Exception:
                 pass
-        # Refresh preview immediately when apply_to_image toggles —
+        # Refresh preview immediately when apply_to_image toggles --
         # output ports are unchanged so no downstream re-eval needed.
         elif name == 'apply_to_image' and self._cached_arr is not None:
             mask_data = self.output_values.get('mask')
@@ -2123,7 +2123,7 @@ class BinaryThresholdNode(BaseImageProcessNode):
 
     def _build_masked_image(self, arr, mask_u8):
         """Apply binary mask to the input image. Always produced regardless of
-        the apply_to_image display toggle — that toggle only affects preview.
+        the apply_to_image display toggle -- that toggle only affects preview.
         """
         try:
             base_f = arr.astype(np.float32)
@@ -2250,9 +2250,9 @@ class GammaContrastNode(BaseImageProcessNode):
 
     Transforms each pixel via `O = I^gamma * gain`.
 
-    **gamma** — exponent controlling the curve shape (default: 1.0). Values below 1 brighten; values above 1 darken.
+    **gamma** -- exponent controlling the curve shape (default: 1.0). Values below 1 brighten; values above 1 darken.
 
-    **gain** — multiplicative scaling factor applied after gamma (default: 1.0).
+    **gain** -- multiplicative scaling factor applied after gamma (default: 1.0).
 
     Keywords: gamma, contrast, adjust, nonlinear, exposure, 對比, 調整, 亮度, 非線性, 影像處理
     """
@@ -2305,10 +2305,10 @@ class RGBToGrayNode(BaseImageProcessNode):
     Converts an RGB or RGBA image to a single-channel grayscale image.
 
     Method options:
-    - *Luminosity (Rec.601)* — standard broadcast weights (PIL default): `L = 0.299R + 0.587G + 0.114B`
-    - *Luminosity (Rec.709)* — HDTV/sRGB weights used by skimage: `L = 0.2125R + 0.7154G + 0.0721B`
-    - *Average* — simple mean of R, G, B
-    - *Red* / *Green* / *Blue* — extracts a single colour channel as grayscale
+    - *Luminosity (Rec.601)* -- standard broadcast weights (PIL default): `L = 0.299R + 0.587G + 0.114B`
+    - *Luminosity (Rec.709)* -- HDTV/sRGB weights used by skimage: `L = 0.2125R + 0.7154G + 0.0721B`
+    - *Average* -- simple mean of R, G, B
+    - *Red* / *Green* / *Blue* -- extracts a single colour channel as grayscale
 
     Output is single-channel (L-mode) ImageData.
 
@@ -2363,7 +2363,7 @@ class RGBToGrayNode(BaseImageProcessNode):
                           [0.299, 0.587, 0.114]).astype(arr.dtype)
         elif method == 'Luminosity (Rec.709)':
             from skimage.color import rgb2gray
-            # Data is float [0,1] — rgb2gray handles this directly
+            # Data is float [0,1] -- rgb2gray handles this directly
             gray = rgb2gray(arr_rgb.astype(np.float64)).astype(np.float32)
         elif method == 'Average':
             gray = arr_rgb.mean(axis=2).astype(arr.dtype)
@@ -2393,14 +2393,14 @@ class ColorDeconvolutionNode(BaseImageProcessNode):
 
     Output mode:
 
-    - *Colored* — each channel retains the stain's original colour on a white background
-    - *Grayscale* — intensity map where brighter = more stain (for quantification)
+    - *Colored* -- each channel retains the stain's original colour on a white background
+    - *Grayscale* -- intensity map where brighter = more stain (for quantification)
 
     Third stain completion:
 
-    - *Ruifrok* — Ruifrok/Johnston fallback
-    - *Cross Product* — stain-3 = stain-1 x stain-2
-    - *Auto* — keep matrix as provided
+    - *Ruifrok* -- Ruifrok/Johnston fallback
+    - *Cross Product* -- stain-3 = stain-1 x stain-2
+    - *Auto* -- keep matrix as provided
 
     Keywords: color deconvolution, stain, H&E, histology, histochemistry, Masson trichrome
     """
@@ -2605,7 +2605,7 @@ class ColorDeconvolutionNode(BaseImageProcessNode):
             arr_rgb = arr_raw[:, :, :3]
         else:
             arr_rgb = arr_raw
-        # Data is already float32 [0,1] — just convert to float64 for precision
+        # Data is already float32 [0,1] -- just convert to float64 for precision
         arr = arr_rgb.astype(np.float64)
         self.set_progress(20)
 
@@ -2745,7 +2745,7 @@ class ZoomNode(BaseImageProcessNode):
 
     A factor of 2.0 doubles the size; 0.5 halves it. The preview overlay shows the actual output dimensions. Works with both ImageData and MaskData inputs.
 
-    **zoom** — scale factor (default: 1.0).
+    **zoom** -- scale factor (default: 1.0).
 
     Keywords: zoom, scale, magnify, resize, factor, 縮放, 放大, 影像處理, 比例, 尺寸
     """
@@ -2805,11 +2805,11 @@ class ResizeNode(BaseImageProcessNode):
     """
     Resizes an image or mask to an exact pixel size (width x height).
 
-    **resize_width** — target width in pixels (default: 300).
+    **resize_width** -- target width in pixels (default: 300).
 
-    **resize_height** — target height in pixels (default: 300).
+    **resize_height** -- target height in pixels (default: 300).
 
-    **resample** — resampling method: *lanczos*, *bilinear*, *nearest*, or *bicubic*.
+    **resample** -- resampling method: *lanczos*, *bilinear*, *nearest*, or *bicubic*.
 
     Keywords: resize, scale, dimensions, width, height, 縮放, 尺寸, 影像處理, 寬度, 高度
     """
@@ -2888,7 +2888,7 @@ class RotateNode(BaseImageProcessNode):
 
     The canvas is expanded to fit the full rotated image; surrounding areas are filled with black. Works with both ImageData and MaskData inputs.
 
-    **angle** — rotation angle in degrees (default: 0.0).
+    **angle** -- rotation angle in degrees (default: 0.0).
 
     Keywords: rotate, angle, orientation, transform, spin, 旋轉, 角度, 方向, 影像處理, 轉換
     """
@@ -2944,9 +2944,9 @@ class MirrorNode(BaseImageProcessNode):
     Flips or mirrors an image or mask along one or both axes.
 
     Axis options:
-    - *horizontal* — flip left-right (mirror across the vertical centre line)
-    - *vertical* — flip top-bottom (mirror across the horizontal centre line)
-    - *both* — flip both axes (equivalent to 180-degree rotation)
+    - *horizontal* -- flip left-right (mirror across the vertical centre line)
+    - *vertical* -- flip top-bottom (mirror across the horizontal centre line)
+    - *both* -- flip both axes (equivalent to 180-degree rotation)
 
     Works with both ImageData and MaskData inputs.
 
@@ -3043,7 +3043,7 @@ class RollingBallNode(BaseImageProcessNode):
         H, W    = arr_in.shape[0], arr_in.shape[1]
 
         self.set_progress(10)
-        # Data is already float32 [0,1] — use directly
+        # Data is already float32 [0,1] -- use directly
         arr = arr_in.astype(np.float32)
 
         # Try Rust (fast enough for full resolution); fall back to skimage
@@ -3092,7 +3092,7 @@ class MultiOtsuNode(BaseImageProcessNode):
 
     Uses `skimage.filters.threshold_multiotsu` to find optimal inter-class thresholds. Output is a LabelData integer array where each pixel is labelled 0 to N-1 (background = 0, brightest class = N-1).
 
-    **n_classes** — number of intensity classes to separate (default: 3).
+    **n_classes** -- number of intensity classes to separate (default: 3).
 
     Keywords: multi-otsu, multi otsu, threshold, classes, label, 多閾值, 多類別
     """
@@ -3148,7 +3148,7 @@ class MultiOtsuNode(BaseImageProcessNode):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# ChannelColorizeNode — remap RGB channels to custom colors & composite
+# ChannelColorizeNode -- remap RGB channels to custom colors & composite
 # ═══════════════════════════════════════════════════════════════════════
 
 _COLOR_PRESETS = {
@@ -3345,7 +3345,7 @@ class ChannelColorizeNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# OIR Reader Node — reads OIR files and outputs individual channels
+# OIR Reader Node -- reads OIR files and outputs individual channels
 # ===========================================================================
 
 class _OIRChannelColorWidget(NodeBaseWidget):
@@ -3665,7 +3665,7 @@ class _MiniChannelBC(QtWidgets.QWidget):
         header.addWidget(self._color_btn)
         header.addStretch()
         btn_auto = QtWidgets.QPushButton('Auto')
-        btn_auto.setToolTip('Auto stretch (0.5%–99.5%)')
+        btn_auto.setToolTip('Auto stretch (0.5%-99.5%)')
         btn_auto.setFixedSize(32, 16)
         btn_auto.setStyleSheet('font-size: 7px; padding: 0px;')
         btn_auto.clicked.connect(self._auto)
@@ -4036,7 +4036,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
     """
     Per-channel brightness & contrast with live composite preview.
 
-    Connect 1–4 grayscale channels (or a single multi-channel image) and adjust
+    Connect 1-4 grayscale channels (or a single multi-channel image) and adjust
     each channel's display window independently. Each channel has its own
     histogram with draggable min/max lines, brightness/contrast sliders, and
     a color button. The composite output blends all channels additively.
@@ -4089,7 +4089,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
     _PREVIEW_MAX_PX = 512 * 512
 
     def _on_channel_changed(self, ch_idx, min_val, max_val):
-        """Live update when user drags a handle — debounced."""
+        """Live update when user drags a handle -- debounced."""
         if self._cached_channels[ch_idx] is None:
             return
         # Instant preview on downsampled data
@@ -4100,7 +4100,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
         self._bc_debounce.start()
 
     def _on_debounce_fire(self):
-        """Debounce expired — build full-res outputs and cascade."""
+        """Debounce expired -- build full-res outputs and cascade."""
         result = self._build_outputs()
         if result:
             self.set_display(self.output_values.get('composite', result).payload)
@@ -4324,7 +4324,7 @@ class MultiChannelBCNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# Multi-Channel Threshold — per-channel thresholding with AND/OR combine
+# Multi-Channel Threshold -- per-channel thresholding with AND/OR combine
 # ===========================================================================
 
 class _MiniChannelThreshold(QtWidgets.QWidget):
@@ -4504,7 +4504,7 @@ class _MiniChannelThreshold(QtWidgets.QWidget):
         self.enabled_changed.emit(self._ch_idx, bool(checked))
 
     def _apply_use_visual(self, enabled: bool):
-        # Dim the colored label when disabled — controls remain interactive
+        # Dim the colored label when disabled -- controls remain interactive
         # so the user can still preview-adjust without committing.
         r, g, b = self._color
         if enabled:
@@ -4685,26 +4685,26 @@ class MultiChannelThresholdNode(BaseImageProcessNode):
     """
     Per-channel thresholding with combined mask output.
 
-    Connect 1–4 grayscale channels (or a single multi-channel image) and threshold
+    Connect 1-4 grayscale channels (or a single multi-channel image) and threshold
     each channel independently. Each panel has its own histogram with a draggable
     threshold line, slider/spinbox, direction selector (above/below), Otsu
     auto-threshold button, and a "Use" checkbox to include/exclude that channel
     from the combined mask without disconnecting it.
 
     The combined output merges the per-channel masks using either AND
-    (intersection — pixel must pass every active channel's threshold) or OR
-    (union — pixel passes if any active channel selects it).
+    (intersection -- pixel must pass every active channel's threshold) or OR
+    (union -- pixel passes if any active channel selects it).
 
     Outputs
     
-    - `mask_ch1`–`mask_ch4` — individual binary masks (one per active channel)
-    - `combined_mask` — AND/OR-merged binary mask
-    - `masked_image` — input image with `combined_mask` applied (black outside)
+    - `mask_ch1`-`mask_ch4` -- individual binary masks (one per active channel)
+    - `combined_mask` -- AND/OR-merged binary mask
+    - `masked_image` -- input image with `combined_mask` applied (black outside)
 
     Display
     
-    - **Combine mode** — AND or OR for merging per-channel masks
-    - **Apply to image (display)** — when checked the on-node preview shows the masked input image; otherwise it shows the combined mask. The `masked_image` output port is always populated regardless of this toggle.
+    - **Combine mode** -- AND or OR for merging per-channel masks
+    - **Apply to image (display)** -- when checked the on-node preview shows the masked input image; otherwise it shows the combined mask. The `masked_image` output port is always populated regardless of this toggle.
 
     Keywords: threshold, multi-channel, mask, segmentation, AND, OR, Otsu, 多通道, 閾值, 二值化, 分割
     """
@@ -4722,12 +4722,12 @@ class MultiChannelThresholdNode(BaseImageProcessNode):
         'thresh_state_ch3', 'thresh_state_ch4',
     })
     PROP_DESCRIPTIONS = {
-        'thresh_state_ch1': '[threshold, direction, enabled] for ch1 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip. Legacy 2-element [threshold, direction] is also accepted (defaults enabled=1).',
-        'thresh_state_ch2': '[threshold, direction, enabled] for ch2 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
-        'thresh_state_ch3': '[threshold, direction, enabled] for ch3 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
-        'thresh_state_ch4': '[threshold, direction, enabled] for ch4 — direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
-        'combine_mode':     "'AND' or 'OR' — how to merge active per-channel masks",
-        'apply_to_image':   'true = preview shows masked image; false = preview shows combined mask. Display only — masked_image output is always produced.',
+        'thresh_state_ch1': '[threshold, direction, enabled] for ch1 -- direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip. Legacy 2-element [threshold, direction] is also accepted (defaults enabled=1).',
+        'thresh_state_ch2': '[threshold, direction, enabled] for ch2 -- direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
+        'thresh_state_ch3': '[threshold, direction, enabled] for ch3 -- direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
+        'thresh_state_ch4': '[threshold, direction, enabled] for ch4 -- direction: 1=above, 0=below; enabled: 1=use in combine, 0=skip.',
+        'combine_mode':     "'AND' or 'OR' -- how to merge active per-channel masks",
+        'apply_to_image':   'true = preview shows masked image; false = preview shows combined mask. Display only -- masked_image output is always produced.',
     }
 
     _PREVIEW_MAX_PX = 512 * 512
@@ -4749,7 +4749,7 @@ class MultiChannelThresholdNode(BaseImageProcessNode):
         self.add_output('combined_mask', color=PORT_COLORS['mask'], multi_output=True)
         self.add_output('masked_image', color=PORT_COLORS['image'], multi_output=True)
 
-        # Per-channel persistent state — [threshold, above, enabled]
+        # Per-channel persistent state -- [threshold, above, enabled]
         # (legacy 2-element values [threshold, above] are also accepted)
         self.create_property('thresh_state_ch1', [128.0, 1, 1])
         self.create_property('thresh_state_ch2', [128.0, 1, 1])
@@ -4991,7 +4991,7 @@ class MultiChannelThresholdNode(BaseImageProcessNode):
         """Return list of bool masks (or None) for each channel using current panel state.
 
         Channels that are disconnected OR have their 'Use' checkbox unchecked
-        return None — they will be excluded from the AND/OR combine and their
+        return None -- they will be excluded from the AND/OR combine and their
         per-channel mask output port will be None.
         """
         masks = [None] * 4
@@ -5110,7 +5110,7 @@ class MultiChannelThresholdNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# Merge Image Node — additive blend of multiple images
+# Merge Image Node -- additive blend of multiple images
 # ===========================================================================
 
 class MergeImageNode(BaseImageProcessNode):
@@ -5194,14 +5194,14 @@ class MergeImageNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# HSV Range Mask — colour-based segmentation via H/S/V ranges
+# HSV Range Mask -- colour-based segmentation via H/S/V ranges
 # ===========================================================================
 
 class _HueRangeBar(QtWidgets.QWidget):
-    """Horizontal hue gradient (0–360°) with two draggable handles for H min/max.
+    """Horizontal hue gradient (0-360°) with two draggable handles for H min/max.
 
     Supports wraparound: when h_min > h_max the selected region wraps around
-    the 0/360 boundary (useful for selecting reds, which span ~340–20°).
+    the 0/360 boundary (useful for selecting reds, which span ~340-20°).
     """
     range_changed = QtCore.Signal(float, float)
 
@@ -5233,7 +5233,7 @@ class _HueRangeBar(QtWidgets.QWidget):
         w = max(1, self.width())
         h = self.height()
 
-        # Hue gradient — draw 360 vertical strips (cheap, smooth enough)
+        # Hue gradient -- draw 360 vertical strips (cheap, smooth enough)
         # Use QLinearGradient for a single-shot gradient fill
         gradient = QtGui.QLinearGradient(0, 0, w, 0)
         for stop in range(0, 361, 10):
@@ -5255,7 +5255,7 @@ class _HueRangeBar(QtWidgets.QWidget):
             # Wraparound: dark in the middle band
             p.fillRect(x_max, 0, max(0, x_min - x_max), h, overlay)
 
-        # Handles — white line with black outline
+        # Handles -- white line with black outline
         for x in (x_min, x_max):
             p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 220), 3))
             p.drawLine(x, 0, x, h)
@@ -5524,16 +5524,16 @@ class HsvRangeMaskNode(BaseImageProcessNode):
 
     Controls
     
-    - **Hue bar** — horizontal gradient with two draggable handles. When the min handle sits to the right of the max handle the selection wraps around the 0°/360° boundary (e.g. min=340, max=20 selects reds).
-    - **S min/max** — saturation range in percent. Set min high to exclude muted/grey pixels, set max low to keep only pastel colours.
-    - **V min/max** — value (brightness) range in percent. Set min high to exclude dark pixels, set max low to exclude blown highlights.
-    - **Mode** — *Include* keeps pixels inside the H∩S∩V box; *Exclude* keeps pixels outside it.
-    - **Apply to image (display)** — when checked the on-node preview shows the masked image; otherwise it shows the raw mask. Display only — the `masked_image` output is always populated.
+    - **Hue bar** -- horizontal gradient with two draggable handles. When the min handle sits to the right of the max handle the selection wraps around the 0°/360° boundary (e.g. min=340, max=20 selects reds).
+    - **S min/max** -- saturation range in percent. Set min high to exclude muted/grey pixels, set max low to keep only pastel colours.
+    - **V min/max** -- value (brightness) range in percent. Set min high to exclude dark pixels, set max low to exclude blown highlights.
+    - **Mode** -- *Include* keeps pixels inside the H∩S∩V box; *Exclude* keeps pixels outside it.
+    - **Apply to image (display)** -- when checked the on-node preview shows the masked image; otherwise it shows the raw mask. Display only -- the `masked_image` output is always populated.
 
     Outputs
     
-    - `mask` — binary MaskData
-    - `masked_image` — input image with mask applied (black outside)
+    - `mask` -- binary MaskData
+    - `masked_image` -- input image with mask applied (black outside)
 
     Keywords: HSV, hue, saturation, value, color mask, threshold, range, segmentation, include, exclude, 色相, 飽和度, 顏色遮罩, 範圍, 分割
     """
@@ -5545,7 +5545,7 @@ class HsvRangeMaskNode(BaseImageProcessNode):
         'hsv_range_widget', 'hsv_state',
     })
     PROP_DESCRIPTIONS = {
-        'hsv_state':      '[h_min, h_max, s_min, s_max, v_min, v_max] — H in 0–360°, S/V in 0–100%. h_min > h_max wraps around.',
+        'hsv_state':      '[h_min, h_max, s_min, s_max, v_min, v_max] -- H in 0-360°, S/V in 0-100%. h_min > h_max wraps around.',
         'mode':           "'Include' = mask is inside the H∩S∩V box; 'Exclude' = mask is outside.",
         'apply_to_image': 'Display-only toggle. masked_image output is always produced.',
     }

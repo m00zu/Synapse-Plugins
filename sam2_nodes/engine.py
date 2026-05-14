@@ -1,5 +1,5 @@
 """
-engine.py — SAM2 ONNX inference engine (pure numpy/PIL, no cv2).
+engine.py -- SAM2 ONNX inference engine (pure numpy/PIL, no cv2).
 
 Adapted from ONNX-SAM2-Segment-Anything/sam2/sam2.py.
 """
@@ -18,7 +18,7 @@ _ort = None  # lazy-loaded onnxruntime module
 
 
 def _onnxruntime():
-    """Lazy import of onnxruntime — avoids ~1-2s startup penalty."""
+    """Lazy import of onnxruntime -- avoids ~1-2s startup penalty."""
     global _ort
     if _ort is None:
         try:
@@ -36,7 +36,7 @@ def _onnxruntime():
 def _get_providers() -> list[str]:
     """Return best available ONNX Runtime providers.
 
-    CoreML is intentionally excluded — its model compilation dispatches
+    CoreML is intentionally excluded -- its model compilation dispatches
     work to the main thread via GCD, causing UI freezes even when the
     ONNX session is created on a background thread.  CPU provider on
     Apple Silicon already uses Accelerate/NEON and is fast enough.
@@ -213,8 +213,8 @@ class SAM2ImageSession:
                 label_id: int = 0) -> tuple[np.ndarray, np.ndarray]:
         """Run decoder for given points → (mask_uint8_HW, scores).
 
-        point_coords: (N, 2) int — (x, y) in original image space
-        point_labels: (N,) int — 1=foreground, 0=background
+        point_coords: (N, 2) int -- (x, y) in original image space
+        point_labels: (N,) int -- 1=foreground, 0=background
         """
         if self._embeddings is None:
             raise RuntimeError("Call set_image() first")
@@ -287,7 +287,7 @@ class SAM2ImageSession:
         if progress_cb:
             progress_cb(0.9)
 
-        # NMS — keep higher-scoring mask when IoU > threshold
+        # NMS -- keep higher-scoring mask when IoU > threshold
         candidates.sort(key=lambda c: c[0], reverse=True)
         keep: list[tuple[float, np.ndarray]] = []
         for score, mask in candidates:

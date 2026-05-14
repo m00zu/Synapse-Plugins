@@ -1,5 +1,5 @@
 """
-model_manager.py — Download and locate SAM2 + GroundingDINO ONNX model files.
+model_manager.py -- Download and locate SAM2 + GroundingDINO ONNX model files.
 
 Image-only models are stored in plugins/sam2_nodes/models/{variant}/
 (fetched from HuggingFace as a zip).
@@ -86,7 +86,7 @@ class SAM2ModelManager:
         from huggingface_hub import hf_hub_download
 
         zip_name, prefix = self.VARIANTS[variant]
-        logger.info("Downloading SAM2 '%s' from %s …", variant, self.REPO_ID)
+        logger.info("Downloading SAM2 '%s' from %s ...", variant, self.REPO_ID)
 
         zip_path = hf_hub_download(
             repo_id=self.REPO_ID,
@@ -96,7 +96,7 @@ class SAM2ModelManager:
         dest = self._variant_dir(variant)
         dest.mkdir(parents=True, exist_ok=True)
 
-        logger.info("Extracting to %s …", dest)
+        logger.info("Extracting to %s ...", dest)
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.infolist():
                 if member.is_dir():
@@ -111,7 +111,7 @@ class SAM2ModelManager:
         enc, dec = self._onnx_paths(variant)
         if not enc.is_file() or not dec.is_file():
             raise FileNotFoundError(
-                f"Extraction failed — expected:\n  {enc}\n  {dec}")
+                f"Extraction failed -- expected:\n  {enc}\n  {dec}")
         logger.info("SAM2 '%s' ready.", variant)
         return enc, dec
 
@@ -184,7 +184,7 @@ class SAM2ModelManager:
                 logger.info("Video model '%s' already present", model_name)
             else:
                 url = f"{self.VIDEO_BASE_URL}/{fname}"
-                logger.info("Downloading %s from %s …", model_name, url)
+                logger.info("Downloading %s from %s ...", model_name, url)
                 try:
                     urllib.request.urlretrieve(url, str(dest))
                     sz = dest.stat().st_size / 1e6
@@ -243,7 +243,7 @@ class SAM2ModelManager:
             if dest.is_file():
                 logger.info("GroundingDINO '%s' already present", local_name)
                 continue
-            logger.info("Downloading GroundingDINO '%s' from %s …",
+            logger.info("Downloading GroundingDINO '%s' from %s ...",
                         local_name, self.GDINO_HF_REPO)
             cached = hf_hub_download(
                 repo_id=self.GDINO_HF_REPO,

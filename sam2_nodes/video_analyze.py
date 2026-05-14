@@ -1,5 +1,5 @@
 """
-video_analyze_node.py — SAM2 Video Analyze: integrated video analysis workflow.
+video_analyze_node.py -- SAM2 Video Analyze: integrated video analysis workflow.
 
 Replaces the 6-node chain (FolderIterator → ImageReader → SAM2 Segment →
 SAM2 Track → ParticleProps → BatchAccumulator) with a single node.
@@ -243,7 +243,7 @@ def _render_trajectory(df: pd.DataFrame, bg_image: np.ndarray | None,
 
 
 # ---------------------------------------------------------------------------
-# _VideoAnalyzeWidget — two-column interactive widget
+# _VideoAnalyzeWidget -- two-column interactive widget
 # ---------------------------------------------------------------------------
 
 class _VideoAnalyzeWidget(NodeBaseWidget):
@@ -302,9 +302,9 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
         r1.addWidget(self._make_label("Folder", 38, _ss))
         self._le_folder = QtWidgets.QLineEdit()
         self._le_folder.setStyleSheet(_le_ss)
-        self._le_folder.setPlaceholderText("Image folder…")
+        self._le_folder.setPlaceholderText("Image folder...")
         r1.addWidget(self._le_folder, 1)
-        self._btn_folder = QtWidgets.QPushButton("…")
+        self._btn_folder = QtWidgets.QPushButton("...")
         self._btn_folder.setFixedSize(35, 45)
         r1.addWidget(self._btn_folder)
         main_vlay.addLayout(r1)
@@ -314,9 +314,9 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
         r2.addWidget(self._make_label("Video", 38, _ss))
         self._le_video = QtWidgets.QLineEdit()
         self._le_video.setStyleSheet(_le_ss)
-        self._le_video.setPlaceholderText("Video file…")
+        self._le_video.setPlaceholderText("Video file...")
         r2.addWidget(self._le_video, 1)
-        self._btn_video = QtWidgets.QPushButton("…")
+        self._btn_video = QtWidgets.QPushButton("...")
         self._btn_video.setFixedSize(35, 45)
         r2.addWidget(self._btn_video)
         main_vlay.addLayout(r2)
@@ -381,7 +381,7 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
         two_col = QtWidgets.QHBoxLayout()
         two_col.setSpacing(6)
 
-        # LEFT column — objects + collapsible params
+        # LEFT column -- objects + collapsible params
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(2)
 
@@ -980,7 +980,7 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
 
         self._rgb_arr = rgb_arr
 
-        # Load image into canvas (no SAM2 encoding — deferred to click)
+        # Load image into canvas (no SAM2 encoding -- deferred to click)
         self._apply_frame(rgb_arr)
 
         # Restore points/masks for this frame if it's a keyframe
@@ -1025,7 +1025,7 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
     def _restore_frame_state(self, frame_idx: int):
         """Restore point prompts and masks when navigating to a keyframe."""
         if frame_idx in self._keyframe_points:
-            # Restore points visually — show stored masks without re-encoding
+            # Restore points visually -- show stored masks without re-encoding
             kf_pts = self._keyframe_points[frame_idx]
             objects_data = {}
             for oid, (coords, labels) in kf_pts.items():
@@ -1060,7 +1060,7 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
             self._rebuild_obj_list()
             return
 
-        # Not a keyframe — clear points but show tracked masks if available
+        # Not a keyframe -- clear points but show tracked masks if available
         self._view.clear_all()
         if self._session:
             self._session._masks.clear()
@@ -1431,7 +1431,7 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
         sorted_kfs = sorted(self._keyframes.keys())
         first_kf = sorted_kfs[0]
 
-        # Process frames sequentially — initialize on keyframes, propagate otherwise
+        # Process frames sequentially -- initialize on keyframes, propagate otherwise
         for fi in range(total_frames):
             if self._cancel_analysis:
                 return None
@@ -1467,7 +1467,7 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
                 masks, _scores = video_session.propagate()
                 frame_masks_new[fi] = masks
             else:
-                # Before first keyframe — skip
+                # Before first keyframe -- skip
                 self._progress_signal.emit(fi + 1, total_frames)
                 continue
 
@@ -1501,14 +1501,14 @@ class _VideoAnalyzeWidget(NodeBaseWidget):
 
         model_name = 'nuclei'  # Default to nuclei segmentation
 
-        self._progress_signal.emit(f"Downloading {model_name} model (first time only)…")
+        self._progress_signal.emit(f"Downloading {model_name} model (first time only)...")
         try:
             model_path = CellposeONNX.download_model(model_name)
         except Exception as e:
             logger.error(f"Failed to download model: {e}")
             return None
 
-        self._progress_signal.emit(f"Loading Cellpose {model_name}…")
+        self._progress_signal.emit(f"Loading Cellpose {model_name}...")
         try:
             model = CellposeONNX(model_path, gpu=True)
         except Exception as e:

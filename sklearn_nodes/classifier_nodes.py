@@ -15,10 +15,10 @@ class RandomForestClassifierNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **n_estimators** — number of trees (default 100)
-    - **max_depth** — max tree depth (0 = unlimited)
-    - **random_seed** — for reproducibility
+    - **target_column** -- column to predict
+    - **n_estimators** -- number of trees (default 100)
+    - **max_depth** -- max tree depth (0 = unlimited)
+    - **random_seed** -- for reproducibility
 
     Keywords: random forest, ensemble, decision tree, classification, ML, machine learning
     """
@@ -55,10 +55,10 @@ class SVMClassifierNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **kernel** — kernel type (rbf, linear, poly, sigmoid)
-    - **C** — regularization parameter
-    - **gamma** — kernel coefficient (scale or auto)
+    - **target_column** -- column to predict
+    - **kernel** -- kernel type (rbf, linear, poly, sigmoid)
+    - **C** -- regularization parameter
+    - **gamma** -- kernel coefficient (scale or auto)
 
     Keywords: SVM, support vector machine, classification, kernel, ML, machine learning
     """
@@ -94,9 +94,9 @@ class KNNClassifierNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **n_neighbors** — number of neighbors (default 5)
-    - **weights** — weight function (uniform or distance)
+    - **target_column** -- column to predict
+    - **n_neighbors** -- number of neighbors (default 5)
+    - **weights** -- weight function (uniform or distance)
 
     Keywords: KNN, k-nearest neighbors, classification, ML, machine learning
     """
@@ -129,10 +129,10 @@ class LogisticRegressionNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **C** — inverse regularization strength
-    - **max_iter** — maximum iterations
-    - **solver** — optimization algorithm
+    - **target_column** -- column to predict
+    - **C** -- inverse regularization strength
+    - **max_iter** -- maximum iterations
+    - **solver** -- optimization algorithm
 
     Keywords: logistic regression, classification, linear model, ML, machine learning
     """
@@ -168,11 +168,11 @@ class GradientBoostingClassifierNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **n_estimators** — number of boosting stages (default 100)
-    - **max_depth** — max depth of individual trees (default 3)
-    - **learning_rate** — shrinkage factor (default 0.1)
-    - **random_seed** — for reproducibility
+    - **target_column** -- column to predict
+    - **n_estimators** -- number of boosting stages (default 100)
+    - **max_depth** -- max depth of individual trees (default 3)
+    - **learning_rate** -- shrinkage factor (default 0.1)
+    - **random_seed** -- for reproducibility
 
     Keywords: gradient boosting, GBM, ensemble, classification, ML, machine learning
     """
@@ -212,10 +212,10 @@ class AdaBoostClassifierNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **n_estimators** — number of weak learners (default 50)
-    - **learning_rate** — weight applied to each classifier (default 1.0)
-    - **random_seed** — for reproducibility
+    - **target_column** -- column to predict
+    - **n_estimators** -- number of weak learners (default 50)
+    - **learning_rate** -- weight applied to each classifier (default 1.0)
+    - **random_seed** -- for reproducibility
 
     Keywords: AdaBoost, boosting, ensemble, classification, ML, machine learning
     """
@@ -253,10 +253,10 @@ class DecisionTreeClassifierNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
-    - **max_depth** — max tree depth (0 = unlimited)
-    - **min_samples_split** — minimum samples to split a node (default 2)
-    - **random_seed** — for reproducibility
+    - **target_column** -- column to predict
+    - **max_depth** -- max tree depth (0 = unlimited)
+    - **min_samples_split** -- minimum samples to split a node (default 2)
+    - **random_seed** -- for reproducibility
 
     Keywords: decision tree, CART, classification, ML, machine learning
     """
@@ -293,7 +293,7 @@ class NaiveBayesNode(_BaseClassifierNode):
 
     Options:
 
-    - **target_column** — column to predict
+    - **target_column** -- column to predict
 
     Keywords: naive bayes, Gaussian, probabilistic, classification, ML, machine learning
     """
@@ -319,7 +319,7 @@ class NaiveBayesNode(_BaseClassifierNode):
 # ─── Additional classifiers ────────────────────────────────────────────────────
 
 class ExtraTreesClassifierNode(_BaseClassifierNode):
-    """Trains an Extra-Trees classifier (randomized RF variant — often faster).
+    """Trains an Extra-Trees classifier (randomized RF variant -- often faster).
 
     Keywords: extra trees, randomized forest, ensemble, classification, ML
     """
@@ -518,7 +518,7 @@ class QDANode(_BaseClassifierNode):
 class XGBoostClassifierNode(_BaseClassifierNode):
     """Trains an XGBoost classifier (gradient-boosted trees, optimized).
 
-    Requires the ``xgboost`` package — install with ``pip install xgboost``.
+    Requires the ``xgboost`` package -- install with ``pip install xgboost``.
 
     Keywords: xgboost, gradient boosting, ensemble, classification, ML
     """

@@ -5,7 +5,7 @@ Dimensionality-reduction nodes (UMAP for now; t-SNE / PaCMAP could land here
 later).  Backed by the vendored ``umap_rs_py`` Rust extension.
 
 The UMAP node consumes any TableData (including MolTableData with array-valued
-columns like fingerprints) — feature columns are flattened by ``build_xy``
+columns like fingerprints) -- feature columns are flattened by ``build_xy``
 exactly the way classifier / regressor nodes do it.
 """
 from __future__ import annotations
@@ -113,7 +113,7 @@ class UMAPEmbeddingNode(BaseExecutionNode):
     init, runs UMAP, and appends ``umap_0``, ``umap_1`` (... up to
     ``n_components - 1``) columns to the output table.
 
-    Backed by the vendored ``umap_rs_py`` Rust crate — fast brute-force KNN
+    Backed by the vendored ``umap_rs_py`` Rust crate -- fast brute-force KNN
     with rayon parallelism and the patched UMAP optimizer.
 
     Keywords: UMAP, dimensionality reduction, embedding, visualization, ML

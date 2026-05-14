@@ -1,8 +1,8 @@
 """
-protein_utils — Protein preparation and PDBQT conversion utilities.
+protein_utils -- Protein preparation and PDBQT conversion utilities.
 
 Ported from moldocker/utilities/utilis.py for use as node-graph plugin.
-PDBFixer/OpenMM imports are lazy — functions that need them will raise a
+PDBFixer/OpenMM imports are lazy -- functions that need them will raise a
 clear ImportError if the packages are missing.
 """
 from __future__ import annotations
@@ -201,7 +201,7 @@ def _read_receptor_pdbqt_string(pdbqt_string, skip_typing=False):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PDBQTReceptor — atom typing + PDBQT generation
+#  PDBQTReceptor -- atom typing + PDBQT generation
 # ══════════════════════════════════════════════════════════════════════════════
 
 class PDBQTReceptor:
@@ -540,7 +540,7 @@ def fix_pdb_missing_atoms(pdb_pth: str, out_pth: str | None = None,
                           fill_gap: bool = False, ph: float = 7.0) -> str:
     """Use PDBFixer to repair a PDB/CIF structure (add missing atoms/H).
 
-    Accepts both PDB and CIF (mmCIF) files — PDBFixer auto-detects format.
+    Accepts both PDB and CIF (mmCIF) files -- PDBFixer auto-detects format.
     Always outputs PDB format (needed for downstream PDBQT conversion).
     """
     _ensure_pdbfixer()
@@ -593,8 +593,8 @@ def fix_pdb_missing_atoms(pdb_pth: str, out_pth: str | None = None,
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
 
-    # Strip existing H before re-adding — some PDBs (e.g. DUD-E) have
-    # non-standard hydrogen names (HN, HNE, HN11 …) that confuse the
+    # Strip existing H before re-adding -- some PDBs (e.g. DUD-E) have
+    # non-standard hydrogen names (HN, HNE, HN11 ...) that confuse the
     # residue template matching.  Remove them all so addMissingHydrogens()
     # can add correctly-named ones from scratch.
     from openmm.app import Modeller
@@ -623,7 +623,7 @@ def fix_pdb_missing_atoms_from_string(pdb_str: str, ph: float = 7.0,
     """Like fix_pdb_missing_atoms but accepts a PDB/CIF string.
 
     Args:
-        format: 'pdb' or 'cif' — determines temp file suffix for PDBFixer.
+        format: 'pdb' or 'cif' -- determines temp file suffix for PDBFixer.
     """
     _ensure_pdbfixer()
     import tempfile
@@ -780,7 +780,7 @@ def _check_for_aa_count(aa_df: pd.DataFrame):
 
 
 def check_amino_acids(aa_df: pd.DataFrame, conect_record: list) -> pd.DataFrame:
-    """Apply amino-acid–specific corrections (protonation, inserts, etc.)."""
+    """Apply amino-acid-specific corrections (protonation, inserts, etc.)."""
     aa_func_map = {
         'INS':   _check_for_inserts,
         'HIS':   _check_histidine,
@@ -839,7 +839,7 @@ def fix_and_convert_from_string(pdb_str: str, ph: float = 7.0,
     """Like fix_and_convert but accepts a PDB/CIF string.
 
     Args:
-        format: 'pdb' or 'cif' — determines temp file suffix for PDBFixer.
+        format: 'pdb' or 'cif' -- determines temp file suffix for PDBFixer.
     """
     import tempfile
     suffix = '.cif' if format == 'cif' else '.pdb'
@@ -941,7 +941,7 @@ def pdbqt_to_pdb(pdbqt_str: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PDBQTMolecule — parse docking output (multi-pose PDBQT / DLG)
+#  PDBQTMolecule -- parse docking output (multi-pose PDBQT / DLG)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _read_ligand_pdbqt_file(pdbqt_string, poses_to_read=-1, energy_range=-1,
@@ -1277,7 +1277,7 @@ class PDBQTMolecule:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RDKitMolCreate — convert PDBQT poses to RDKit Mol objects
+#  RDKitMolCreate -- convert PDBQT poses to RDKit Mol objects
 # ══════════════════════════════════════════════════════════════════════════════
 
 class RDKitMolCreate:

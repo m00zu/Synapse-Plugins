@@ -1,5 +1,5 @@
 """
-viewer_nodes.py — 3D volume visualization nodes.
+viewer_nodes.py -- 3D volume visualization nodes.
 
 Provides:
   - SliceViewerNode      Embedded Z-slice browser with slider
@@ -31,7 +31,7 @@ _HTML_PATH = _VIEWER_DIR / 'volume_viewer.html'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SliceViewerNode — embedded Z-slider + 2D slice display
+#  SliceViewerNode -- embedded Z-slider + 2D slice display
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _SliceViewerWidget(NodeBaseWidget):
@@ -214,7 +214,7 @@ class SliceViewerNode(BaseExecutionNode):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Volume3DViewerNode — Three.js isosurface viewer
+#  Volume3DViewerNode -- Three.js isosurface viewer
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _Volume3DWidget(NodeBaseWidget):
@@ -270,7 +270,7 @@ class _Volume3DWidget(NodeBaseWidget):
             self._pending_js.clear()
 
     def run_js(self, js_code: str):
-        """Execute JS — thread-safe."""
+        """Execute JS -- thread-safe."""
         if threading.current_thread() is threading.main_thread():
             self._run_js_main(js_code)
         else:

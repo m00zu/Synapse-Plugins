@@ -1,5 +1,5 @@
 """
-image_analysis — built-in plugin
+image_analysis -- built-in plugin
 Image processing, ROI editing, morphological operations, and computer vision.
 """
 from .image_process_nodes import *

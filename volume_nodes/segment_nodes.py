@@ -1,5 +1,5 @@
 """
-segment_nodes.py — 3D labeling and watershed segmentation nodes.
+segment_nodes.py -- 3D labeling and watershed segmentation nodes.
 """
 from __future__ import annotations
 

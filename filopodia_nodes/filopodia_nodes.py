@@ -207,7 +207,7 @@ def _skeleton_branch_stats(skel_binary: np.ndarray) -> list[dict]:
         if total_len == 0:
             continue
 
-        # Representative endpoint (precomputed above — no extra convolve)
+        # Representative endpoint (precomputed above -- no extra convolve)
         ep_ys, ep_xs = np.where(endpoint_map & comp)
         sy = int(ep_ys[0]) if len(ep_ys) else int(ys[0])
         sx = int(ep_xs[0]) if len(ep_ys) else int(xs[0])
@@ -218,7 +218,7 @@ def _skeleton_branch_stats(skel_binary: np.ndarray) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Node 1 — CellEdgeMaskNode
+# Node 1 -- CellEdgeMaskNode
 # ---------------------------------------------------------------------------
 
 class CellEdgeMaskNode(BaseImageProcessNode):
@@ -232,10 +232,10 @@ class CellEdgeMaskNode(BaseImageProcessNode):
     erode+dilate cycles can be added to further refine the boundary.
 
     Parameters:
-    - **threshold** — intensity cutoff (0--255)
-    - **n_open** — number of opening iterations for smoothing
-    - **n_erode_dilate** — additional erode+dilate cycles
-    - **fill_holes** — fill interior holes before opening
+    - **threshold** -- intensity cutoff (0--255)
+    - **n_open** -- number of opening iterations for smoothing
+    - **n_erode_dilate** -- additional erode+dilate cycles
+    - **fill_holes** -- fill interior holes before opening
 
     Output port `mask` is a MaskData (white = cell body).
 
@@ -310,7 +310,7 @@ class CellEdgeMaskNode(BaseImageProcessNode):
 
 
 # ---------------------------------------------------------------------------
-# Node 2 — FilopodiaDetectNode
+# Node 2 -- FilopodiaDetectNode
 # ---------------------------------------------------------------------------
 
 class FilopodiaDetectNode(BaseImageProcessNode):
@@ -326,10 +326,10 @@ class FilopodiaDetectNode(BaseImageProcessNode):
     cell edge are removed.
 
     Parameters:
-    - **threshold** — intensity cutoff (0--255)
-    - **n_distance_from_edge** — exclusion zone width in pixels around the cell body
-    - **use_convolve** — enable 5x5 sharpening kernel
-    - **use_clahe** — enable CLAHE local contrast pre-enhancement
+    - **threshold** -- intensity cutoff (0--255)
+    - **n_distance_from_edge** -- exclusion zone width in pixels around the cell body
+    - **use_convolve** -- enable 5x5 sharpening kernel
+    - **use_clahe** -- enable CLAHE local contrast pre-enhancement
 
     Output port `mask` is a MaskData of filopodia candidate regions.
     Connect to FilopodiaAnalyzeNode together with the `cell_mask`.
@@ -373,7 +373,7 @@ class FilopodiaDetectNode(BaseImageProcessNode):
 
         if bool(self.get_property('use_clahe')):
             from skimage.exposure import equalize_adapthist
-            # equalize_adapthist expects [0,1] float — data already in that range
+            # equalize_adapthist expects [0,1] float -- data already in that range
             gray = equalize_adapthist(gray, clip_limit=0.03).astype(np.float64)
         self.set_progress(25)
 
@@ -416,7 +416,7 @@ class FilopodiaDetectNode(BaseImageProcessNode):
 
 
 # ---------------------------------------------------------------------------
-# Node 3 — FilopodiaAnalyzeNode
+# Node 3 -- FilopodiaAnalyzeNode
 # ---------------------------------------------------------------------------
 
 class FilopodiaAnalyzeNode(BaseImageProcessNode):
@@ -434,13 +434,13 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
     - Measure total cell edge length via `skimage.measure.perimeter`
 
     Outputs:
-    - `table` — TableData with columns: `x`, `y`, `filopodia_length_px`,
+    - `table` -- TableData with columns: `x`, `y`, `filopodia_length_px`,
       `edge_length_px`, `filopodia_length_um`, `edge_length_um` (one row per
       detected filopodium skeleton branch).  The `_um` columns are populated
       when the input mask carries ``scale_um`` (micrometers per pixel,
       typically set by image readers from microscope metadata); otherwise
       they're NaN.
-    - `visualization` — colour composite (dark background, green = cell body, cyan = isolated filopodia mask, magenta = skeleton)
+    - `visualization` -- colour composite (dark background, green = cell body, cyan = isolated filopodia mask, magenta = skeleton)
 
     Keywords: filopodia analysis, skeleton length, branch measurement, protrusion quantification, edge length, micrometers, 絲足, 分析, 骨架, 細胞邊緣, 量測
     """
@@ -575,15 +575,15 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
     # ------------------------------------------------------------------
     def _make_visualization(
         self,
-        cell_arr:  np.ndarray,   # boolean — cell body
-        filo_arr:  np.ndarray,   # boolean — isolated filopodia regions
-        skeleton:  np.ndarray,   # boolean — thinned filopodia skeleton
+        cell_arr:  np.ndarray,   # boolean -- cell body
+        filo_arr:  np.ndarray,   # boolean -- isolated filopodia regions
+        skeleton:  np.ndarray,   # boolean -- thinned filopodia skeleton
     ) -> np.ndarray:
         """
         Colour composite on a dark background (float32 [0, 1]):
-          • Dark green  — cell body
-          • Cyan        — isolated filopodia mask (before skeletonization)
-          • Magenta     — skeleton (1-pixel centerlines)
+          • Dark green  -- cell body
+          • Cyan        -- isolated filopodia mask (before skeletonization)
+          • Magenta     -- skeleton (1-pixel centerlines)
         """
         H, W = cell_arr.shape
         rgb = np.zeros((H, W, 3), dtype=np.float32)

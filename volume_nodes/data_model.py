@@ -1,5 +1,5 @@
 """
-data_model.py — 3D volume data types for the volume processing plugin.
+data_model.py -- 3D volume data types for the volume processing plugin.
 """
 from __future__ import annotations
 from typing import Any

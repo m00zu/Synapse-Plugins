@@ -1,14 +1,14 @@
 """
 nodes/stats_nodes.py
 ====================
-Advanced statistical analysis nodes for Synapse — Prism-equivalent features:
+Advanced statistical analysis nodes for Synapse -- Prism-equivalent features:
 
-  1. LinearRegressionNode       — OLS simple/multiple regression
-  2. NonlinearRegressionNode    — Curve fitting (4PL, Hill, exponential, MM, …)
-  3. TwoWayANOVANode            — Two-way ANOVA with interaction (Type II SS)
-  4. ContingencyAnalysisNode    — Chi-square + Fisher's exact
-  5. SurvivalAnalysisNode       — Kaplan-Meier + log-rank test
-  6. PCANode                    — Principal component analysis
+  1. LinearRegressionNode       -- OLS simple/multiple regression
+  2. NonlinearRegressionNode    -- Curve fitting (4PL, Hill, exponential, MM, ...)
+  3. TwoWayANOVANode            -- Two-way ANOVA with interaction (Type II SS)
+  4. ContingencyAnalysisNode    -- Chi-square + Fisher's exact
+  5. SurvivalAnalysisNode       -- Kaplan-Meier + log-rank test
+  6. PCANode                    -- Principal component analysis
 """
 
 import NodeGraphQt
@@ -45,8 +45,8 @@ class LinearRegressionNode(BaseExecutionNode):
     With degree 1 (default), this is standard linear regression.
 
     Outputs:
-    - **coefficients** — slope, intercept, standard error, 95% CI, and p-values per parameter
-    - **residuals** — fitted values, residuals, and standardized residuals for downstream plotting
+    - **coefficients** -- slope, intercept, standard error, 95% CI, and p-values per parameter
+    - **residuals** -- fitted values, residuals, and standardized residuals for downstream plotting
 
     Summary statistics: R², adjusted R², F-statistic, and F p-value.
     
@@ -196,7 +196,7 @@ class LinearRegressionNode(BaseExecutionNode):
                     f'{y_col}_ci_hi': ci_hi,
                 })
             else:
-                # Multiple X — can't generate a smooth 1D curve; output fitted values instead
+                # Multiple X -- can't generate a smooth 1D curve; output fitted values instead
                 curve_df = resid_df[[*x_cols, 'Predicted']].rename(
                     columns={'Predicted': f'{y_col}_fit'})
 
@@ -228,14 +228,14 @@ class NonlinearRegressionNode(BaseExecutionNode):
     Fits nonlinear curves to XY data using `scipy.optimize.curve_fit`.
 
     Built-in models:
-    - *4PL (EC50 / Dose-Response)* — four-parameter logistic for IC50/EC50
-    - *Hill Equation* — sigmoidal binding/dose-response
-    - *One-Phase Exponential Decay* — single-rate decay to plateau
-    - *Two-Phase Exponential Decay* — fast + slow decay components
-    - *Exponential Growth* — unbounded exponential increase
-    - *Michaelis-Menten* — enzyme kinetics saturation curve
-    - *Gompertz Growth* — asymmetric sigmoidal growth
-    - *Sigmoidal (Logistic)* — symmetric S-curve
+    - *4PL (EC50 / Dose-Response)* -- four-parameter logistic for IC50/EC50
+    - *Hill Equation* -- sigmoidal binding/dose-response
+    - *One-Phase Exponential Decay* -- single-rate decay to plateau
+    - *Two-Phase Exponential Decay* -- fast + slow decay components
+    - *Exponential Growth* -- unbounded exponential increase
+    - *Michaelis-Menten* -- enzyme kinetics saturation curve
+    - *Gompertz Growth* -- asymmetric sigmoidal growth
+    - *Sigmoidal (Logistic)* -- symmetric S-curve
 
     Outputs best-fit parameters with 95% CI and a smooth predicted curve table.
 
@@ -674,8 +674,8 @@ class TwoWayANOVANode(BaseExecutionNode):
     Input must be in long format with two factor columns and one numeric value column.
 
     Outputs:
-    - **anova_table** — sum of squares, df, F-statistic, and p-value per source
-    - **group_means** — mean, SD, SEM, and N for every factor combination
+    - **anova_table** -- sum of squares, df, F-statistic, and p-value per source
+    - **group_means** -- mean, SD, SEM, and N for every factor combination
 
     Keywords: two-way anova, 2-way anova, factorial anova, interaction effect,
               main effects, between subjects, F-test, repeated measures,
@@ -768,13 +768,13 @@ class ContingencyAnalysisNode(BaseExecutionNode):
     Tests categorical association using chi-square and Fisher's exact tests.
 
     Input types:
-    - *Raw Data (two columns)* — a crosstab is built automatically from two categorical columns
-    - *Contingency Matrix* — a pre-built matrix of observed counts
+    - *Raw Data (two columns)* -- a crosstab is built automatically from two categorical columns
+    - *Contingency Matrix* -- a pre-built matrix of observed counts
 
     Outputs:
-    - **test_results** — Pearson chi-square, Yates-corrected chi-square, and Fisher's exact (2x2)
-    - **observed_counts** — the observed contingency table
-    - **expected_counts** — expected counts under the null hypothesis
+    - **test_results** -- Pearson chi-square, Yates-corrected chi-square, and Fisher's exact (2x2)
+    - **observed_counts** -- the observed contingency table
+    - **expected_counts** -- expected counts under the null hypothesis
 
     Keywords: chi-square, chi2, fisher exact, contingency table, odds ratio,
               relative risk, categorical, crosstab, association,
@@ -874,16 +874,16 @@ class SurvivalAnalysisNode(BaseExecutionNode):
     Performs Kaplan-Meier survival analysis with log-rank test.
 
     Input columns:
-    - **Time Column** — duration or follow-up time
-    - **Event Column** — `1` = event occurred, `0` = censored
-    - **Group Column** (optional) — categorical grouping for multi-group comparison
+    - **Time Column** -- duration or follow-up time
+    - **Event Column** -- `1` = event occurred, `0` = censored
+    - **Group Column** (optional) -- categorical grouping for multi-group comparison
 
     Outputs:
-    - **km_table** — survival function with 95% CI (feed into SurvivalPlotNode)
-    - **log_rank** — omnibus log-rank test statistic and p-value
-    - **pairwise_stat** — pairwise log-rank results with optional p-value adjustment
+    - **km_table** -- survival function with 95% CI (feed into SurvivalPlotNode)
+    - **log_rank** -- omnibus log-rank test statistic and p-value
+    - **pairwise_stat** -- pairwise log-rank results with optional p-value adjustment
 
-    **P-Adj Method** — multiple comparison correction for pairwise tests.
+    **P-Adj Method** -- multiple comparison correction for pairwise tests.
 
     Keywords: kaplan meier, survival analysis, log-rank, censored, time-to-event,
               hazard, mortality, 生存分析, 存活曲線, 卡普蘭-邁耶, 截尾
@@ -944,7 +944,7 @@ class SurvivalAnalysisNode(BaseExecutionNode):
             if 0.0 < survival < 1.0:
                 log_s   = np.log(survival)          # negative
                 theta   = np.exp(1.96 * se / (survival * abs(log_s)))
-                lo      = survival ** theta          # > survival (wrong dir) — swap
+                lo      = survival ** theta          # > survival (wrong dir) -- swap
                 hi      = survival ** (1.0 / theta)
                 lo, hi  = min(lo, hi), max(lo, hi)  # ensure lo < hi
                 lo      = max(0.0, lo)
@@ -1156,11 +1156,11 @@ class PCANode(BaseExecutionNode):
     Performs principal component analysis (PCA) for multivariate data exploration.
 
     Outputs:
-    - **transformed** — PC coordinates per sample (connect to ScatterPlotNode for PC1 vs PC2)
-    - **loadings** — feature contributions per principal component
-    - **variance** — eigenvalues and cumulative variance explained per component
+    - **transformed** -- PC coordinates per sample (connect to ScatterPlotNode for PC1 vs PC2)
+    - **loadings** -- feature contributions per principal component
+    - **variance** -- eigenvalues and cumulative variance explained per component
 
-    **Standardize** — when enabled, applies Z-score normalization before decomposition.
+    **Standardize** -- when enabled, applies Z-score normalization before decomposition.
 
     Keywords: PCA, principal component analysis, dimensionality reduction,
               biplot, variance explained, loadings, transformed, multivariate,
@@ -1297,16 +1297,16 @@ class MixedEffectsModelNode(BaseExecutionNode):
     and **random effects** (group-level deviations) simultaneously.
 
     Configuration:
-    - **y_col** — dependent (response) variable.
-    - **fixed_cols** — fixed-effect predictor(s), comma-separated.
-    - **group_col** — grouping variable for random intercepts (required).
-    - **random_slope_col** — optional predictor for random slopes.
-    - **REML** — use Restricted ML (default) or Full ML estimation.
+    - **y_col** -- dependent (response) variable.
+    - **fixed_cols** -- fixed-effect predictor(s), comma-separated.
+    - **group_col** -- grouping variable for random intercepts (required).
+    - **random_slope_col** -- optional predictor for random slopes.
+    - **REML** -- use Restricted ML (default) or Full ML estimation.
 
     Outputs:
-    - **fixed_effects** — coefficient table with SE, z-value, p-value, 95% CI.
-    - **random_effects** — per-group random intercept (and slope) estimates.
-    - **summary** — model-level statistics: log-likelihood, AIC, BIC,
+    - **fixed_effects** -- coefficient table with SE, z-value, p-value, 95% CI.
+    - **random_effects** -- per-group random intercept (and slope) estimates.
+    - **summary** -- model-level statistics: log-likelihood, AIC, BIC,
       number of groups, ICC.
 
     Keywords: mixed effects, LMM, hierarchical model, multilevel, random intercept, random slope, nested data, repeated measures, REML, 混合效應, 階層模型, 隨機截距, 重複量測

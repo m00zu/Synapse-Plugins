@@ -1,5 +1,5 @@
 """
-tracking.py — Object tracking: strategies, frame tracker, and SAM2TrackNode.
+tracking.py -- Object tracking: strategies, frame tracker, and SAM2TrackNode.
 
 Combines the tracking strategy/engine (formerly tracker.py) with the
 SAM2 Track node (formerly track_node.py).
@@ -215,7 +215,7 @@ class CentroidTrackingStrategy(TrackingStrategy):
 class SAM2FrameTracker:
     """Stateful coordinator: tracks objects across frames using a strategy.
 
-    Supports dormant tracking — when an object is lost, it enters a dormant
+    Supports dormant tracking -- when an object is lost, it enters a dormant
     state for up to ``max_lost_frames`` frames before being permanently removed.
     """
 
@@ -433,7 +433,7 @@ class SAM2TrackNode(BaseImageProcessNode):
         with self._session_lock:
             if self._session is not None and self._current_variant == variant:
                 return self._session
-            logger.info("Loading SAM2 model '%s' for tracking …", variant)
+            logger.info("Loading SAM2 model '%s' for tracking ...", variant)
             # Release old session to free GPU/CPU memory
             old = self._session
             self._session = None
@@ -551,7 +551,7 @@ class SAM2TrackNode(BaseImageProcessNode):
     def _track_memory(self, rgb_arr: np.ndarray,
                       variant: str) -> dict[int, np.ndarray]:
         if self._video_session is None:
-            logger.info("Loading SAM2 video models '%s' …", variant)
+            logger.info("Loading SAM2 video models '%s' ...", variant)
             paths = _model_manager.get_video_model_paths(variant)
             self._video_session = SAM2VideoSession(
                 {k: str(v) for k, v in paths.items()},

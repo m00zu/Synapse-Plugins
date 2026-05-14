@@ -1,5 +1,5 @@
 """
-sam2_nodes — SAM2 interactive segmentation plugin for Synapse
+sam2_nodes -- SAM2 interactive segmentation plugin for Synapse
 =============================================================
 Click on objects in images to generate precise segmentation masks
 using Meta's Segment Anything Model 2 (SAM2) via ONNX Runtime.
@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-# ── Vendor injection (lightweight — no heavy imports here) ────────────────────
+# ── Vendor injection (lightweight -- no heavy imports here) ────────────────────
 _vendor = pathlib.Path(__file__).parent / 'vendor'
 if _vendor.is_dir() and str(_vendor) not in sys.path:
     sys.path.insert(0, str(_vendor))

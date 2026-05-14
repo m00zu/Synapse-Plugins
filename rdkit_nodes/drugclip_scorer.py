@@ -1,5 +1,5 @@
 """
-drugclip_scorer — Standalone DrugCLIP inference via ONNX Runtime.
+drugclip_scorer -- Standalone DrugCLIP inference via ONNX Runtime.
 
 Dependencies: onnxruntime, numpy, scipy, rdkit.
 No torch or unicore required at runtime.
@@ -15,7 +15,7 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Atom dictionaries (matches DrugCLIP training — includes [MASK] token)
+#  Atom dictionaries (matches DrugCLIP training -- includes [MASK] token)
 # ══════════════════════════════════════════════════════════════════════════
 
 _MOL_SYMBOLS = [
@@ -64,7 +64,7 @@ def preprocess_molecule(
 
     Returns:
         tokens (1, L) int64, distances (1, L, L) float32,
-        edge_types (1, L, L) int64  — padded to multiple of 8.
+        edge_types (1, L, L) int64  -- padded to multiple of 8.
     """
     from scipy.spatial import distance_matrix
 
@@ -209,7 +209,7 @@ def extract_pocket_from_pdb(
         size:   (3,) box dimensions (full widths, same as DockingBoxNode).
         padding: extra angstroms added to each side of the box.
 
-    Returns (atom_symbols, coordinates) — element symbols suitable for PKT_DICT.
+    Returns (atom_symbols, coordinates) -- element symbols suitable for PKT_DICT.
     Only considers protein ATOM records (not HETATM).
     """
     center = np.asarray(center, dtype=np.float64)

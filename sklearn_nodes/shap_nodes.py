@@ -3,12 +3,12 @@ shap_nodes.py
 =============
 SHAP analysis nodes for trained sklearn / xgboost models.
 
-Provides four nodes — global summary, feature dependence, single-sample
-waterfall, and raw SHAP values — all sharing a common explainer-selection
+Provides four nodes -- global summary, feature dependence, single-sample
+waterfall, and raw SHAP values -- all sharing a common explainer-selection
 helper that auto-picks ``TreeExplainer`` / ``LinearExplainer`` /
 ``KernelExplainer`` based on the wrapped model class.
 
-Requires the ``shap`` package — install with ``pip install shap``.
+Requires the ``shap`` package -- install with ``pip install shap``.
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def _build_explainer(shap, model, X_background):
 def _reduce_to_predicted_class(sv, model, X):
     """For multi-class output (3-D SHAP values), select predicted class per sample.
 
-    Binary classification and regression already return 2-D arrays — passes
+    Binary classification and regression already return 2-D arrays -- passes
     those through unchanged.
     """
     import shap as _shap
@@ -120,7 +120,7 @@ def _reduce_to_predicted_class(sv, model, X):
         if base.ndim == 2:  # (n, c)
             base = base[np.arange(n), class_idx]
         elif base.ndim == 1 and base.size == arr.shape[2]:
-            # one base per class — broadcast back to per-sample
+            # one base per class -- broadcast back to per-sample
             base = base[class_idx]
 
         return _shap.Explanation(
@@ -190,11 +190,11 @@ class _SHAPInputMixin:
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
 class SHAPSummaryNode(_SHAPInputMixin, BaseExecutionNode):
-    """Global SHAP summary — which features matter most, with sign and spread.
+    """Global SHAP summary -- which features matter most, with sign and spread.
 
     Outputs:
-      - ``figure`` — matplotlib bar plot of mean |SHAP| per feature.
-      - ``table``  — one row per feature (mean_abs_shap / mean_shap / std_shap),
+      - ``figure`` -- matplotlib bar plot of mean |SHAP| per feature.
+      - ``table``  -- one row per feature (mean_abs_shap / mean_shap / std_shap),
                      sorted by mean |SHAP| descending.
 
     For multi-class classification, SHAP values for the predicted class of
@@ -290,15 +290,15 @@ class SHAPSummaryNode(_SHAPInputMixin, BaseExecutionNode):
 
 
 class SHAPDependenceNode(_SHAPInputMixin, BaseExecutionNode):
-    """SHAP dependence plot — how a single feature drives the prediction,
+    """SHAP dependence plot -- how a single feature drives the prediction,
     coloured by an interacting feature.
 
     Inputs:
-      - ``feature`` — the feature to plot on the x-axis.  Use the expanded
+      - ``feature`` -- the feature to plot on the x-axis.  Use the expanded
                       name from a fingerprint / vector column (e.g. ``fp[42]``)
                       or just the column name for scalar features.  An integer
                       is interpreted as the column index.
-      - ``interaction_feature`` — feature used for colouring (or ``auto`` for
+      - ``interaction_feature`` -- feature used for colouring (or ``auto`` for
                                   the strongest interaction).
 
     Keywords: SHAP, dependence, interaction, partial dependence, ML
@@ -330,12 +330,12 @@ class SHAPDependenceNode(_SHAPInputMixin, BaseExecutionNode):
             if 0 <= idx < len(names):
                 return idx
             raise ValueError(
-                f"Feature index {idx} out of range (0–{len(names) - 1})"
+                f"Feature index {idx} out of range (0-{len(names) - 1})"
             )
         if token in names:
             return names.index(token)
         # Fuzzy hint
-        sample = ', '.join(names[:8]) + ('…' if len(names) > 8 else '')
+        sample = ', '.join(names[:8]) + ('...' if len(names) > 8 else '')
         raise ValueError(f"Feature '{token}' not found. Available: {sample}")
 
     def evaluate(self):
@@ -404,12 +404,12 @@ class SHAPDependenceNode(_SHAPInputMixin, BaseExecutionNode):
 
 
 class SHAPSampleNode(_SHAPInputMixin, BaseExecutionNode):
-    """Per-sample SHAP waterfall — why did the model predict X for THIS row?
+    """Per-sample SHAP waterfall -- why did the model predict X for THIS row?
 
     Outputs:
-      - ``figure`` — waterfall plot showing each feature's push from the
+      - ``figure`` -- waterfall plot showing each feature's push from the
                      base value to the final prediction for the chosen row.
-      - ``contributions`` — table of (feature, value, shap_contribution)
+      - ``contributions`` -- table of (feature, value, shap_contribution)
                              rows, sorted by |contribution| descending.
 
     Keywords: SHAP, local explanation, waterfall, ML, interpretability
@@ -467,7 +467,7 @@ class SHAPSampleNode(_SHAPInputMixin, BaseExecutionNode):
         if sample_idx < 0 or sample_idx >= len(X_used):
             self.mark_error()
             return False, (f"Sample index {sample_idx} out of range "
-                            f"(0–{len(X_used) - 1})")
+                            f"(0-{len(X_used) - 1})")
 
         self.set_progress(70)
 
@@ -509,7 +509,7 @@ class SHAPSampleNode(_SHAPInputMixin, BaseExecutionNode):
 
 
 class SHAPValuesNode(_SHAPInputMixin, BaseExecutionNode):
-    """Raw SHAP value matrix as a table — one row per sample, one column per
+    """Raw SHAP value matrix as a table -- one row per sample, one column per
     feature, plus ``base_value`` and ``prediction`` columns.
 
     Useful as input to downstream nodes (Heatmap, dimensionality reduction

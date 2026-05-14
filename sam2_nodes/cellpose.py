@@ -1,5 +1,5 @@
 """
-cellpose.py — Cellpose ONNX engine + segmentation nodes.
+cellpose.py -- Cellpose ONNX engine + segmentation nodes.
 
 Combines the ONNX inference engine, single-image Cellpose Segment node,
 and Cellpose Batch node for folder processing.
@@ -77,7 +77,7 @@ class CellposeONNX:
         diameter : int
             Expected cell diameter in pixels
         channels : tuple
-            (chan1, chan2) — e.g. (0,0) for grayscale
+            (chan1, chan2) -- e.g. (0,0) for grayscale
         cellprob_threshold : float
             Cell probability threshold (default 0.0)
         niter : int
@@ -110,10 +110,10 @@ class CellposeONNX:
         # Normalize to [0, 1]
         arr = arr / 255.0
 
-        # Transpose to (1, 3, 512, 512) — NCHW
+        # Transpose to (1, 3, 512, 512) -- NCHW
         arr = arr.transpose(2, 0, 1)[np.newaxis, ...]  # (1, 3, 512, 512)
 
-        # img_size must be square — the ONNX model's internal upsampling
+        # img_size must be square -- the ONNX model's internal upsampling
         # fails on non-square dimensions. Use max(H,W) then resize output.
         sq = max(orig_h, orig_w)
 
@@ -135,7 +135,7 @@ class CellposeONNX:
             return (np.zeros((orig_h, orig_w), dtype=np.int32),
                     np.zeros((orig_h, orig_w, 3), dtype=np.uint8))
 
-        # Output 0: mask (sq, sq) int64 — resize to original dimensions.
+        # Output 0: mask (sq, sq) int64 -- resize to original dimensions.
         # The input was stretched to 512×512 so the model output fills the
         # full square; use nearest-neighbor resize to preserve label IDs.
         raw_masks = outputs[0].astype(np.int32)
@@ -145,7 +145,7 @@ class CellposeONNX:
         else:
             masks = raw_masks
 
-        # Output 2: rgb_of_flows (sq, sq, 3) uint8 — resize similarly
+        # Output 2: rgb_of_flows (sq, sq, 3) uint8 -- resize similarly
         if len(outputs) > 2:
             raw_flows = outputs[2]
             if raw_flows.shape[:2] != (orig_h, orig_w):
@@ -424,7 +424,7 @@ class _CellposeSegmentWidget(NodeBaseWidget):
             self._status_label.setText("No image loaded")
             return
         self._btn_analyze.setEnabled(False)
-        self._status_label.setText("Analyzing…")
+        self._status_label.setText("Analyzing...")
 
         # Capture widget values on the main thread to avoid QBasicTimer warnings
         params = {
@@ -447,7 +447,7 @@ class _CellposeSegmentWidget(NodeBaseWidget):
 
             img = params['image']
 
-            logger.info(f"Loading Cellpose {model_name}…")
+            logger.info(f"Loading Cellpose {model_name}...")
             model_path = CellposeONNX.download_model(model_name)
             try:
                 model = CellposeONNX(model_path, gpu=True)
@@ -472,7 +472,7 @@ class _CellposeSegmentWidget(NodeBaseWidget):
             img = img.astype(np.uint8)
 
             # Run Cellpose ONNX
-            logger.info("Running segmentation…")
+            logger.info("Running segmentation...")
             masks, _flows = model.predict(img, diameter=diameter)
 
             # Create label + overlay images
@@ -559,7 +559,7 @@ class _CellposeSegmentWidget(NodeBaseWidget):
         self._show_overlay_preview(self._result_overlay)
 
         # Set outputs directly on node and mark downstream dirty
-        # (don't mark_dirty on self — that would re-trigger evaluate
+        # (don't mark_dirty on self -- that would re-trigger evaluate
         # which overwrites the overlay preview)
         if self.node:
             masks = self._result_masks
@@ -750,7 +750,7 @@ class _CellposeWidget(NodeBaseWidget):
         r1.addWidget(lbl_src)
         self._le_folder = QtWidgets.QLineEdit()
         self._le_folder.setStyleSheet("font-size:10px; padding:1px 2px;")
-        self._le_folder.setPlaceholderText("Image folder or video file…")
+        self._le_folder.setPlaceholderText("Image folder or video file...")
         r1.addWidget(self._le_folder, 1)
         self._btn_folder = QtWidgets.QPushButton("Dir")
         self._btn_folder.setFixedSize(30, 25)
@@ -923,7 +923,7 @@ class _CellposeWidget(NodeBaseWidget):
             self._status_label.setText("No images or video loaded")
             return
         self._btn_analyze.setEnabled(False)
-        self._status_label.setText("Analyzing…")
+        self._status_label.setText("Analyzing...")
 
         # Capture widget values on main thread to avoid QBasicTimer warnings
         params = {
@@ -946,7 +946,7 @@ class _CellposeWidget(NodeBaseWidget):
             files = params['files']
             video_path = params.get('video_path')
 
-            logger.info(f"Loading Cellpose {model_name}…")
+            logger.info(f"Loading Cellpose {model_name}...")
             model_path = CellposeONNX.download_model(model_name)
             try:
                 model = CellposeONNX(model_path, gpu=True)
@@ -1165,7 +1165,7 @@ class _CellposeWidget(NodeBaseWidget):
 class CellposeBatchNode(BaseImageProcessNode):
     """Automatic batch segmentation of an image folder using Cellpose.
 
-    No manual annotation required — processes all images in a folder,
+    No manual annotation required -- processes all images in a folder,
     runs Cellpose segmentation on each, and outputs regionprops measurements.
 
     Outputs:

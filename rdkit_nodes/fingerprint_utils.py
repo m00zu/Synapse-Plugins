@@ -1,5 +1,5 @@
 """
-fingerprint_utils.py — Fingerprint method + param registry and an inline
+fingerprint_utils.py -- Fingerprint method + param registry and an inline
 NodeBaseWidget (method combo + dynamic param table) shared by the
 clustering / similarity / search nodes.
 
@@ -325,7 +325,7 @@ class FingerprintParamsWidget(NodeBaseWidget):
             cmb.setCurrentText(default if default in options else options[0])
             cmb.currentTextChanged.connect(lambda _: self._emit_change())
             return cmb
-        # Fallback for str without an enum — free-form text edit.
+        # Fallback for str without an enum -- free-form text edit.
         le = QtWidgets.QLineEdit(str(default))
         le.editingFinished.connect(self._emit_change)
         return le

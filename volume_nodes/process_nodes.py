@@ -1,5 +1,5 @@
 """
-process_nodes.py — 3D volume morphology and mask processing nodes.
+process_nodes.py -- 3D volume morphology and mask processing nodes.
 """
 from __future__ import annotations
 

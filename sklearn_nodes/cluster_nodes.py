@@ -19,9 +19,9 @@ class KMeansNode(BaseExecutionNode):
 
     Options:
 
-    - **columns** — columns to cluster on (blank = all numeric)
-    - **n_clusters** — number of clusters (default 3)
-    - **random_seed** — for reproducibility
+    - **columns** -- columns to cluster on (blank = all numeric)
+    - **n_clusters** -- number of clusters (default 3)
+    - **random_seed** -- for reproducibility
 
     Keywords: k-means, clustering, unsupervised, centroid, ML, machine learning
     """
@@ -106,9 +106,9 @@ class DBSCANNode(BaseExecutionNode):
 
     Options:
 
-    - **columns** — columns to cluster on (blank = all numeric)
-    - **eps** — maximum distance between neighbours (default 0.5)
-    - **min_samples** — minimum points to form a cluster (default 5)
+    - **columns** -- columns to cluster on (blank = all numeric)
+    - **eps** -- maximum distance between neighbours (default 0.5)
+    - **min_samples** -- minimum points to form a cluster (default 5)
 
     Keywords: DBSCAN, density, clustering, unsupervised, ML, machine learning
     """
@@ -188,9 +188,9 @@ class AgglomerativeNode(BaseExecutionNode):
 
     Options:
 
-    - **columns** — columns to cluster on (blank = all numeric)
-    - **n_clusters** — number of clusters (default 3)
-    - **linkage** — linkage criterion (ward, complete, average, single)
+    - **columns** -- columns to cluster on (blank = all numeric)
+    - **n_clusters** -- number of clusters (default 3)
+    - **linkage** -- linkage criterion (ward, complete, average, single)
 
     Keywords: agglomerative, hierarchical, clustering, dendrogram, ML, machine learning
     """

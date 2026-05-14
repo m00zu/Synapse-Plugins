@@ -15,10 +15,10 @@ class TrainTestSplitNode(BaseExecutionNode):
 
     Options:
 
-    - **target_column** — the column to predict
-    - **test_size** — fraction of data for testing (0.0–1.0)
-    - **random_seed** — for reproducibility (0 = random)
-    - **stratify** — preserve class proportions in the split
+    - **target_column** -- the column to predict
+    - **test_size** -- fraction of data for testing (0.0-1.0)
+    - **random_seed** -- for reproducibility (0 = random)
+    - **stratify** -- preserve class proportions in the split
 
     Keywords: train test split, holdout, validation, cross validation, ML, machine learning
     """
@@ -70,7 +70,7 @@ class TrainTestSplitNode(BaseExecutionNode):
                 return False, (
                     f"Cannot stratify on '{target}': {n_classes} unique values "
                     f"in {len(df)} rows (min per class = {min_per_class}). "
-                    f"Looks like an ID/continuous column — turn off Stratify "
+                    f"Looks like an ID/continuous column -- turn off Stratify "
                     f"or pick a class column."
                 )
             strat = df[target]
@@ -111,7 +111,7 @@ class StandardScalerNode(BaseExecutionNode):
 
     Options:
 
-    - **columns** — columns to scale (blank = all numeric)
+    - **columns** -- columns to scale (blank = all numeric)
 
     Keywords: normalize, standardize, z-score, scale, preprocessing, ML
     """
@@ -197,9 +197,9 @@ class FeatureSelectionNode(BaseExecutionNode):
 
     Options:
 
-    - **target_column** — the column to predict
-    - **k** — number of top features to keep
-    - **method** — scoring function (f_classif, mutual_info_classif, f_regression)
+    - **target_column** -- the column to predict
+    - **k** -- number of top features to keep
+    - **method** -- scoring function (f_classif, mutual_info_classif, f_regression)
 
     Keywords: feature selection, SelectKBest, mutual information, feature importance, ML
     """
@@ -284,14 +284,14 @@ class FeatureSelectionNode(BaseExecutionNode):
 
 class MinMaxScalerNode(BaseExecutionNode):
     """
-    Scales numeric columns to a given range (default 0–1).
+    Scales numeric columns to a given range (default 0-1).
 
     Outputs the scaled table and the fitted scaler model (for applying
     the same transform to test data).
 
     Options:
 
-    - **columns** — columns to scale (blank = all numeric)
+    - **columns** -- columns to scale (blank = all numeric)
 
     Keywords: normalize, min-max, scale, range, preprocessing, ML
     """
@@ -380,7 +380,7 @@ class LabelEncoderNode(BaseExecutionNode):
 
     Options:
 
-    - **columns** — columns to encode (comma-separated)
+    - **columns** -- columns to encode (comma-separated)
 
     Keywords: label encoder, categorical, encode, ordinal, preprocessing, ML
     """

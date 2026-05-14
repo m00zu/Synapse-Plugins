@@ -1,7 +1,7 @@
 """
 nodes/roi_nodes.py
 ==================
-ROIMaskNode – draw an ROI (ellipse, rectangle, or polygon) directly on the
+ROIMaskNode - draw an ROI (ellipse, rectangle, or polygon) directly on the
 node surface and output it as a binary MaskData mask.
 
 Adapted from PyQt5 FRAP tool (FRAPy) and ported to PySide6 /
@@ -95,7 +95,7 @@ def _roi_dict_to_mask_arr(roi_data: dict, img_w: int, img_h: int) -> np.ndarray:
             t = np.linspace(0, 2 * np.pi, 256, endpoint=False)
             lx = ax * np.cos(t)
             ly = ay * np.sin(t)
-        else:                                      # rectangle – 4 corners
+        else:                                      # rectangle - 4 corners
             lx = np.array([-ax, -ax,  ax,  ax])
             ly = np.array([ ay, -ay, -ay,  ay])
 
@@ -158,7 +158,7 @@ def _draw_styled_polyline(
 
     if style == 'solid':
         draw.line(path, fill=color, width=round(width), joint='curve')
-        # PIL butt-caps leave gaps at sharp corners — fill with circles
+        # PIL butt-caps leave gaps at sharp corners -- fill with circles
         r = max(1, round(width) // 2)
         for px, py in path:
             draw.ellipse([px - r, py - r, px + r, py + r], fill=color)
@@ -555,7 +555,7 @@ class _CurveHandle(QGraphicsEllipseItem):
             parent = self.parentItem()
             if getattr(parent, '_syncing', False):
                 return super().itemChange(change, value)
-            # Handle pos is in parent coords — use directly as control point
+            # Handle pos is in parent coords -- use directly as control point
             pos = self.pos()
             if self._index == 1:
                 parent._cp1 = pos
@@ -766,8 +766,8 @@ class ROIGraphicsView(QGraphicsView):
     Embedded QGraphicsView for drawing a single ROI shape.
 
     Supported shapes:
-    - *ellipse* / *rectangle* — click-drag to create, edge-drag to resize, body-drag to move
-    - *polygon* — left-click to add vertices, Enter to close, Backspace to undo last vertex, Delete to clear
+    - *ellipse* / *rectangle* -- click-drag to create, edge-drag to resize, body-drag to move
+    - *polygon* -- left-click to add vertices, Enter to close, Backspace to undo last vertex, Delete to clear
 
     Emits `shape_committed` once a shape is finalised (mouse-release for ellipse/rect, Enter for polygon).
     """
@@ -1058,7 +1058,7 @@ class ROIGraphicsView(QGraphicsView):
                         self.shape_committed.emit()
                 return
             elif not self._drawing_polygon and self._shape_item is not None:
-                # Move or resize of an existing shape — forward to items first,
+                # Move or resize of an existing shape -- forward to items first,
                 # then re-emit so the node re-evaluates with updated geometry.
                 super().mouseReleaseEvent(event)
                 self.shape_committed.emit()
@@ -1151,7 +1151,7 @@ class ROIGraphicsView(QGraphicsView):
 
     def _style(self, item):
         # pen_width is in scene (image-pixel) units so it scales proportionally
-        # with the view — matching the PIL output at any zoom level.
+        # with the view -- matching the PIL output at any zoom level.
         item.setPen(QPen(self._pen_color, self._pen_width,
                          self._pen_style,
                          Qt.PenCapStyle.RoundCap,
@@ -1206,7 +1206,7 @@ class ROIGraphicsView(QGraphicsView):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MultiShapeGraphicsView — multi-shape drawing canvas
+#  MultiShapeGraphicsView -- multi-shape drawing canvas
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MultiShapeGraphicsView(QGraphicsView):
@@ -1782,7 +1782,7 @@ class MultiShapeGraphicsView(QGraphicsView):
                 self.shapes_changed.emit()
                 return
 
-            # Not drawing — could be move/resize of existing item
+            # Not drawing -- could be move/resize of existing item
             if not self._drawing_polygon and self._selected_id:
                 super().mouseReleaseEvent(event)
                 self.shape_committed.emit(self._selected_id)
@@ -2043,7 +2043,7 @@ class MultiShapeGraphicsView(QGraphicsView):
                     all_x.append(x)
                     all_y.append(y)
 
-            # Bounding box per mask — hidden until selected in list
+            # Bounding box per mask -- hidden until selected in list
             mid = f'mask_{i}'
             if all_x:
                 x0, x1 = min(all_x), max(all_x)
@@ -2271,7 +2271,7 @@ class NodeROIViewWidget(NodeBaseWidget):
             b.clicked.connect(getattr(self, slot))
             tb.addWidget(b)
 
-        # Color swatch button — shows current pen color, opens picker on click
+        # Color swatch button -- shows current pen color, opens picker on click
         self._color_btn = QtWidgets.QPushButton()
         self._color_btn.setFixedSize(22, 22)
         self._color_btn.setToolTip('Shape color')
@@ -2482,11 +2482,11 @@ class ROIMaskNode(BaseExecutionNode):
     Draws an ROI (ellipse, rectangle, polygon, or lasso) directly on the node surface and outputs a binary mask plus a cropped image.
 
     Inputs:
-    - **image** — the image to draw on (sets the background)
+    - **image** -- the image to draw on (sets the background)
 
     Outputs:
-    - **mask** — binary L-mode PIL image (0 / 255)
-    - **cropped_image** — input image with non-ROI pixels set to black
+    - **mask** -- binary L-mode PIL image (0 / 255)
+    - **cropped_image** -- input image with non-ROI pixels set to black
 
     Keywords: roi, region of interest, polygon, ellipse, rectangle, 感興趣區域, 遮罩, 多邊形, 橢圓, 裁切
     """
@@ -2561,7 +2561,7 @@ class ROIMaskNode(BaseExecutionNode):
         # ── generate mask ────────────────────────────────────────────────────
         roi_raw = self.get_property('roi_data')
         if not roi_raw:
-            # No ROI drawn yet — not an error, just nothing to output
+            # No ROI drawn yet -- not an error, just nothing to output
             self.set_progress(100)
             return True, None
 
@@ -2593,7 +2593,7 @@ class ROIMaskNode(BaseExecutionNode):
 
 
 # ===========================================================================
-# CropNode — interactive rectangle crop
+# CropNode -- interactive rectangle crop
 # ===========================================================================
 
 class NodeCropViewWidget(NodeBaseWidget):
@@ -2823,7 +2823,7 @@ class CropNode(BaseExecutionNode):
             return False, "Crop rect data is corrupt"
 
         if not roi:
-            # Cleared — pass through
+            # Cleared -- pass through
             self.output_values['image'] = data
             self.set_progress(100)
             return True, None
@@ -3117,7 +3117,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
 
         style_row.addSpacing(10)
 
-        # Hidden label edit — kept for backward compat with saved workflows
+        # Hidden label edit -- kept for backward compat with saved workflows
         self._label_edit = QtWidgets.QLineEdit()
         self._label_edit.hide()
         self._label_edit.setFixedWidth(90)
@@ -3221,7 +3221,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
         self._emit_shapes()
 
     def _on_canvas_selection(self, shape_id: str):
-        """Canvas click selected a shape — sync list + style controls."""
+        """Canvas click selected a shape -- sync list + style controls."""
         if shape_id:
             self._active_shape_id = shape_id
         self._sync_list_to_canvas(shape_id)
@@ -3405,7 +3405,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
         self._geo_y_spin.setEnabled(True)
         self._geo_w_spin.setEnabled(not is_text)
         self._geo_h_spin.setEnabled(not is_text and not is_arrow and not is_curve)
-        # Sz: always enabled — controls label font for arrows, text font for
+        # Sz: always enabled -- controls label font for arrows, text font for
         # text shapes, label font for all other shapes
         self._geo_sz_spin.setEnabled(True)
 
@@ -3506,7 +3506,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
         if cur:
             list_sid = cur.data(Qt.ItemDataRole.UserRole)
             if self._is_mask_contour(list_sid):
-                # Can't delete mask contours — they come from connections
+                # Can't delete mask contours -- they come from connections
                 return
         sid = self._view.selected_id()
         if sid:
@@ -3595,7 +3595,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
 
     def _debounce_fire(self):
         """Called after debounce timer expires.
-        Persist shape data and mark node dirty — output updates on next
+        Persist shape data and mark node dirty -- output updates on next
         Run Graph. Avoids running evaluate() which causes focus/selection loss."""
         data = self._view.get_all_shapes_data()
         data.extend(self.get_mask_contour_styles())
@@ -3668,7 +3668,7 @@ class NodeMultiShapeWidget(NodeBaseWidget):
             self._shapes_signal.emit(shapes)
 
     def _apply_shapes_data(self, shapes):
-        # Filter out mask_contour entries — those are virtual, not canvas items
+        # Filter out mask_contour entries -- those are virtual, not canvas items
         canvas_shapes = [s for s in shapes if s.get('shape') != 'mask_contour']
         # Restore mask contour styles if present
         for s in shapes:
@@ -3801,19 +3801,19 @@ class DrawShapeNode(BaseExecutionNode):
     and edited interactively on the canvas.
 
     Inputs:
-    - **image** — background image (optional)
-    - **mask** (multi-input) — binary masks shown as colored contours
-    - **label_image** — segmentation labels shown as colored overlay
+    - **image** -- background image (optional)
+    - **mask** (multi-input) -- binary masks shown as colored contours
+    - **label_image** -- segmentation labels shown as colored overlay
 
     Controls:
     - Line width, style, and color per shape
     - Fill toggle + opacity for closed shapes (rectangle, ellipse, polygon)
-    - Auto Fill — fill all mask contours at once
-    - Fill All — apply fill to every mask input
-    - Label overlay opacity — transparency of segmentation label colors
+    - Auto Fill -- fill all mask contours at once
+    - Fill All -- apply fill to every mask input
+    - Label overlay opacity -- transparency of segmentation label colors
     - Geometry spinboxes (X, Y, W, H) for precise positioning
     - Font size for texts
-    - No Preview — skip interactive canvas rendering for speed
+    - No Preview -- skip interactive canvas rendering for speed
 
     Hold Shift while drawing to constrain to square/circle.
 
@@ -3903,7 +3903,7 @@ class DrawShapeNode(BaseExecutionNode):
         self.reset_progress()
 
         # ── sync settings from model (handles JSON load where node.set_property
-        #    is bypassed — NodeGraphQt calls model.set_property directly) ──
+        #    is bypassed -- NodeGraphQt calls model.set_property directly) ──
         af = bool(self.get_property('auto_fill'))
         np_ = bool(self.get_property('no_preview'))
         if af != self._auto_fill:
@@ -3983,7 +3983,7 @@ class DrawShapeNode(BaseExecutionNode):
         # back so untouched pixels keep full bit-depth precision.
         from PIL import Image as _PIL, ImageDraw
         h_img, w_img = arr_in.shape[:2]
-        result = arr_in.copy()  # float32 [0,1] — preserved
+        result = arr_in.copy()  # float32 [0,1] -- preserved
 
         # Build a uint8 RGB canvas for PIL drawing (display quality only)
         canvas_rgb = _ensure_display_rgb(arr_in)
@@ -4325,7 +4325,7 @@ class MaskEditorWidget(NodeBaseWidget):
     mask_changed = Signal()
 
     _OVERLAY_COLOR = (0, 210, 180)   # teal
-    _OVERLAY_ALPHA = 0.55            # 0–1
+    _OVERLAY_ALPHA = 0.55            # 0-1
     _MAX_UNDO = 30
 
     _set_input_signal = Signal(object, object)   # (mask_arr, bg_pil) → main thread
@@ -4461,7 +4461,7 @@ class MaskEditorWidget(NodeBaseWidget):
                 self._edit_mask = self._input_mask.copy()
                 self._img_h, self._img_w = mask_arr.shape[:2]
             elif bg_pil is not None:
-                # New image but no mask — reset to blank
+                # New image but no mask -- reset to blank
                 h = bg_pil.shape[0] if isinstance(bg_pil, np.ndarray) else 512
                 w = bg_pil.shape[1] if isinstance(bg_pil, np.ndarray) else 512
                 self._input_mask = np.zeros((h, w), dtype=bool)
@@ -4677,10 +4677,10 @@ class MaskEditorNode(BaseExecutionNode):
 
         # ── output ───────────────────────────────────────────────────────
         if has_edits:
-            # Input hasn't changed and user has edits — keep user's version
+            # Input hasn't changed and user has edits -- keep user's version
             out_mask = edited.astype(np.uint8) * 255
         else:
-            # New input or no edits — output the input mask
+            # New input or no edits -- output the input mask
             out_mask = mask_arr.astype(np.uint8) * 255
         self.output_values['mask'] = MaskData(payload=out_mask)
 
@@ -4689,7 +4689,7 @@ class MaskEditorNode(BaseExecutionNode):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# ScaleBarNode — draw a calibrated scale bar on a microscopy image
+# ScaleBarNode -- draw a calibrated scale bar on a microscopy image
 # ═══════════════════════════════════════════════════════════════════════
 
 class _DualIntWidget(NodeBaseWidget):
@@ -4744,13 +4744,13 @@ class ScaleBarNode(BaseImageProcessNode):
     the node reports an error.
 
     Options:
-    - **bar_length_um** — desired bar length in micrometers
-    - **position** — corner placement
-    - **bar_color** — color of the bar and label
-    - **bar_height** — thickness in pixels
-    - **show_label** — display "100 µm" text
-    - **font_size** — label size
-    - **padding_x / padding_y** — margin from image edge
+    - **bar_length_um** -- desired bar length in micrometers
+    - **position** -- corner placement
+    - **bar_color** -- color of the bar and label
+    - **bar_height** -- thickness in pixels
+    - **show_label** -- display "100 µm" text
+    - **font_size** -- label size
+    - **padding_x / padding_y** -- margin from image edge
 
     Keywords: scale bar, calibration, micrometer, microscopy, annotation, 比例尺, 校正, 微米, 標註
     """
@@ -4859,7 +4859,7 @@ class ScaleBarNode(BaseImageProcessNode):
         # Normalize bar color to [0, 1]
         bar_color_f = tuple(c / 255.0 for c in bar_color[:3])
 
-        # Font — render text label as a small PIL mask, then stamp onto float array
+        # Font -- render text label as a small PIL mask, then stamp onto float array
         font = None
         for font_name in ("Arial", "arial.ttf",
                           "C:/Windows/Fonts/arial.ttf",
@@ -4940,7 +4940,7 @@ class ScaleBarNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# Mask Overlay — lightweight contour/fill overlay on an image
+# Mask Overlay -- lightweight contour/fill overlay on an image
 # ===========================================================================
 
 class MaskOverlayNode(BaseImageProcessNode):
@@ -5096,7 +5096,7 @@ class MaskOverlayNode(BaseImageProcessNode):
         # Read mask
         mask_port = self.inputs().get('mask')
         if not mask_port or not mask_port.connected_ports():
-            # No mask — pass through image
+            # No mask -- pass through image
             self._make_image_output(arr)
             self.set_display(arr)
             self.set_progress(100)
@@ -5419,7 +5419,7 @@ class LabelOverlayNode(BaseImageProcessNode):
 
 class _LabelEditorView(QGraphicsView):
     """QGraphicsView canvas for multi-label editing with shape, brush, and fill tools."""
-    shape_committed = Signal(str, list)   # (tool, data)  — data depends on tool
+    shape_committed = Signal(str, list)   # (tool, data)  -- data depends on tool
 
     _TOOLS = ('rect', 'ellipse', 'polygon', 'lasso', 'brush', 'flood_fill')
 

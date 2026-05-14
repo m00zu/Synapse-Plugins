@@ -18,12 +18,12 @@ class DataSummaryNode(BaseExecutionNode):
     Computes pixel intensity histograms for images or descriptive statistics for DataFrames.
 
     Inputs:
-    - **any** — an image (grayscale or RGB) or a pandas DataFrame
-    - **mask** — optional mask to restrict image histograms to the masked region
+    - **any** -- an image (grayscale or RGB) or a pandas DataFrame
+    - **mask** -- optional mask to restrict image histograms to the masked region
 
     Outputs:
-    - **table** — histogram bin counts (images) or `describe()` summary (DataFrames)
-    - **figure** — distribution plot of the input data
+    - **table** -- histogram bin counts (images) or `describe()` summary (DataFrames)
+    - **figure** -- distribution plot of the input data
 
     Keywords: summary, histogram, describe, statistics, dataframe profile, 統計, 直方圖, 摘要, 分析, 描述統計
     """
@@ -223,11 +223,11 @@ class OutlierDetectionNode(BaseExecutionNode):
     Detects and removes outliers in numerical data using statistical tests.
 
     Methods:
-    - *ROUT (Prism Regression)* — robust nonlinear regression-based detection
-    - *ROUT (Fast Math)* — faster variant of the ROUT method
-    - *Grubbs* — classical single-outlier test applied iteratively
+    - *ROUT (Prism Regression)* -- robust nonlinear regression-based detection
+    - *ROUT (Fast Math)* -- faster variant of the ROUT method
+    - *Grubbs* -- classical single-outlier test applied iteratively
 
-    **Threshold** — Q value (ROUT) or alpha significance level (Grubbs).
+    **Threshold** -- Q value (ROUT) or alpha significance level (Grubbs).
 
     Outputs two tables: rows kept and rows removed.
 
@@ -424,7 +424,7 @@ class OutlierDetectionNode(BaseExecutionNode):
                         break
 
                 if group_col and len(num_cols) == 1:
-                    # Long format — run outlier detection per group so each group
+                    # Long format -- run outlier detection per group so each group
                     # is judged against its own distribution (not the global pool)
                     val_col = num_cols[0]
                     kept_mask = pd.Series(True, index=df.index)
@@ -447,7 +447,7 @@ class OutlierDetectionNode(BaseExecutionNode):
                     self.output_values['kept'] = TableData(payload=df[kept_mask].reset_index(drop=True))
                     self.output_values['removed'] = TableData(payload=df[~kept_mask].reset_index(drop=True))
                 else:
-                    # Wide format — run outlier detection per column (each column = one group)
+                    # Wide format -- run outlier detection per column (each column = one group)
                     df_kept = pd.DataFrame(index=df.index, columns=df.columns)
                     df_removed = pd.DataFrame(index=df.index, columns=df.columns)
 
@@ -518,8 +518,8 @@ class GroupedComparisonNode(BaseExecutionNode):
     Tests whether there are significant differences among two or more groups.
 
     Tests:
-    - *One-Way ANOVA* — parametric, assumes normal distribution and equal variances
-    - *Kruskal-Wallis* — non-parametric rank-based alternative to ANOVA
+    - *One-Way ANOVA* -- parametric, assumes normal distribution and equal variances
+    - *Kruskal-Wallis* -- non-parametric rank-based alternative to ANOVA
 
     Outputs a summary table with test statistic, p-value, and significance flag.
 
@@ -704,7 +704,7 @@ class _PairMatrixModel(QtCore.QAbstractTableModel):
             return None
         if role == QtCore.Qt.ItemDataRole.DisplayRole:
             if r == c:
-                return '—'
+                return '--'
             if r < c:
                 pair = tuple(sorted((groups[r], groups[c])))
                 return '✓' if pair in self._widget._selected else ''
@@ -846,7 +846,7 @@ class PairwiseMatrixWidget(NodeBaseWidget):
         self._table.show()
         self._btn_row_widget.show()
 
-        # Model handles all data/colors — just notify it changed
+        # Model handles all data/colors -- just notify it changed
         self._model.refresh()
 
         # Column width: fixed narrow cells
@@ -867,7 +867,7 @@ class PairwiseMatrixWidget(NodeBaseWidget):
         self._table.setFixedHeight(table_h)
         self._is_updating = False
 
-        # Defer resize — Qt needs to process the layout changes first
+        # Defer resize -- Qt needs to process the layout changes first
         QtCore.QTimer.singleShot(0, self._deferred_resize)
 
     def _deferred_resize(self):
@@ -933,21 +933,21 @@ class PairwiseComparisonNode(BaseExecutionNode):
     Performs pairwise comparisons between groups using parametric or non-parametric tests.
 
     Tests:
-    - *Student's T-test* — parametric, assumes equal variance and normal distribution
-    - *Welch's T-test* — parametric, does not assume equal variance
-    - *Mann-Whitney U* — non-parametric rank-based test
-    - *Kolmogorov-Smirnov* — tests whether two groups come from the same distribution
-    - *Two-sample Z-test* — compares means when variance is known or n is large
-    - *Permutation test* — non-parametric, no distributional assumptions, resampling-based
-    - *Tukey HSD* — post-hoc test after ANOVA
-    - *Dunn* — non-parametric post-hoc test (requires scikit-posthocs)
-    - *Fisher's Z* — compare correlation coefficients between groups (target column = r values)
+    - *Student's T-test* -- parametric, assumes equal variance and normal distribution
+    - *Welch's T-test* -- parametric, does not assume equal variance
+    - *Mann-Whitney U* -- non-parametric rank-based test
+    - *Kolmogorov-Smirnov* -- tests whether two groups come from the same distribution
+    - *Two-sample Z-test* -- compares means when variance is known or n is large
+    - *Permutation test* -- non-parametric, no distributional assumptions, resampling-based
+    - *Tukey HSD* -- post-hoc test after ANOVA
+    - *Dunn* -- non-parametric post-hoc test (requires scikit-posthocs)
+    - *Fisher's Z* -- compare correlation coefficients between groups (target column = r values)
 
-    **Alternative** — two-sided (default), greater (group1 > group2), or less (group1 < group2). Tukey HSD and Dunn are always two-sided.
+    **Alternative** -- two-sided (default), greater (group1 > group2), or less (group1 < group2). Tukey HSD and Dunn are always two-sided.
 
-    **P-Adj Method** — multiple comparison correction (Bonferroni, Holm, BH).
+    **P-Adj Method** -- multiple comparison correction (Bonferroni, Holm, BH).
 
-    **N Permutations** — number of resampling iterations for the permutation test (default 10,000).
+    **N Permutations** -- number of resampling iterations for the permutation test (default 10,000).
 
     Keywords: pairwise, t-test, welch, mann-whitney, tukey, fisher, kolmogorov, ks, z-test, permutation, correlation, one-sided, 兩兩比較, 統計檢定, 分析, 顯著性, 比較, 排列檢定
     """
@@ -1342,13 +1342,13 @@ class NormalityTestNode(BaseExecutionNode):
     Tests whether each numerical column in a DataFrame follows a normal distribution.
 
     Tests:
-    - *Shapiro-Wilk* — recommended for small to moderate samples
-    - *Kolmogorov-Smirnov* — compares against a theoretical normal CDF
-    - *Anderson-Darling* — weighted variant sensitive to distribution tails
+    - *Shapiro-Wilk* -- recommended for small to moderate samples
+    - *Kolmogorov-Smirnov* -- compares against a theoretical normal CDF
+    - *Anderson-Darling* -- weighted variant sensitive to distribution tails
 
     Outputs:
-    - **results** — summary table with test statistic, p-value, and pass/fail per column.
-    - **qq_plot** — Q-Q (quantile-quantile) plots for each column. Points following the red dashed reference line indicate normality; systematic curvature suggests non-normal distribution.
+    - **results** -- summary table with test statistic, p-value, and pass/fail per column.
+    - **qq_plot** -- Q-Q (quantile-quantile) plots for each column. Points following the red dashed reference line indicate normality; systematic curvature suggests non-normal distribution.
 
     Use the **Group Column** option to test normality per group (e.g. per treatment condition before running a t-test or ANOVA).
 
@@ -1433,7 +1433,7 @@ class NormalityTestNode(BaseExecutionNode):
 
             for ci, col in enumerate(num_cols):
                 data = sub[col].dropna().values
-                label = col if group_col is None else f"{grp} — {col}"
+                label = col if group_col is None else f"{grp} -- {col}"
                 n = len(data)
 
                 if n < 3:
@@ -1506,7 +1506,7 @@ class NormalityTestNode(BaseExecutionNode):
                 data = sub[col].dropna().values
                 if len(data) < 3:
                     continue
-                label = col if group_col is None else f"{grp} — {col}"
+                label = col if group_col is None else f"{grp} -- {col}"
                 plot_items.append((label, data))
 
         if plot_items:
@@ -1564,9 +1564,9 @@ class PairwiseMatrixNode(BaseExecutionNode):
     Computes a pairwise correlation or distance matrix for all numeric columns and visualises it as a heatmap.
 
     Correlation methods:
-    - *Pearson* — linear correlation coefficient, assumes normality
-    - *Spearman* — rank-based, robust to outliers and non-normal distributions
-    - *Kendall* — rank-based, slower but more exact for small sample sizes
+    - *Pearson* -- linear correlation coefficient, assumes normality
+    - *Spearman* -- rank-based, robust to outliers and non-normal distributions
+    - *Kendall* -- rank-based, slower but more exact for small sample sizes
 
     Outputs a matrix table (for further analysis) and an annotated heatmap figure.
 
@@ -1690,14 +1690,14 @@ class VarianceTestNode(BaseExecutionNode):
     (unequal variance), or to check ANOVA assumptions.
 
     Tests:
-    - *Levene's test* — robust, works for non-normal data (recommended default)
-    - *Bartlett's test* — more powerful but assumes normality
-    - *F-test* — classical variance ratio test for exactly 2 groups (sensitive to non-normality)
+    - *Levene's test* -- robust, works for non-normal data (recommended default)
+    - *Bartlett's test* -- more powerful but assumes normality
+    - *F-test* -- classical variance ratio test for exactly 2 groups (sensitive to non-normality)
 
     Outputs a table with test statistic and p-value per group pair (F-test) or
     for all groups at once (Levene, Bartlett).
 
-    A significant p-value (< 0.05) means variances are NOT equal — use Welch's t-test.
+    A significant p-value (< 0.05) means variances are NOT equal -- use Welch's t-test.
 
     Keywords: variance, homoscedasticity, levene, bartlett, f-test, equal variance, homogeneity, 變異數, 等變異性, 檢定
     """
@@ -1850,13 +1850,13 @@ class EffectSizeNode(BaseExecutionNode):
     sizes alongside significance testing.
 
     Methods:
-    - *Auto* — Cohen's d for 2 groups, Eta-squared for 3+ groups
-    - *Cohen's d* — standardised mean difference (pooled SD)
-    - *Hedges' g* — Cohen's d with small-sample bias correction
-    - *Glass's delta* — mean difference divided by the control group SD
-    - *Rank-biserial r* — effect size for Mann-Whitney U (non-parametric)
-    - *Eta-squared* — proportion of variance explained (ANOVA-style)
-    - *Omega-squared* — bias-corrected eta-squared
+    - *Auto* -- Cohen's d for 2 groups, Eta-squared for 3+ groups
+    - *Cohen's d* -- standardised mean difference (pooled SD)
+    - *Hedges' g* -- Cohen's d with small-sample bias correction
+    - *Glass's delta* -- mean difference divided by the control group SD
+    - *Rank-biserial r* -- effect size for Mann-Whitney U (non-parametric)
+    - *Eta-squared* -- proportion of variance explained (ANOVA-style)
+    - *Omega-squared* -- bias-corrected eta-squared
 
     Output columns: group1, group2, n1, n2, effect_size, ci_lower,
     ci_upper, magnitude, method.
@@ -2094,14 +2094,14 @@ class DescriptiveStatsNode(BaseExecutionNode):
     Computes comprehensive descriptive statistics for numeric columns.
 
     Calculates per-group (or overall) statistics including central tendency,
-    dispersion, shape, and confidence intervals — everything needed for a
+    dispersion, shape, and confidence intervals -- everything needed for a
     publication-ready summary table.
 
     Output columns: group, column, n, mean, median, std, sem, ci_lower, ci_upper, min, q1, q3, max, iqr, skewness, kurtosis, cv.
 
-    - **group_col** — optional grouping column. If set, statistics are computed per group. Leave blank for overall stats.
-    - **value_cols** — columns to summarise. Leave blank for all numeric.
-    - **ci_level** — confidence interval level (default 0.95).
+    - **group_col** -- optional grouping column. If set, statistics are computed per group. Leave blank for overall stats.
+    - **value_cols** -- columns to summarise. Leave blank for all numeric.
+    - **ci_level** -- confidence interval level (default 0.95).
 
     Keywords: descriptive, summary, mean, median, std, sem, confidence interval, skewness, kurtosis, coefficient of variation, 描述統計, 平均, 中位數, 標準差
     """
@@ -2242,9 +2242,9 @@ class DistributionFitNode(BaseExecutionNode):
     Beta, Rayleigh, Uniform, Cauchy, Logistic, Pareto, Student-t, Inverse Gaussian.
 
     Outputs:
-    - **results** — one row per tested distribution with shape/loc/scale params,
+    - **results** -- one row per tested distribution with shape/loc/scale params,
       log-likelihood, AIC, BIC, KS statistic, and KS p-value, sorted by AIC.
-    - **figure** — histogram of the data with top-N best-fit PDF curves overlaid.
+    - **figure** -- histogram of the data with top-N best-fit PDF curves overlaid.
 
     Keywords: distribution fitting, goodness of fit, AIC, BIC, KS test, PDF, histogram, normal, lognormal, gamma, Weibull, 分佈擬合, 適合度檢定, 機率分佈
     """
@@ -2428,7 +2428,7 @@ class DistributionFitNode(BaseExecutionNode):
                 except Exception:
                     pass
 
-            title = f'{value_col}' + (f' — {grp}' if group_col else '')
+            title = f'{value_col}' + (f' -- {grp}' if group_col else '')
             ax.set_title(title, fontweight='bold')
             ax.set_xlabel(value_col)
             ax.set_ylabel('Density')

@@ -1,5 +1,5 @@
 """
-GNINA CNN Scoring — Pure Python/NumPy reimplementation for CPU inference.
+GNINA CNN Scoring -- Pure Python/NumPy reimplementation for CPU inference.
 
 Loads pre-trained GNINA models (ONNX format) and scores protein-ligand poses
 using Gaussian density voxelization + 3D CNN inference.
@@ -48,7 +48,7 @@ SMINA_TYPES = [
     "Boron",                        # 27
 ]
 
-# XS radii (Angstroms) — used for Gaussian density voxelization
+# XS radii (Angstroms) -- used for Gaussian density voxelization
 XS_RADII = {
     "Hydrogen": 0.37,
     "PolarHydrogen": 0.37,
@@ -352,7 +352,7 @@ def voxelize(coords, smina_types, type_to_channel, num_channels,
 def voxelize_fast(coords, smina_types, type_to_channel, num_channels,
                   center, resolution=0.5, dimension=23.5, radius_scale=1.0,
                   radius_multiple=1.5):
-    """Vectorized voxelization — much faster than the triple-loop version.
+    """Vectorized voxelization -- much faster than the triple-loop version.
     Uses NumPy broadcasting to compute all voxel distances at once per atom.
     Density function matches libmolgrid: Gaussian core + quadratic tail.
     """
@@ -784,7 +784,7 @@ def _process_pdbqt_via_rdkit(pdbqt_lines, remove_h=True):
 # ─── GNINA Model ─────────────────────────────────────────────────────────────
 
 class GNINAModel:
-    """GNINA CNN scoring model — loads ONNX models and handles voxelization."""
+    """GNINA CNN scoring model -- loads ONNX models and handles voxelization."""
 
     DEFAULT_MODELS_DIR = Path(__file__).parent / "data" / "gnina_models"
     DEFAULT_ENSEMBLE = ["dense_1.3.onnx", "dense_1.3_PT_KD_3.onnx", "crossdock_default2018_KD_4.onnx"]

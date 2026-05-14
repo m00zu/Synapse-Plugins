@@ -1,5 +1,5 @@
 """
-rdkit_nodes — Cheminformatics plugin for Synapse
+rdkit_nodes -- Cheminformatics plugin for Synapse
 =================================================
 Provides node classes for chemical structure handling using RDKit.
 
@@ -23,7 +23,7 @@ if _vendor.is_dir() and str(_vendor) not in sys.path:
     sys.path.insert(0, str(_vendor))
 
 try:
-    from rdkit import Chem  # noqa: F401 — validate rdkit is importable
+    from rdkit import Chem  # noqa: F401 -- validate rdkit is importable
 except ImportError as _e:
     raise ImportError(
         "RDKit not found in vendor/. Run:\n"

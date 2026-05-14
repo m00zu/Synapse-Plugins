@@ -4,14 +4,14 @@ nodes/mask_nodes.py
 Mask-domain utility nodes: morphological operations and region measurement.
 
 Nodes:
-  ErosionNode     — binary erosion    (mask → mask)
-  DilationNode    — binary dilation   (mask → mask)
-  MorphOpenNode   — binary opening    (mask → mask)  erode then dilate
-  MorphCloseNode  — binary closing    (mask → mask)  dilate then erode
-  FillHolesNode   — fill ALL enclosed holes (mask → mask)
+  ErosionNode     -- binary erosion    (mask → mask)
+  DilationNode    -- binary dilation   (mask → mask)
+  MorphOpenNode   -- binary opening    (mask → mask)  erode then dilate
+  MorphCloseNode  -- binary closing    (mask → mask)  dilate then erode
+  FillHolesNode   -- fill ALL enclosed holes (mask → mask)
                     (contrast: RemoveSmallHolesNode only fills holes ≤ N px²)
-  SkeletonizeNode — thin to 1-px centerline (mask → mask)
-  RegionPropsNode — label components + measure (mask + opt. image → table + label_image)
+  SkeletonizeNode -- thin to 1-px centerline (mask → mask)
+  RegionPropsNode -- label components + measure (mask + opt. image → table + label_image)
 
 The label_image output of RegionPropsNode paints each region a distinct color
 and draws its label number at the centroid, so the user can match every table
@@ -111,7 +111,7 @@ class ErosionNode(BaseImageProcessNode):
 
     Each iteration removes one layer of boundary pixels. Useful for separating touching objects or removing thin protrusions.
 
-    **iterations** — number of erosion passes (default: 1).
+    **iterations** -- number of erosion passes (default: 1).
 
     Keywords: shrink, erode, erosion, binary, morphology, 侵蝕, 形態學, 二值化, 收縮, 遮罩
     """
@@ -151,7 +151,7 @@ class DilationNode(BaseImageProcessNode):
 
     Each iteration adds one layer of boundary pixels. Useful for bridging small gaps or growing regions uniformly.
 
-    **iterations** — number of dilation passes (default: 1).
+    **iterations** -- number of dilation passes (default: 1).
 
     Keywords: grow, expand, dilate, dilation, binary, 膨脹, 擴張, 形態學, 二值化, 遮罩
     """
@@ -191,7 +191,7 @@ class MorphOpenNode(BaseImageProcessNode):
 
     Removes small foreground objects and thin protrusions while preserving the overall shape of larger regions.
 
-    **iterations** — number of opening passes (default: 1).
+    **iterations** -- number of opening passes (default: 1).
 
     Keywords: open, opening, morphology, denoise, clean, 開運算, 形態學, 去噪, 侵蝕, 膨脹
     """
@@ -231,7 +231,7 @@ class MorphCloseNode(BaseImageProcessNode):
 
     Fills small holes and connects nearby fragments without significantly changing the overall region size.
 
-    **iterations** — number of closing passes (default: 1).
+    **iterations** -- number of closing passes (default: 1).
 
     Keywords: close, closing, morphology, fill gaps, connect, 閉運算, 形態學, 填孔, 膨脹, 侵蝕
     """
@@ -307,9 +307,9 @@ class SkeletonizeNode(BaseImageProcessNode):
 
     Uses `skimage.morphology.skeletonize`. Outputs SkeletonData, which can feed SkeletonAnalysisNode or any node that accepts a mask.
 
-    **Method** — *zhang* (default) or *lee*. Lee tends to produce cleaner skeletons on thick blob-like shapes.
+    **Method** -- *zhang* (default) or *lee*. Lee tends to produce cleaner skeletons on thick blob-like shapes.
 
-    **Prune Spurs** — iteratively removes endpoint pixels (dead-end tips). Setting N removes all branches shorter than N pixels (0 = off).
+    **Prune Spurs** -- iteratively removes endpoint pixels (dead-end tips). Setting N removes all branches shorter than N pixels (0 = off).
 
     Keywords: skeleton, centerline, thinning, medial axis, filopodia, 骨架化, 中軸線, 細化, 形態學, 遮罩
     """
@@ -383,14 +383,14 @@ class SkeletonAnalysisNode(BaseImageProcessNode):
     Analyses a skeleton produced by SkeletonizeNode.
 
     Outputs:
-    - **skeleton** — filtered SkeletonData (short isolated segments removed)
-    - **stats** — total `skeleton_length_px` and `junction_count` (after filtering)
-    - **junction_image** — RGB visualisation: skeleton in grey, junction pixels in red on black
-    - **junction_mask** — binary MaskData of junction pixels only (pass to DrawShapeNode)
+    - **skeleton** -- filtered SkeletonData (short isolated segments removed)
+    - **stats** -- total `skeleton_length_px` and `junction_count` (after filtering)
+    - **junction_image** -- RGB visualisation: skeleton in grey, junction pixels in red on black
+    - **junction_mask** -- binary MaskData of junction pixels only (pass to DrawShapeNode)
 
-    **Min Segment Length** — remove isolated skeleton segments shorter than this many pixels (0 = keep all).
+    **Min Segment Length** -- remove isolated skeleton segments shorter than this many pixels (0 = keep all).
 
-    **Junction Radius** — dilate each junction point into a filled circle of this radius in pixels for the junction_mask output (default: 4).
+    **Junction Radius** -- dilate each junction point into a filled circle of this radius in pixels for the junction_mask output (default: 4).
 
     Keywords: skeleton, analysis, junction, length, branch, filter, 骨架, 分析, 節點, 長度
     """
@@ -421,7 +421,7 @@ class SkeletonAnalysisNode(BaseImageProcessNode):
         skel_u8 = skel.astype(np.uint8)
         all_kernel = np.ones((3, 3), dtype=np.uint8); all_kernel[1, 1] = 0
         nb_count = convolve(skel_u8, all_kernel, mode='constant') * skel_u8
-        # Vectorised edge bincount — no Python loop over components
+        # Vectorised edge bincount -- no Python loop over components
         oh = skel[:, :-1] & skel[:, 1:]
         ov = skel[:-1, :] & skel[1:, :]
         dd = skel[:-1, :-1] & skel[1:, 1:]
@@ -544,8 +544,8 @@ class MedialAxisNode(BaseImageProcessNode):
     Uses `skimage.morphology.medial_axis`, which finds the set of pixels equidistant from the nearest background pixel. Unlike skeletonize, it also produces a distance transform that encodes the local radius at each skeleton point.
 
     Outputs:
-    - **skeleton** — the 1-pixel-wide medial-axis skeleton (SkeletonData)
-    - **distance** — skeleton coloured by local radius using the plasma colourmap (purple = thin, yellow = thick); background is black
+    - **skeleton** -- the 1-pixel-wide medial-axis skeleton (SkeletonData)
+    - **distance** -- skeleton coloured by local radius using the plasma colourmap (purple = thin, yellow = thick); background is black
 
     Keywords: medial axis, skeleton, distance transform, thinning, centerline, 中軸線, 骨架化, 距離轉換, 細化, 形態學
     """
@@ -586,7 +586,7 @@ class MedialAxisNode(BaseImageProcessNode):
         skel_dist = (distance * skel).astype(float)
         d_max = skel_dist.max()
         if d_max > 0:
-            normed = skel_dist / d_max          # 0.0–1.0 on skeleton, 0 on background
+            normed = skel_dist / d_max          # 0.0-1.0 on skeleton, 0 on background
             rgba = cm.plasma(normed)            # H×W×4 float [0,1]
             rgb  = rgba[..., :3].astype(np.float32)
             rgb[~skel] = 0                      # ensure background is pure black
@@ -607,29 +607,29 @@ class ParticlePropsNode(BaseImageProcessNode):
     Labels connected components in a mask and measures each region.
 
     Shape columns (always present):
-    - `label` — integer region ID (matches label_image pixel values)
-    - `area` — number of pixels in the region
-    - `equivalent_diameter` — diameter of a circle with the same area
-    - `centroid_y` / `centroid_x` — pixel coordinates of the region centre
-    - `bbox_top` / `bbox_left` / `bbox_bottom` / `bbox_right` — tight bounding box corners
-    - `perimeter` — outer boundary length in pixels
-    - `circularity` — `4*pi*area/perimeter^2`; 1.0 = perfect circle, lower = more irregular
-    - `eccentricity` — 0 = circle, 1 = line; measures elongation
-    - `orientation` — angle of major axis in degrees
-    - `major_axis` / `minor_axis` — lengths of the fitted ellipse axes
-    - `solidity` — area / convex_hull_area; 1 = perfectly convex
-    - `extent` — area / bounding_box_area; fraction of bbox filled
-    - `euler_number` — 1 = no holes; decreases by 1 for each enclosed hole
+    - `label` -- integer region ID (matches label_image pixel values)
+    - `area` -- number of pixels in the region
+    - `equivalent_diameter` -- diameter of a circle with the same area
+    - `centroid_y` / `centroid_x` -- pixel coordinates of the region centre
+    - `bbox_top` / `bbox_left` / `bbox_bottom` / `bbox_right` -- tight bounding box corners
+    - `perimeter` -- outer boundary length in pixels
+    - `circularity` -- `4*pi*area/perimeter^2`; 1.0 = perfect circle, lower = more irregular
+    - `eccentricity` -- 0 = circle, 1 = line; measures elongation
+    - `orientation` -- angle of major axis in degrees
+    - `major_axis` / `minor_axis` -- lengths of the fitted ellipse axes
+    - `solidity` -- area / convex_hull_area; 1 = perfectly convex
+    - `extent` -- area / bounding_box_area; fraction of bbox filled
+    - `euler_number` -- 1 = no holes; decreases by 1 for each enclosed hole
 
     Intensity columns (present only when intensity_image is connected):
-    - `mean_intensity` — average pixel value inside the region
-    - `sum_intensity` — total pixel intensity (mean x area)
-    - `max_intensity` / `min_intensity` — brightest and darkest pixels
-    - `weighted_centroid_y` / `weighted_centroid_x` — intensity-weighted centre
+    - `mean_intensity` -- average pixel value inside the region
+    - `sum_intensity` -- total pixel intensity (mean x area)
+    - `max_intensity` / `min_intensity` -- brightest and darkest pixels
+    - `weighted_centroid_y` / `weighted_centroid_x` -- intensity-weighted centre
 
     Outputs:
-    - **table** — TableData with all columns above
-    - **label_image** — LabelData with integer label array and coloured RGB visualisation
+    - **table** -- TableData with all columns above
+    - **label_image** -- LabelData with integer label array and coloured RGB visualisation
 
     Keywords: regionprops, measure, area, perimeter, eccentricity, 粒子, 區域, 量測, 面積, 遮罩
     """
@@ -829,7 +829,7 @@ RegionPropsNode = ParticlePropsNode
 
 
 # ===========================================================================
-# ParticleSelectNode  —  interactive per-particle mask filter
+# ParticleSelectNode  --  interactive per-particle mask filter
 # ===========================================================================
 
 class _FilterRow(QtWidgets.QWidget):
@@ -1179,7 +1179,7 @@ class ParticleSelectNode(BaseImageProcessNode):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Visual Particle Select — click-to-toggle interactive particle selection
+#  Visual Particle Select -- click-to-toggle interactive particle selection
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _mouse_pos_qpoint(event):
@@ -1314,7 +1314,7 @@ class _ParticleSelectGraphicsView(QGraphicsView):
 
         label_id = int(self._label_arr[y, x])
         if label_id == 0:
-            return  # background click — ignore
+            return  # background click -- ignore
 
         # Toggle
         if label_id in self._selected:
@@ -1699,7 +1699,7 @@ class InteractiveParticleSelectNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# Particle Classify Node — assign labels to named groups via lasso/rect
+# Particle Classify Node -- assign labels to named groups via lasso/rect
 # ===========================================================================
 
 def _mouse_pos_qpoint_classify(event):
@@ -2144,7 +2144,7 @@ class _ParticleClassifyWidget(NodeBaseWidget):
         self._emit()
 
     def _unassign_selected(self):
-        """Remove group assignment — draw shape to unassign, or unassign all in current group."""
+        """Remove group assignment -- draw shape to unassign, or unassign all in current group."""
         if self._current_group < 1:
             return
         to_remove = [lbl for lbl, g in self._group_map.items()
@@ -2211,15 +2211,15 @@ class ParticleClassifyNode(BaseImageProcessNode):
     ### Usage
 
     - Connect a **label image** (from Particle Props or Watershed).
-    - Click **+ New Group** to create groups (Group 1, Group 2, …).
+    - Click **+ New Group** to create groups (Group 1, Group 2, ...).
     - Select a group, then draw a **rect** or **lasso** around particles.
     - All labels fully enclosed by the shape are assigned to that group.
     - Unassigned labels remain as "Ungrouped" (label 0 in output).
 
     ### Outputs
 
-    - **label_image** — relabeled: Group 1 → 1, Group 2 → 2, ungrouped → 0.
-    - **table** — original particle table with an added `group` column.
+    - **label_image** -- relabeled: Group 1 → 1, Group 2 → 2, ungrouped → 0.
+    - **table** -- original particle table with an added `group` column.
 
     Keywords: classify, group, assign, cluster, categorize, label,
               分類, 分群, 標記, 歸類

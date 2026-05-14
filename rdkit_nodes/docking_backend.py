@@ -1,10 +1,10 @@
 """
-docking_backend — Unified interface for molecular docking engines.
+docking_backend -- Unified interface for molecular docking engines.
 
 Supports:
-  - QVina2 (Rust)  — fast heuristic search, default
-  - Vina (Rust)    — classic AutoDock Vina algorithm
-  - Smina (Rust)   — Smina scoring/search variant
+  - QVina2 (Rust)  -- fast heuristic search, default
+  - Vina (Rust)    -- classic AutoDock Vina algorithm
+  - Smina (Rust)   -- Smina scoring/search variant
 
 All engines are implemented in Rust via vina_rust and support Boron
 atom types (like GNINA).
@@ -114,7 +114,7 @@ class VinaRustBackend(DockingBackend):
             size_x=size[0], size_y=size[1], size_z=size[2],
         )
 
-        # Suppress Rust engine's stderr banner (e.g. "[QVina2] tasks=…")
+        # Suppress Rust engine's stderr banner (e.g. "[QVina2] tasks=...")
         _saved_stderr = os.dup(2)
         _devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(_devnull, 2)
@@ -162,7 +162,7 @@ class VinaRustBackend(DockingBackend):
         When *stream_results* is True the callback receives
         ``result_pdbqt`` and ``result_energies`` kwargs on the
         ``LigandDone`` stage.  The return list will contain empty
-        stubs (``("", [])``) — results should be consumed in the
+        stubs (``("", [])``) -- results should be consumed in the
         callback instead.
 
         Returns:

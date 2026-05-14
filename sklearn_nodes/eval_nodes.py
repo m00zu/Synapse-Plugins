@@ -127,9 +127,9 @@ class ConfusionMatrixNode(BaseExecutionNode):
 
     Options:
 
-    - **true_column** — column with true labels
-    - **pred_column** — column with predicted labels
-    - **normalize** — normalize matrix values (row-wise)
+    - **true_column** -- column with true labels
+    - **pred_column** -- column with predicted labels
+    - **normalize** -- normalize matrix values (row-wise)
 
     Keywords: confusion matrix, accuracy, classification, evaluate, ML, machine learning
     """
@@ -221,8 +221,8 @@ class ClassificationReportNode(BaseExecutionNode):
 
     Options:
 
-    - **true_column** — column with true labels
-    - **pred_column** — column with predicted labels
+    - **true_column** -- column with true labels
+    - **pred_column** -- column with predicted labels
 
     Keywords: classification report, precision, recall, F1, accuracy, ML, machine learning
     """
@@ -291,9 +291,9 @@ class CrossValidationNode(BaseExecutionNode):
 
     Options:
 
-    - **target_column** — the column to predict
-    - **cv_folds** — number of folds (default 5)
-    - **scoring** — metric to evaluate (accuracy, f1_macro, r2, etc.)
+    - **target_column** -- the column to predict
+    - **cv_folds** -- number of folds (default 5)
+    - **scoring** -- metric to evaluate (accuracy, f1_macro, r2, etc.)
 
     Keywords: cross validation, k-fold, CV, model selection, ML, machine learning
     """

@@ -62,7 +62,7 @@ class _SpreadsheetModel(QtCore.QAbstractTableModel):
         self._sort_column: int | None = None
         self._sort_ascending: bool = True
 
-    # ── public helpers ───────���─────────────────────────────────────────
+    # ── public helpers ───────────────────────────────────────────────────
     @property
     def df(self) -> pd.DataFrame:
         return self._df
@@ -266,7 +266,7 @@ class _SpreadsheetModel(QtCore.QAbstractTableModel):
         self.beginResetModel()
         self.endResetModel()
 
-    # ── internal ─────────────��─────────────────────────────────────────
+    # ── internal ────────────────────────────────────────────────────────
     def _expand_to(self, row, col):
         cur_rows, cur_cols = len(self._df), len(self._df.columns)
         if col >= cur_cols:
@@ -395,14 +395,14 @@ class EditableNodeTableWidget(NodeBaseWidget):
         self._table.delete_requested.connect(self._on_delete)
         self._table.copy_requested.connect(self._on_copy)
 
-        # ── context menu ────────────��───────────────────────���──────────
+        # ── context menu ──────────────────────────────────────────────────
         self._table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
 
         # ── data-change tracking (cell_edited fires only for user edits) ──
         self._model.cell_edited.connect(self._emit_edit)
 
-        # ── layout ��────────────────────────────────────────────────────
+        # ── layout ──────────────────────────────────────────────────────
         container = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(container)
         lay.setContentsMargins(2, 2, 2, 2)
@@ -413,7 +413,7 @@ class EditableNodeTableWidget(NodeBaseWidget):
         self.update_table_signal.connect(
             self._set_df_main_thread, QtCore.Qt.QueuedConnection)
 
-    # ── header sort / rename ────────────���──────────────────────────────
+    # ── header sort / rename ─────────────────────────────────────────────
     def _on_header_click(self, section):
         self._pending_sort_col = section
         self._sort_timer.start()
@@ -493,7 +493,7 @@ class EditableNodeTableWidget(NodeBaseWidget):
         self._model.clear_cells(indices)
         self._emit_edit()
 
-    # ── context menu ──────────────────────────────���────────────────────
+    # ── context menu ─────────────────────────────────────────────────────
     def _show_context_menu(self, pos):
         sel = self._table.selectionModel().selectedIndexes()
         rows = sorted(set(i.row() for i in sel)) if sel else []
@@ -539,7 +539,7 @@ class EditableNodeTableWidget(NodeBaseWidget):
         trimmed = self._model.trim()
         self.dataframe_edited.emit(trimmed)
 
-    # ── NodeBaseWidget interface ───────────────��───────────────────────
+    # ── NodeBaseWidget interface ────────────────────────────────────────
     def set_value(self, value):
         """Accept a DataFrame or a saved JSON dict snapshot."""
         restored_from_json = isinstance(value, dict)
@@ -598,7 +598,7 @@ class EditableTableNode(BaseExecutionNode):
     Copy/paste and Delete key are supported. Changes are pushed downstream automatically.
 
     Parameters:
-    - **Reset Edits on Next Run** — when checked, discards local edits and reloads from upstream on the next evaluation
+    - **Reset Edits on Next Run** -- when checked, discards local edits and reloads from upstream on the next evaluation
 
     Keywords: table editor, manual edit, interactive dataframe, inline spreadsheet, clean data by hand, 表格編輯, 手動編輯, 資料清理, 選擇欄位, 互動式
     """
@@ -621,7 +621,7 @@ class EditableTableNode(BaseExecutionNode):
         # When manual edits occur, mark the node dirty to propagate changes down
         self.editable_widget.dataframe_edited.connect(self._on_table_edited)
 
-        # Start with an empty spreadsheet — the buffer zone provides visual cells
+        # Start with an empty spreadsheet -- the buffer zone provides visual cells
         self.output_values['out'] = TableData(payload=pd.DataFrame())
         
     def _on_table_edited(self, new_df):
@@ -639,7 +639,7 @@ class EditableTableNode(BaseExecutionNode):
         self.reset_progress()
         in_port = self.inputs().get('in')
         if not in_port or not in_port.connected_ports():
-            # No input — retain whatever the user has typed in the spreadsheet
+            # No input -- retain whatever the user has typed in the spreadsheet
             edited_df = self.editable_widget.get_dataframe()
             if edited_df is None:
                 edited_df = pd.DataFrame()
@@ -692,12 +692,12 @@ class FilterTableNode(BaseExecutionNode):
     Filters rows in a TableData object using a pandas query string.
 
     Examples:
-    - `Area > 100` — keep rows where Area is greater than 100
-    - `Area > 50 and Circularity > 0.8` — multiple conditions
-    - `Group == "Control"` — match a specific text value
-    - `Group != "Background"` — exclude rows
-    - `Area > Area.mean()` — compare to column statistics
-    - `label in [1, 2, 5]` — match specific values from a list
+    - `Area > 100` -- keep rows where Area is greater than 100
+    - `Area > 50 and Circularity > 0.8` -- multiple conditions
+    - `Group == "Control"` -- match a specific text value
+    - `Group != "Background"` -- exclude rows
+    - `Area > Area.mean()` -- compare to column statistics
+    - `label in [1, 2, 5]` -- match specific values from a list
 
     Uses pandas `DataFrame.query()` syntax. Column names with spaces need backticks: `` `Column Name` > 10 ``
 
@@ -750,10 +750,10 @@ class MathColumnNode(BaseExecutionNode):
     Creates or modifies a column using a pandas eval expression.
 
     Examples:
-    - `Ratio = Intensity_Ch1 / Intensity_Ch2` — create a new column
-    - `Area_um2 = Area * 0.065 * 0.065` — convert pixels to physical units
-    - `Normalized = Intensity / Intensity.mean()` — normalize to mean
-    - `Log_Area = @np.log10(Area)` — use numpy functions with `@` prefix
+    - `Ratio = Intensity_Ch1 / Intensity_Ch2` -- create a new column
+    - `Area_um2 = Area * 0.065 * 0.065` -- convert pixels to physical units
+    - `Normalized = Intensity / Intensity.mean()` -- normalize to mean
+    - `Log_Area = @np.log10(Area)` -- use numpy functions with `@` prefix
 
     Uses pandas `DataFrame.eval()` syntax. The left side of `=` is the new column name.
 
@@ -815,10 +815,10 @@ class AggregateTableNode(BaseExecutionNode):
     | Treated | 190  |
 
     Parameters:
-    - **Operation** — sum, mean, median, min, max, count, std, var, auc
-    - **Group By** — column name(s) to group by (comma-separated, leave empty for no grouping)
-    - **Columns** — restrict to specific columns (comma-separated, leave empty = all numeric)
-    - **Sort By** — column to sort by before computing AUC (required for auc, e.g. time column)
+    - **Operation** -- sum, mean, median, min, max, count, std, var, auc
+    - **Group By** -- column name(s) to group by (comma-separated, leave empty for no grouping)
+    - **Columns** -- restrict to specific columns (comma-separated, leave empty = all numeric)
+    - **Sort By** -- column to sort by before computing AUC (required for auc, e.g. time column)
 
     The **auc** operation computes the area under the curve using the trapezoidal
     rule.  Rows are first sorted by the *Sort By* column, which serves as the
@@ -883,7 +883,7 @@ class AggregateTableNode(BaseExecutionNode):
 
         try:
             if operation == 'auc':
-                # AUC via trapezoidal rule — requires a sort column as x-axis
+                # AUC via trapezoidal rule -- requires a sort column as x-axis
                 sort_col = sort_by_str if sort_by_str in df.columns else None
                 if sort_col is None:
                     # Fall back to first numeric column not in agg_cols
@@ -1015,8 +1015,8 @@ class RenameGroupNode(BaseExecutionNode):
     Renames values in a target column based on a mapping string or the built-in mapping table.
 
     Mapping syntax:
-    - `OldName : NewName` — rename a single value
-    - `OldA | OldB : Combined` — merge multiple values into one
+    - `OldName : NewName` -- rename a single value
+    - `OldA | OldB : Combined` -- merge multiple values into one
     - Comma-separated for multiple rules: `A : Control, B : Treated`
 
     Example: Target Column = `Group`, Mapping = `ctrl : Control, exp1 | exp2 : Experimental`
@@ -1144,9 +1144,9 @@ class ReshapeTableNode(BaseExecutionNode):
     Converts a table between wide and long format.
 
     Modes:
-    - *Wide to Long* (melt) — unpivots multiple value columns into rows
-    - *Long to Wide* (pivot) — spreads row values back into columns
-    - *Collect by Group* — gathers values by group into side-by-side columns
+    - *Wide to Long* (melt) -- unpivots multiple value columns into rows
+    - *Long to Wide* (pivot) -- spreads row values back into columns
+    - *Collect by Group* -- gathers values by group into side-by-side columns
 
     **Wide to Long example:**
 
@@ -1169,13 +1169,13 @@ class ReshapeTableNode(BaseExecutionNode):
     **Long to Wide** reverses the above. Settings: Index Columns = `Sample`, Pivot Column = `Channel`, Value Column = `Intensity`
 
     Parameters:
-    - **ID Columns** — columns to keep as-is (comma-separated). Leave empty to melt all non-numeric columns.
-    - **Value Columns** — which columns to unpivot (leave empty = all remaining).
-    - **Group Column Name** — name for the new column holding the original column names (default: `Group`).
-    - **Value Column Name** — name for the new column holding the values (default: `Value`).
-    - **Index Columns (pivot)** — columns that identify each row in the wide output.
-    - **Pivot Column (pivot)** — column whose unique values become new column headers.
-    - **Value Column (pivot)** — column whose values fill the new columns.
+    - **ID Columns** -- columns to keep as-is (comma-separated). Leave empty to melt all non-numeric columns.
+    - **Value Columns** -- which columns to unpivot (leave empty = all remaining).
+    - **Group Column Name** -- name for the new column holding the original column names (default: `Group`).
+    - **Value Column Name** -- name for the new column holding the values (default: `Value`).
+    - **Index Columns (pivot)** -- columns that identify each row in the wide output.
+    - **Pivot Column (pivot)** -- column whose unique values become new column headers.
+    - **Value Column (pivot)** -- column whose values fill the new columns.
 
     Keywords: reshape, melt, pivot, wide to long, long to wide, 重塑, 轉置, 樞紐分析, 寬轉長, 長轉寬
     """
@@ -1273,8 +1273,8 @@ class SortTableNode(BaseExecutionNode):
     Sorts a table by one or more columns in ascending or descending order.
 
     Parameters:
-    - **Sort By** — comma-separated column names to sort by (applied in order)
-    - **Order** — ascending or descending
+    - **Sort By** -- comma-separated column names to sort by (applied in order)
+    - **Order** -- ascending or descending
 
     Keywords: sort, order rows, ascending, descending, rank table, 排序, 遞增, 遞減, 排列, 資料表
     """
@@ -1314,7 +1314,7 @@ class SortTableNode(BaseExecutionNode):
         ascending = self.get_property('order') != 'Descending'
 
         if not sort_str:
-            # No sort columns specified — pass through unchanged
+            # No sort columns specified -- pass through unchanged
             self.output_values['out'] = TableData(payload=df)
             self.mark_clean()
             return True, None
@@ -1340,13 +1340,13 @@ class TopNNode(BaseExecutionNode):
     Extracts the top (or bottom) N rows ranked by a numeric column.
 
     Outputs:
-    - **top_n** — the selected N rows
-    - **rest** — all remaining rows not in top_n
+    - **top_n** -- the selected N rows
+    - **rest** -- all remaining rows not in top_n
 
     Parameters:
-    - **Rank By Column** — numeric column to rank by
-    - **N** — number of rows to select
-    - **Select** — *Top (largest)* or *Bottom (smallest)*
+    - **Rank By Column** -- numeric column to rank by
+    - **N** -- number of rows to select
+    - **Select** -- *Top (largest)* or *Bottom (smallest)*
 
     Keywords: top n, bottom n, ranking, largest, smallest, 排序, 前幾名, 最大值, 最小值, 篩選
     """
@@ -1419,15 +1419,15 @@ class ColumnValueSplitNode(BaseExecutionNode):
     """
     Splits a table into two outputs based on whether a column's value matches a list of specified values.
 
-    **Values** — comma-separated. `*` anywhere triggers glob matching:
-    - `Control*` — starts with "Control"
-    - `*treated` — ends with "treated"
-    - `*GFP*` — contains "GFP"
+    **Values** -- comma-separated. `*` anywhere triggers glob matching:
+    - `Control*` -- starts with "Control"
+    - `*treated` -- ends with "treated"
+    - `*GFP*` -- contains "GFP"
     - Entries without `*` are exact matches
 
     Outputs:
-    - **matched** — rows where the column value matches any entry
-    - **rest** — all other rows
+    - **matched** -- rows where the column value matches any entry
+    - **rest** -- all other rows
 
     Keywords: split table, match values, wildcard filter, include/exclude groups, partition rows, 分割, 篩選, 萬用字元, 分組, 資料表
     """
@@ -1518,9 +1518,9 @@ class TwoTableMathNode(BaseExecutionNode):
     Outputs a single-row result table: `left_value | right_value | operation | result`
 
     Parameters:
-    - **Operation** — `left / right`, `left * right`, `left + right`, or `left - right`
-    - **Left Column** — column name in the left table (blank = first numeric)
-    - **Right Column** — column name in the right table (blank = first numeric)
+    - **Operation** -- `left / right`, `left * right`, `left + right`, or `left - right`
+    - **Left Column** -- column name in the left table (blank = first numeric)
+    - **Right Column** -- column name in the right table (blank = first numeric)
 
     Keywords: two-table math, ratio, divide tables, scalar compare, combine metrics, 計算, 比值, 兩表, 比較, 合併
     """
@@ -1625,12 +1625,12 @@ class SelectColumnsNode(BaseExecutionNode):
     """
     Keeps only the columns listed in 'Columns' and drops everything else.
 
-    **Columns** — comma-separated list of column names to keep. `*` anywhere in a name triggers glob matching:
-    - `*Intensity` — ends with "Intensity"
-    - `Intensity*` — starts with "Intensity"
-    - `*Intensity*` — contains "Intensity"
+    **Columns** -- comma-separated list of column names to keep. `*` anywhere in a name triggers glob matching:
+    - `*Intensity` -- ends with "Intensity"
+    - `Intensity*` -- starts with "Intensity"
+    - `*Intensity*` -- contains "Intensity"
 
-    **Drop mode** — when checked, the listed columns are DROPPED instead of kept.
+    **Drop mode** -- when checked, the listed columns are DROPPED instead of kept.
 
     Keywords: select columns, drop columns, keep subset, wildcard columns, schema trim, 選擇欄位, 刪除欄位, 子集, 萬用字元, 資料表
     """
@@ -1673,7 +1673,7 @@ class SelectColumnsNode(BaseExecutionNode):
 
         entries = [c.strip() for c in cols_str.split(',') if c.strip()]
 
-        # Resolve each entry — '*' anywhere triggers glob matching
+        # Resolve each entry -- '*' anywhere triggers glob matching
         resolved: list[str] = []
         for entry in entries:
             if '*' in entry:
@@ -1712,8 +1712,8 @@ class ExtractObjectNode(BaseExecutionNode):
     item by row index and outputs it as its original data type.
 
     Parameters:
-    - **Row Index** — 1-based row number to extract from
-    - **Object Column** — name of the column containing the objects (default: `object`)
+    - **Row Index** -- 1-based row number to extract from
+    - **Object Column** -- name of the column containing the objects (default: `object`)
 
     Keywords: extract, pick, select, object, image, figure, row, index, 提取, 選取
     """
@@ -1771,12 +1771,12 @@ class RandomSampleNode(BaseExecutionNode):
     If N exceeds the table size, the full table is returned (no error).
 
     Parameters:
-    - **N** — number of rows to draw
-    - **Seed** — random seed for reproducibility; leave at `-1` for a different sample each run
+    - **N** -- number of rows to draw
+    - **Seed** -- random seed for reproducibility; leave at `-1` for a different sample each run
 
     Outputs:
-    - **sampled** — the N randomly selected rows
-    - **rest** — all remaining rows not in the sample
+    - **sampled** -- the N randomly selected rows
+    - **rest** -- all remaining rows not in the sample
 
     Keywords: random sample, subsample, shuffle, draw, pick, 隨機, 抽樣
     """
@@ -1839,12 +1839,12 @@ class ConcatTablesNode(BaseExecutionNode):
     Concatenates two tables by stacking rows (vertical) or columns (horizontal).
 
     Modes:
-    - *Vertical (stack rows)* — both tables should have the same columns; mismatched columns are filled with NaN when 'Fill missing columns' is checked
-    - *Horizontal (side by side)* — both tables are placed side by side; shorter side is padded with NaN
+    - *Vertical (stack rows)* -- both tables should have the same columns; mismatched columns are filled with NaN when 'Fill missing columns' is checked
+    - *Horizontal (side by side)* -- both tables are placed side by side; shorter side is padded with NaN
 
     Parameters:
-    - **Direction** — vertical or horizontal
-    - **Fill missing columns with NaN** — when unchecked, only common columns are kept in vertical mode
+    - **Direction** -- vertical or horizontal
+    - **Fill missing columns with NaN** -- when unchecked, only common columns are kept in vertical mode
 
     Keywords: concat, append, stack rows, merge rows, combine tables, 合併, 連接, 堆疊, 附加, 資料表
     """
@@ -1916,9 +1916,9 @@ class JoinTablesNode(BaseExecutionNode):
     Example: Left key = `particle_id`, Right key = `id` to match particles to metadata.
 
     Parameters:
-    - **Key Column (left)** — column name to join on in the left table
-    - **Key Column (right)** — column name in the right table (leave blank to use the same name as left)
-    - **Join Type** — *inner*, *left*, *right*, or *outer*
+    - **Key Column (left)** -- column name to join on in the left table
+    - **Key Column (right)** -- column name in the right table (leave blank to use the same name as left)
+    - **Join Type** -- *inner*, *left*, *right*, or *outer*
 
     Keywords: join, merge, SQL join, inner join, left join, lookup, 合併, 連接, 鍵值, 對應, 資料表
     """
@@ -1986,12 +1986,12 @@ class DropFillNaNNode(BaseExecutionNode):
     Removes or fills NaN values in a table.
 
     Modes:
-    - *Drop rows* — remove any row containing at least one NaN in the specified columns
-    - *Fill constant* — replace NaN with a fixed value (e.g. `0` or `"unknown"`)
-    - *Fill mean / median / mode* — replace with column statistics
-    - *Forward fill / Back fill* — propagate the last or next valid value
+    - *Drop rows* -- remove any row containing at least one NaN in the specified columns
+    - *Fill constant* -- replace NaN with a fixed value (e.g. `0` or `"unknown"`)
+    - *Fill mean / median / mode* -- replace with column statistics
+    - *Forward fill / Back fill* -- propagate the last or next valid value
 
-    **Columns** — comma-separated column names to act on. Leave empty to apply to all columns.
+    **Columns** -- comma-separated column names to act on. Leave empty to apply to all columns.
 
     Keywords: drop NaN, fill NaN, missing values, impute, clean table, 缺失值, 填補, 刪除, 空值, 資料清理
     """
@@ -2072,14 +2072,14 @@ class NormalizeColumnNode(BaseExecutionNode):
     Normalizes one or more numeric columns.
 
     Methods:
-    - *Min-Max (0-1)* — scales each column to [0, 1]
-    - *Z-score* — subtracts mean and divides by std (standard score)
-    - *Log10 / Log2 / Ln* — log transform (adds 1 before log to handle zeros)
-    - *Robust (IQR)* — subtracts median, divides by IQR; robust to outliers
+    - *Min-Max (0-1)* -- scales each column to [0, 1]
+    - *Z-score* -- subtracts mean and divides by std (standard score)
+    - *Log10 / Log2 / Ln* -- log transform (adds 1 before log to handle zeros)
+    - *Robust (IQR)* -- subtracts median, divides by IQR; robust to outliers
 
     Parameters:
-    - **Columns** — comma-separated names. Leave empty to normalize all numeric columns.
-    - **Suffix** — text appended to new column names (e.g. `_norm`). Leave empty to overwrite in-place.
+    - **Columns** -- comma-separated names. Leave empty to normalize all numeric columns.
+    - **Suffix** -- text appended to new column names (e.g. `_norm`). Leave empty to overwrite in-place.
 
     Keywords: normalize, z-score, min-max, log transform, scale, standardize, 標準化, 正規化, 對數, 縮放, 統計
     """
@@ -2093,7 +2093,7 @@ class NormalizeColumnNode(BaseExecutionNode):
         self.add_input('in',  color=PORT_COLORS['table'])
         self.add_output('out', color=PORT_COLORS['table'])
         self.add_combo_menu('method', 'Method',
-                            items=['Min-Max (0–1)', 'Z-score', 'Log10', 'Log2',
+                            items=['Min-Max (0-1)', 'Z-score', 'Log10', 'Log2',
                                    'Ln (natural)', 'Robust (IQR)'])
         self._add_column_selector('columns', 'Columns (blank = all numeric)', text='', mode='multi')
         self.add_text_input('suffix',  'New Column Suffix (blank = overwrite)', text='_norm')
@@ -2113,7 +2113,7 @@ class NormalizeColumnNode(BaseExecutionNode):
 
         self._refresh_column_selectors(df, 'columns')
 
-        method   = str(self.get_property('method') or 'Min-Max (0–1)')
+        method   = str(self.get_property('method') or 'Min-Max (0-1)')
         cols_str = str(self.get_property('columns') or '').strip()
         suffix   = str(self.get_property('suffix') or '')
 
@@ -2128,7 +2128,7 @@ class NormalizeColumnNode(BaseExecutionNode):
         try:
             for c in cols:
                 s = df[c].astype(float)
-                if method == 'Min-Max (0–1)':
+                if method == 'Min-Max (0-1)':
                     mn, mx = s.min(), s.max()
                     out = (s - mn) / (mx - mn) if mx != mn else s * 0.0
                 elif method == 'Z-score':
@@ -2168,9 +2168,9 @@ class ValueCountsNode(BaseExecutionNode):
     sorted by count descending by default.
 
     Parameters:
-    - **Column** — the column to count unique values in
-    - **Sort by count (descending)** — sort results by frequency
-    - **Add percentage column** — include a `pct` column with relative frequencies
+    - **Column** -- the column to count unique values in
+    - **Sort by count (descending)** -- sort results by frequency
+    - **Add percentage column** -- include a `pct` column with relative frequencies
 
     Keywords: value counts, frequency, count unique, histogram categorical, 計數, 頻率, 唯一值, 分組計數, 資料表
     """
@@ -2230,12 +2230,12 @@ class DropDuplicatesNode(BaseExecutionNode):
     Removes duplicate rows from a table.
 
     Parameters:
-    - **Subset Columns** — comma-separated columns to consider when checking for duplicates. Leave empty to compare all columns.
-    - **Keep** — which duplicate to keep: *first* occurrence, *last*, or *none*
+    - **Subset Columns** -- comma-separated columns to consider when checking for duplicates. Leave empty to compare all columns.
+    - **Keep** -- which duplicate to keep: *first* occurrence, *last*, or *none*
 
     Outputs:
-    - **unique** — rows after removing duplicates
-    - **dropped** — the removed duplicate rows
+    - **unique** -- rows after removing duplicates
+    - **dropped** -- the removed duplicate rows
 
     Keywords: drop duplicates, unique rows, deduplicate, remove repeated, 去重, 重複值, 唯一, 資料清理, 刪除重複
     """
@@ -2292,16 +2292,16 @@ class TypeCastColumnNode(BaseExecutionNode):
     Converts the data type of one or more columns.
 
     Target types:
-    - *float* — convert to floating-point number
-    - *int* — convert to integer (rounds, then casts)
-    - *str* — convert to string
-    - *bool* — convert to boolean (`0`/`False`/`false`/`no` become False, else True)
-    - *category* — pandas Categorical (saves memory for low-cardinality columns)
-    - *datetime* — parse as datetime using pandas `to_datetime`
+    - *float* -- convert to floating-point number
+    - *int* -- convert to integer (rounds, then casts)
+    - *str* -- convert to string
+    - *bool* -- convert to boolean (`0`/`False`/`false`/`no` become False, else True)
+    - *category* -- pandas Categorical (saves memory for low-cardinality columns)
+    - *datetime* -- parse as datetime using pandas `to_datetime`
 
     Parameters:
-    - **Columns** — comma-separated column names to cast
-    - **Coerce errors to NaN** — when checked, unparseable values become NaN instead of raising an error
+    - **Columns** -- comma-separated column names to cast
+    - **Coerce errors to NaN** -- when checked, unparseable values become NaN instead of raising an error
 
     Keywords: type cast, convert dtype, int to float, string column, category, 型別轉換, 資料型別, 整數, 字串, 類別
     """
@@ -2376,18 +2376,18 @@ class StringColumnOpsNode(BaseExecutionNode):
     Applies a string operation to a text column.
 
     Operations:
-    - *Strip whitespace* — remove leading/trailing spaces
-    - *To upper / To lower / Title case* — change case
-    - *Replace* — replace a substring or regex pattern with another string
-    - *Extract regex group* — extract first capture group; non-matching rows become NaN
-    - *Split to two columns* — split on a delimiter and put left/right parts into two new columns
-    - *Pad / Zfill* — left-pad with zeros to a fixed width
+    - *Strip whitespace* -- remove leading/trailing spaces
+    - *To upper / To lower / Title case* -- change case
+    - *Replace* -- replace a substring or regex pattern with another string
+    - *Extract regex group* -- extract first capture group; non-matching rows become NaN
+    - *Split to two columns* -- split on a delimiter and put left/right parts into two new columns
+    - *Pad / Zfill* -- left-pad with zeros to a fixed width
 
     Parameters:
-    - **Column** — source text column to operate on
-    - **Pattern / Delimiter / Width** — context-dependent input for the selected operation
-    - **Replace With** — replacement string (for Replace operation)
-    - **Result Column** — name for the output column. Leave empty to overwrite the source column.
+    - **Column** -- source text column to operate on
+    - **Pattern / Delimiter / Width** -- context-dependent input for the selected operation
+    - **Replace With** -- replacement string (for Replace operation)
+    - **Result Column** -- name for the output column. Leave empty to overwrite the source column.
 
     Keywords: string ops, text column, replace, extract, split, strip, regex, 字串, 文字, 取代, 提取, 分割
     """
@@ -2572,8 +2572,8 @@ class GroupNormalizationNode(BaseExecutionNode):
     control group for each unique group in the data.
 
     Parameters:
-    - **Global Control Group** — default control group name used for normalization
-    - **Target Column** — column containing group labels (e.g. `Group`)
+    - **Global Control Group** -- default control group name used for normalization
+    - **Target Column** -- column containing group labels (e.g. `Group`)
 
     Keywords: normalization, control group, fold change, relative expression, group-wise scaling, 正規化, 對照組, 倍數變化, 分組, 相對表現
     """
@@ -2726,7 +2726,7 @@ class SaveTableNode(BaseExecutionNode):
     Saves a table to disk. Click Browse to choose file location and format.
 
     Inputs:
-    - **table** — TableData to save
+    - **table** -- TableData to save
 
     Supported formats: CSV, TSV, Excel (.xlsx), GraphPad Prism (.pzfx).
     Users can also type any path with a custom extension directly.

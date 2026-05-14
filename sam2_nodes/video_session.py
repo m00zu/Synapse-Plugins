@@ -1,5 +1,5 @@
 """
-video_session.py — SAM2 video propagation engine with temporal memory (ONNX).
+video_session.py -- SAM2 video propagation engine with temporal memory (ONNX).
 
 Implements the full SAM2 temporal pipeline using 6 ONNX models:
   image_encoder, prompt_encoder, mask_decoder,
@@ -75,12 +75,12 @@ class SAM2VideoSession:
 
         session = SAM2VideoSession(model_paths)
 
-        # Frame 0 — initialise with user prompts
+        # Frame 0 -- initialise with user prompts
         session.set_image(rgb_arr_0)
         for obj_id, (coords, labels) in prompts.items():
             mask = session.initialize_object(obj_id, coords, labels)
 
-        # Frames 1..N — propagate
+        # Frames 1..N -- propagate
         for frame in frames[1:]:
             session.set_image(frame)
             masks, scores = session.propagate()
@@ -109,7 +109,7 @@ class SAM2VideoSession:
         opts = ort.SessionOptions()
         opts.log_severity_level = 3
 
-        logger.info("Loading SAM2 video ONNX models …")
+        logger.info("Loading SAM2 video ONNX models ...")
         self._enc = ort.InferenceSession(
             model_paths['image_encoder'], sess_options=opts, providers=providers)
         self._prompt_enc = ort.InferenceSession(
@@ -133,7 +133,7 @@ class SAM2VideoSession:
         self._split_memory = 'memory_1' in attn_names
         self._has_attn_mask = 'attention_mask_1' in attn_names
 
-        # Learned embeddings (approximated — see ailia reference)
+        # Learned embeddings (approximated -- see ailia reference)
         self._maskmem_tpos_enc = _trunc_normal(
             (self.NUM_MASKMEM, 1, 1, self.MEM_DIM))
         self._no_mem_embed = _trunc_normal((1, 1, self.HIDDEN_DIM))
@@ -195,7 +195,7 @@ class SAM2VideoSession:
         dt = (time.perf_counter() - t0) * 1000
         logger.info("SAM2 video encoder: %.1f ms", dt)
 
-        # Parse encoder outputs — try named first, then shape-based
+        # Parse encoder outputs -- try named first, then shape-based
         out_names = [o.name for o in self._enc.get_outputs()]
         named = dict(zip(out_names, outputs))
 
@@ -234,8 +234,8 @@ class SAM2VideoSession:
 
         Parameters
         ----------
-        point_coords : (N, 2) int — (x, y) in original image space.
-        point_labels : (N,) int — 1 = foreground, 0 = background.
+        point_coords : (N, 2) int -- (x, y) in original image space.
+        point_labels : (N,) int -- 1 = foreground, 0 = background.
 
         Returns
         -------
@@ -306,7 +306,7 @@ class SAM2VideoSession:
         H, W = self._feat_sizes[-1]
         high_res = self._get_high_res_features()
 
-        # Padding prompt (cached — same for every propagation call)
+        # Padding prompt (cached -- same for every propagation call)
         if self._padding_prompt is None:
             self._padding_prompt = self._run_prompt_encoder(
                 np.zeros((1, 1, 2), dtype=np.float32),
@@ -499,7 +499,7 @@ class SAM2VideoSession:
         """Group encoder outputs by spatial resolution into (fpn, pe) pairs.
 
         The encoder emits 6-7 4-D tensors.  At each spatial resolution
-        (256x256, 128x128, 64x64) there are exactly two tensors — one for
+        (256x256, 128x128, 64x64) there are exactly two tensors -- one for
         backbone features and one for positional encoding.  An additional
         ``vision_features`` tensor may exist at one resolution.
 
@@ -518,7 +518,7 @@ class SAM2VideoSession:
         for key in sorted(by_spatial, key=lambda k: -(k[0] * k[1])):
             tensors = by_spatial[key]
             if len(tensors) < 2:
-                continue  # vision_features or single tensor — skip
+                continue  # vision_features or single tensor -- skip
             if len(tensors) == 2:
                 a, b = tensors
             else:
@@ -528,7 +528,7 @@ class SAM2VideoSession:
 
             # Identify PE (usually 256-channel) vs FPN feature
             if a.shape[1] == b.shape[1]:
-                # Same channels — use output order (first=FPN, second=PE)
+                # Same channels -- use output order (first=FPN, second=PE)
                 backbone_fpn.append(a)
                 vision_pos_enc.append(b)
             elif a.shape[1] > b.shape[1]:
@@ -538,7 +538,7 @@ class SAM2VideoSession:
                 vision_pos_enc.append(b)
                 backbone_fpn.append(a)
 
-        logger.info("Detected encoder layout: %d levels — FPN channels %s, "
+        logger.info("Detected encoder layout: %d levels -- FPN channels %s, "
                      "PE channels %s, spatial %s",
                      len(backbone_fpn),
                      [f.shape[1] for f in backbone_fpn],
@@ -581,7 +581,7 @@ class SAM2VideoSession:
             flat_pos = flat_pos + self._maskmem_tpos_enc[self.NUM_MASKMEM - 1]
             mem_p.append(flat_pos)
 
-        # 2. Recent non-conditioning frames (t_pos = 1 … NUM_MASKMEM-1)
+        # 2. Recent non-conditioning frames (t_pos = 1 ... NUM_MASKMEM-1)
         for t_pos in range(1, self.NUM_MASKMEM):
             t_rel = self.NUM_MASKMEM - t_pos
             prev_idx = (self._frame_idx - 1) if t_rel == 1 else (

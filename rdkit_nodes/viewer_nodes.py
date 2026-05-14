@@ -1,5 +1,5 @@
 """
-viewer_nodes.py — 3D structure viewer node using Mol* + QWebEngineView.
+viewer_nodes.py -- 3D structure viewer node using Mol* + QWebEngineView.
 
 Provides:
   - ViewerBridge           QObject bridge for JS↔Python communication
@@ -58,7 +58,7 @@ def _extract_first_pose(multi_pdbqt: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ViewerBridge — QObject for JS↔Python communication via QWebChannel
+#  ViewerBridge -- QObject for JS↔Python communication via QWebChannel
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ViewerBridge(QtCore.QObject):
@@ -80,7 +80,7 @@ class ViewerBridge(QtCore.QObject):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Node3DViewerWidget — QWebEngineView embedded in a NodeBaseWidget
+#  Node3DViewerWidget -- QWebEngineView embedded in a NodeBaseWidget
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Node3DViewerWidget(NodeBaseWidget):
@@ -132,7 +132,7 @@ class Node3DViewerWidget(NodeBaseWidget):
             if not self._has_webengine:
                 print(
                     "[rdkit_nodes] WARNING: enable_bridge=True but QtWebEngine is "
-                    "not available — atom-click dispatch will not work. "
+                    "not available -- atom-click dispatch will not work. "
                     "Install PySide6-Addons to enable the 3D viewer bridge."
                 )
             else:
@@ -145,7 +145,7 @@ class Node3DViewerWidget(NodeBaseWidget):
                 except Exception as e:
                     print(
                         f"[rdkit_nodes] WARNING: failed to construct QWebChannel "
-                        f"bridge — atom clicks will be silently dropped: {e}"
+                        f"bridge -- atom clicks will be silently dropped: {e}"
                     )
                     self._bridge = None
 
@@ -247,7 +247,7 @@ class StructureViewerNode(BaseExecutionNode):
     def __init__(self):
         super().__init__(use_progress=False)
 
-        # Input ports — all optional
+        # Input ports -- all optional
         self.add_input('protein', color=PORT_COLORS.get('protein', (34, 139, 34)))
         self.add_input('receptor', color=PORT_COLORS.get('receptor', (0, 128, 128)))
         self.add_input('molecule', color=PORT_COLORS.get('molecule', (100, 100, 255)))

@@ -1,7 +1,7 @@
 """
 plugins/data_processing/data_nodes.py
 =====================================
-Data transformation nodes — blank subtraction, normalization, etc.
+Data transformation nodes -- blank subtraction, normalization, etc.
 """
 import pandas as pd
 import numpy as np
@@ -29,9 +29,9 @@ class BlankSubtractNode(BaseExecutionNode):
 
     Common use: subtract background (BG) measurement from all cells.
 
-    - **Reference Column** — the column containing group/cell labels (e.g. 'cell')
-    - **Reference Value** — the label of the reference row (e.g. 'BG')
-    - **Target Columns** — columns to subtract from (comma-separated, or leave empty for all numeric)
+    - **Reference Column** -- the column containing group/cell labels (e.g. 'cell')
+    - **Reference Value** -- the label of the reference row (e.g. 'BG')
+    - **Target Columns** -- columns to subtract from (comma-separated, or leave empty for all numeric)
 
     The reference row's value is subtracted from every row in each target column.
     The reference row itself is kept (will become 0).
@@ -120,9 +120,9 @@ class RowNormalizeNode(BaseExecutionNode):
 
     Useful for fold-change calculations: value / reference.
 
-    - **Reference Column** — column containing group labels
-    - **Reference Value** — label of the reference row (e.g. 'Control', 'BG')
-    - **Target Columns** — columns to normalize (comma-separated, or empty for all numeric)
+    - **Reference Column** -- column containing group labels
+    - **Reference Value** -- label of the reference row (e.g. 'Control', 'BG')
+    - **Target Columns** -- columns to normalize (comma-separated, or empty for all numeric)
 
     Keywords: normalize, fold change, ratio, reference, control, 正規化, 倍數變化
     """
@@ -202,8 +202,8 @@ class DropRowsNode(BaseExecutionNode):
     """
     Drop rows where a column matches any of the specified values.
 
-    - **Column** — which column to check
-    - **Values to Drop** — comma-separated list of values to remove (e.g. 'BG, Artifact (BG)')
+    - **Column** -- which column to check
+    - **Values to Drop** -- comma-separated list of values to remove (e.g. 'BG, Artifact (BG)')
 
     Keywords: drop, remove, filter, exclude, delete rows, 刪除, 移除, 過濾
     """

@@ -1,5 +1,5 @@
 """
-io_nodes.py — Load Z-stack TIFF files as 3D volumes.
+io_nodes.py -- Load Z-stack TIFF files as 3D volumes.
 """
 from __future__ import annotations
 

@@ -15,9 +15,9 @@ class LinearRegressionNode(_BaseRegressorNode):
     """Trains an ordinary least-squares Linear Regression model.
 
     Options:
-      - **target_column** — column to predict
-      - **feature_columns** — feature columns (blank → all numeric)
-      - **fit_intercept** — whether to calculate the intercept
+      - **target_column** -- column to predict
+      - **feature_columns** -- feature columns (blank → all numeric)
+      - **fit_intercept** -- whether to calculate the intercept
 
     Keywords: linear regression, OLS, regression, ML
     """
@@ -450,7 +450,7 @@ class DecisionTreeRegressorNode(_BaseRegressorNode):
 class XGBoostRegressorNode(_BaseRegressorNode):
     """Trains an XGBoost regressor (gradient-boosted trees, optimized).
 
-    Requires the ``xgboost`` package — install with ``pip install xgboost``.
+    Requires the ``xgboost`` package -- install with ``pip install xgboost``.
 
     Keywords: xgboost, gradient boosting, ensemble, regression, ML
     """

@@ -1,5 +1,5 @@
 """
-video_utils.py — Video utility nodes and helpers.
+video_utils.py -- Video utility nodes and helpers.
 
 Contains VideoToFramesNode and the shared _get_reader helper.
 """

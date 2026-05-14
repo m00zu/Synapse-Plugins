@@ -1,5 +1,5 @@
 """
-particle_tracking.py — Particle Linker, Track Properties, Trajectory Plot, Track Filter.
+particle_tracking.py -- Particle Linker, Track Properties, Trajectory Plot, Track Filter.
 
 Takes a regionprops table (frame, centroid_y, centroid_x columns) produced by
 SAM2 Video Analyze or ParticleProps + BatchAccumulator, and adds track identity
@@ -122,7 +122,7 @@ def _link_particles(df: pd.DataFrame, max_disp: float, max_gap: int,
         n_cur = len(cur)
 
         if prev_frame_df is None or not active:
-            # First frame or no active tracks — start fresh tracks
+            # First frame or no active tracks -- start fresh tracks
             for idx in cur_idxs:
                 row = df.loc[idx]
                 df.at[idx, 'track_id'] = next_id
@@ -141,7 +141,7 @@ def _link_particles(df: pd.DataFrame, max_disp: float, max_gap: int,
             cur_pos = _coords(cur)
 
             if len(cur_pos) == 0:
-                # No detections this frame — age out dormant tracks
+                # No detections this frame -- age out dormant tracks
                 for tid in list(active.keys()):
                     if frame - active[tid]['last_frame'] > max_gap:
                         finished.append(tid)
@@ -411,7 +411,7 @@ class TrackPropertiesNode(BaseImageProcessNode):
         if df is None:
             return False, "No table connected"
         if 'track_id' not in df.columns:
-            return False, "Table has no track_id column — run Particle Linker first"
+            return False, "Table has no track_id column -- run Particle Linker first"
 
         self.set_progress(20)
         result = _compute_track_props(df)
@@ -495,9 +495,9 @@ class TrajectoryPlotNode(BaseImageProcessNode):
     linked table from Particle Linker. Each track gets a distinct color.
 
     Parameters:
-      Tail Frames — 0 = show full history; N = show last N frames only
-      Color By    — track_id (fixed color) or speed (red=fast, green=slow)
-      Show IDs    — label each track with its ID number
+      Tail Frames -- 0 = show full history; N = show last N frames only
+      Color By    -- track_id (fixed color) or speed (red=fast, green=slow)
+      Show IDs    -- label each track with its ID number
 
     Keywords: trajectory, track, visualize, path, overlay, 軌跡, 視覺化
     """
@@ -535,7 +535,7 @@ class TrajectoryPlotNode(BaseImageProcessNode):
         if df is None:
             return False, "No table connected"
         if 'track_id' not in df.columns:
-            return False, "Table has no track_id column — run Particle Linker first"
+            return False, "Table has no track_id column -- run Particle Linker first"
 
         required = {'frame', 'centroid_y', 'centroid_x'}
         if not required.issubset(df.columns):
@@ -607,7 +607,7 @@ class TrackFilterNode(BaseImageProcessNode):
         if df is None:
             return False, "No table connected"
         if 'track_id' not in df.columns:
-            return False, "Table has no track_id column — run Particle Linker first"
+            return False, "Table has no track_id column -- run Particle Linker first"
 
         self.set_progress(10)
 
@@ -691,7 +691,7 @@ class MSDAnalysisNode(BaseImageProcessNode):
         if df is None:
             return False, "No table connected"
         if 'track_id' not in df.columns:
-            return False, "Table has no track_id column — run Particle Linker first"
+            return False, "Table has no track_id column -- run Particle Linker first"
 
         required = {'frame', 'centroid_y', 'centroid_x'}
         if not required.issubset(df.columns):

@@ -1,5 +1,5 @@
 """
-docking_nodes.py — Protein preparation and molecular docking nodes.
+docking_nodes.py -- Protein preparation and molecular docking nodes.
 
 Nodes:
   - PDBLoaderNode        Load PDB/CIF files
@@ -42,7 +42,7 @@ from .protein_utils import (
 )
 from .docking_backend import BACKENDS, get_backend
 
-# Lazy import — only needed for ligand PDBQT conversion (fallback)
+# Lazy import -- only needed for ligand PDBQT conversion (fallback)
 from .meeko_ported import MoleculePreparation, PDBQTWriterLegacy
 
 try:
@@ -374,7 +374,7 @@ class PDBDownloaderNode(BaseExecutionNode):
         self.mark_clean()
         self.set_progress(100)
         n_lig = len(hetatm_dict)
-        return True, f'{pdb_id}: {n_atoms} atoms, {n_lig} ligand(s) — {title[:60]}'
+        return True, f'{pdb_id}: {n_atoms} atoms, {n_lig} ligand(s) -- {title[:60]}'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -522,7 +522,7 @@ class ProteinEditorNode(BaseExecutionNode):
             removed = False
             for rm in remove_set:
                 if len(rm) == 2:
-                    # chain:resname — remove all of that residue type on that chain
+                    # chain:resname -- remove all of that residue type on that chain
                     if rm[0] == chain and (not rm[1] or rm[1] == resname):
                         removed = True
                         break
@@ -675,8 +675,8 @@ class DockingBoxNode(BaseExecutionNode):
     display.  The receptor is passed through for downstream docking nodes.
 
     Modes:
-      - Manual        — enter center/size directly in spinboxes
-      - Auto from Ligand — compute box from a connected molecule's coordinates
+      - Manual        -- enter center/size directly in spinboxes
+      - Auto from Ligand -- compute box from a connected molecule's coordinates
 
     Keywords: docking box, search box, center, size, click, interactive,
               對接框, 搜索框, 中心, 大小
@@ -1620,7 +1620,7 @@ class BatchDockNode(BaseExecutionNode):
                         self.set_display(list(progress_rows))
                         return
 
-                    # Not all conformers done yet — keep showing Docking
+                    # Not all conformers done yet -- keep showing Docking
                     progress_rows[orig_i]['status'] = 'Docking'
                     _last_update[0] = _time.monotonic()
                     true_overall = sum(_lig_pcts.values()) / n_flat
@@ -1727,7 +1727,7 @@ class BatchDockNode(BaseExecutionNode):
         df['dock_n_poses'] = n_poses_list
         df['dock_status'] = statuses
         # Replace the original mol column with the docked Mol (poses as
-        # conformers).  Failed rows get None — filter via dock_status if needed.
+        # conformers).  Failed rows get None -- filter via dock_status if needed.
         df[mol_col] = docked_mols
 
         self.set_progress(97)
@@ -2159,7 +2159,7 @@ class GNINARescoreNode(BaseExecutionNode):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Node: Structure Writer — export protein / receptor to file
+#  Node: Structure Writer -- export protein / receptor to file
 # ══════════════════════════════════════════════════════════════════════════════
 
 class StructureWriterNode(BaseExecutionNode):
@@ -2232,7 +2232,7 @@ class StructureWriterNode(BaseExecutionNode):
                 msg += f' + {flex_path.name}'
 
         else:
-            # ProteinData — write PDB/CIF
+            # ProteinData -- write PDB/CIF
             with open(p, 'w') as f:
                 f.write(val.payload)
             n_atoms = sum(1 for l in val.payload.splitlines()
@@ -2256,12 +2256,12 @@ class DrugCLIPScreenNode(BaseExecutionNode):
 
     Inputs:
       - receptor  (ProteinData or ReceptorData)
-      - box_config (TableData from DockingBoxNode — defines pocket center)
-      - mol_table  (MolTableData — batch of molecules)
+      - box_config (TableData from DockingBoxNode -- defines pocket center)
+      - mol_table  (MolTableData -- batch of molecules)
 
     Outputs:
       - mol_table  (MolTableData with ``drugclip_score`` column, sorted desc)
-      - table      (TableData — summary scores)
+      - table      (TableData -- summary scores)
 
     Keywords: DrugCLIP, virtual screening, contrastive, embedding, similarity
     """

@@ -1,5 +1,5 @@
 """
-sklearn_nodes — Machine Learning plugin for Synapse
+sklearn_nodes -- Machine Learning plugin for Synapse
 
 Provides preprocessing, classification, regression, evaluation, clustering,
 visualization, grid search, SHAP analysis, and model I/O nodes using

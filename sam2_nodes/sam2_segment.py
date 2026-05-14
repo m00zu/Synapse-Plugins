@@ -1,5 +1,5 @@
 """
-node.py — SAM2SegmentNode: interactive click-to-segment using SAM2 ONNX.
+node.py -- SAM2SegmentNode: interactive click-to-segment using SAM2 ONNX.
 
 Click on objects in an image to generate segmentation masks.
 Supports multiple objects, each with a distinct label.
@@ -30,7 +30,7 @@ _model_manager = SAM2ModelManager()
 
 
 class SAM2SegmentNode(BaseImageProcessNode):
-    """Interactive SAM2 segmentation — click to include/exclude regions.
+    """Interactive SAM2 segmentation -- click to include/exclude regions.
 
     Connect an image, then click on objects to segment them.
     Use "+ Object" to add multiple objects, each with a distinct label.
@@ -95,7 +95,7 @@ class SAM2SegmentNode(BaseImageProcessNode):
         threading.Thread(target=self._prewarm, daemon=True).start()
 
     def on_batch_start(self):
-        """Freeze this node during batch — preserve reference annotations."""
+        """Freeze this node during batch -- preserve reference annotations."""
         self._in_batch = True
 
     def on_batch_end(self):
@@ -142,7 +142,7 @@ class SAM2SegmentNode(BaseImageProcessNode):
         with self._session_lock:
             if self._session is not None and self._current_variant == variant:
                 return self._session
-            logger.info("Loading SAM2 model '%s' …", variant)
+            logger.info("Loading SAM2 model '%s' ...", variant)
             # Release old session to free GPU/CPU memory
             old = self._session
             self._session = None
@@ -154,7 +154,7 @@ class SAM2SegmentNode(BaseImageProcessNode):
             return self._session
 
     def evaluate(self):
-        # During batch, preserve annotations — don't re-evaluate
+        # During batch, preserve annotations -- don't re-evaluate
         if self._in_batch:
             self.mark_clean()
             return True, None

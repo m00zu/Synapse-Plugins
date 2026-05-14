@@ -258,7 +258,7 @@ def _extract_params(fig):
     patch_list = []
     patch_seen: dict = {}
     _anon_counter = 0
-    # Collect _nolegend_ patches separately — they need color-grouping
+    # Collect _nolegend_ patches separately -- they need color-grouping
     _nolegend_by_color: dict = {}
     for i, p in enumerate(ax.patches):
         try:
@@ -296,7 +296,7 @@ def _extract_params(fig):
             'edgewidth': float(p.get_linewidth()),
         })
     # Group _nolegend_ patches (histogram / bar) by facecolor.
-    # Each color-group becomes one editable entry: "Bars 1", "Bars 2", …
+    # Each color-group becomes one editable entry: "Bars 1", "Bars 2", ...
     for gi, (fc_key, group) in enumerate(_nolegend_by_color.items()):
         _i0, p0 = group[0]
         display = f'Bars {gi + 1}'
@@ -324,7 +324,7 @@ def _extract_params(fig):
     # DPI
     params['dpi'] = float(fig.get_dpi())
 
-    # Legend — always provide defaults so the Legend tab is available in the editor
+    # Legend -- always provide defaults so the Legend tab is available in the editor
     _LOC_INT_TO_STR = {0: 'best', 1: 'upper right', 2: 'upper left',
                        3: 'lower left', 4: 'lower right', 5: 'right',
                        6: 'center left', 7: 'center right',
@@ -652,7 +652,7 @@ def _apply_params(fig, params):
                     legend = child
                     break
         if legend:
-            # Remove old legend and rebuild from scratch — deepcopy breaks
+            # Remove old legend and rebuild from scratch -- deepcopy breaks
             # matplotlib's internal legend state, so in-place modifications
             # (set_fontsize, set_frame_on, etc.) don't persist in rendering.
             if p.get('visible') is False:
@@ -683,7 +683,7 @@ def _apply_params(fig, params):
                             new_handles.append(hdl)
                     handles, labels = new_handles, new_labels
                 elif edited_labels:
-                    # No _orig_labels — legacy: match by name only
+                    # No _orig_labels -- legacy: match by name only
                     lbl_to_hdl = dict(zip(labels, handles))
                     new_labels, new_handles = [], []
                     for tgt in edited_labels:
@@ -839,7 +839,7 @@ class FigureEditDialog(QtWidgets.QDialog):
         bbox.accepted.connect(self._collect_and_accept)
         bbox.rejected.connect(self.reject)
 
-        # Apply button — saves params and pings downstream without closing
+        # Apply button -- saves params and pings downstream without closing
         if self._on_apply is not None:
             apply_btn = QtWidgets.QPushButton("Apply")
             apply_btn.setToolTip("Save settings and update downstream nodes without closing")
@@ -998,7 +998,7 @@ class FigureEditDialog(QtWidgets.QDialog):
         inner = QtWidgets.QWidget()
         vbox  = QtWidgets.QVBoxLayout(inner)
 
-        # Font family — populated from matplotlib's font cache
+        # Font family -- populated from matplotlib's font cache
         from matplotlib import font_manager as _fm
         _generic   = ['sans-serif', 'serif', 'monospace']
         _system    = sorted({f.name for f in _fm.fontManager.ttflist})
@@ -1041,7 +1041,7 @@ class FigureEditDialog(QtWidgets.QDialog):
 
         # Subplot padding
         pad_p = self._params.get('padding', {'left': 0.125, 'right': 0.9, 'top': 0.9, 'bottom': 0.11})
-        pad_g = QtWidgets.QGroupBox("Subplot Padding (0–1)")
+        pad_g = QtWidgets.QGroupBox("Subplot Padding (0-1)")
         pad_f = QtWidgets.QFormLayout(pad_g)
         for side in ('left', 'right', 'top', 'bottom'):
             sp = QtWidgets.QDoubleSpinBox()
@@ -1270,8 +1270,8 @@ class FigureEditDialog(QtWidgets.QDialog):
         mew.setValue(float(p.get('markeredgewidth', 1.0)))
         form.addRow("Marker Edge Width", mew)
 
-        # Position controls — shown only for tagged lines (stat brackets / subgroup brackets)
-        _is_tagged = '–' in label or label.startswith('subgrp:')
+        # Position controls -- shown only for tagged lines (stat brackets / subgroup brackets)
+        _is_tagged = '-' in label or label.startswith('subgrp:')
         dx_spin = dy_spin = None
         if _is_tagged:
             form.addRow(QtWidgets.QLabel(""))  # spacer
@@ -1292,7 +1292,7 @@ class FigureEditDialog(QtWidgets.QDialog):
             tg_spin.setRange(-10, 10); tg_spin.setSingleStep(0.05); tg_spin.setDecimals(3)
             tg_spin.setValue(float(p.get('text_gap', 0.0)))
             tg_spin.setToolTip("Extra gap between the bracket line and the stars / ns text")
-            form.addRow("Text–Line Gap", tg_spin)
+            form.addRow("Text-Line Gap", tg_spin)
 
         self._line_widgets[label] = {
             'vis': vis, 'ls': ls, 'lw': lw,
@@ -1800,15 +1800,15 @@ class DoubleVarPlotNode(BaseExecutionNode):
     Generates a 2D seaborn plot from a data table.
 
     Plot types:
-    - *scatter* — X vs Y scatter plot
-    - *box* — box-and-whisker plot
-    - *violin* — violin density plot
-    - *pairplot* — all-pairs scatter matrix
+    - *scatter* -- X vs Y scatter plot
+    - *box* -- box-and-whisker plot
+    - *violin* -- violin density plot
+    - *pairplot* -- all-pairs scatter matrix
 
     Columns:
-    - **x_col** — column for the X axis
-    - **y_col** — column for the Y axis
-    - **hue** — optional column for colour grouping
+    - **x_col** -- column for the X axis
+    - **y_col** -- column for the Y axis
+    - **hue** -- optional column for colour grouping
 
     Keywords: scatter, boxplot, violin, pairplot, seaborn, 繪圖, 圖表, 散點圖, 小提琴圖, 盒鬚圖
     """
@@ -2435,15 +2435,15 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
     PairwiseComparisonNode) for significance-bracket overlays.
 
     Columns:
-    - **target_column** — numeric column for the Y axis
-    - **group_col** — categorical column that defines groups on the X axis
-    - **x_axis_order** — comma-separated group order
-    - **control_group** — reference group for fold-change ratios
+    - **target_column** -- numeric column for the Y axis
+    - **group_col** -- categorical column that defines groups on the X axis
+    - **x_axis_order** -- comma-separated group order
+    - **control_group** -- reference group for fold-change ratios
 
     Options:
-    - *use_stripplot* — switch from beeswarm to jittered strip layout
-    - *show_error_bars* — overlay mean with SE/SD/CI/PI error bars
-    - *enable_subgroups* — split group labels by delimiter for sub-bracket display
+    - *use_stripplot* -- switch from beeswarm to jittered strip layout
+    - *show_error_bars* -- overlay mean with SE/SD/CI/PI error bars
+    - *enable_subgroups* -- split group labels by delimiter for sub-bracket display
 
     Keywords: swarmplot, jitter points, significance brackets, group comparison, stats overlay, 繪圖, 群組比較, 顯著性標記, 分組, 散點
     """
@@ -2723,7 +2723,7 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
                         sns.stripplot(data=df_long, x='Group', y='Value', order=plot_order, color=mpl_color, ax=ax, **swarm_kws)
                     else:
                         sns.swarmplot(data=df_long, x='Group', y='Value', order=plot_order, color=mpl_color, ax=ax, **swarm_kws)
-                    # Single-color: no legend needed — groups are on the x-axis
+                    # Single-color: no legend needed -- groups are on the x-axis
                     _new_colls = [c for c in ax.collections if id(c) not in _colls_before]
                     for _c in _new_colls:
                         _c.set_label('_nolegend_')
@@ -2858,7 +2858,7 @@ class SwarmPlotNode(PlotToolboxMixin, BaseExecutionNode):
             ax.set_ylabel(y_label_text, fontsize=label_fs)
             ax.set_title(title_text, fontweight='bold', fontsize=title_fs)
 
-            # Tighten group spacing — groups sit at x = 0, 1, …, n-1;
+            # Tighten group spacing -- groups sit at x = 0, 1, ..., n-1;
             # this controls the padding on either side.
             try:
                 spacing = float(self.get_property('group_spacing'))
@@ -3299,7 +3299,7 @@ def _draw_stat_brackets(ax, stat_df, group_to_x_idx: dict, y_max_per_group: dict
                        if group_to_x_idx.get(g) in rel_idxs)
         curr_h   = base_h + h_step
 
-        _stat_lbl = f"{g1}–{g2}"
+        _stat_lbl = f"{g1}-{g2}"
         line, = ax.plot([i1, i2], [curr_h, curr_h], lw=line_width, c=line_color)
         line.set_label(_stat_lbl)
         line.set_gid(f'stat_line:{_stat_lbl}')
@@ -3437,13 +3437,13 @@ class ViolinPlotNode(PlotToolboxMixin, BaseExecutionNode):
     **order** to fix the x-axis group order (comma-separated).
 
     Columns:
-    - **x_col** — categorical group column
-    - **y_col** — numeric value column
-    - **order** — comma-separated group order for the X axis
+    - **x_col** -- categorical group column
+    - **y_col** -- numeric value column
+    - **order** -- comma-separated group order for the X axis
 
     Options:
-    - *inner_box* — draw a mini box plot inside each violin
-    - *palette* — colour palette for groups
+    - *inner_box* -- draw a mini box plot inside each violin
+    - *palette* -- colour palette for groups
 
     Keywords: violin plot, distribution plot, density by group, stats brackets, 小提琴圖, 分佈, 核密度, 分組, 繪圖
     """
@@ -3580,13 +3580,13 @@ class BoxPlotNode(PlotToolboxMixin, BaseExecutionNode):
     Creates a box-and-whisker plot with optional significance-bracket overlay.
 
     Columns:
-    - **x_col** — categorical group column
-    - **y_col** — numeric value column
-    - **order** — comma-separated group order for the X axis
+    - **x_col** -- categorical group column
+    - **y_col** -- numeric value column
+    - **order** -- comma-separated group order for the X axis
 
     Options:
-    - *show_points* — overlay individual data points on the boxes
-    - *palette* — colour palette for groups
+    - *show_points* -- overlay individual data points on the boxes
+    - *palette* -- colour palette for groups
 
     Keywords: box plot, whisker, quartile, distribution summary, outlier display, 盒鬚圖, 四分位, 分佈, 異常值, 繪圖
     """
@@ -3724,14 +3724,14 @@ class BarPlotNode(PlotToolboxMixin, BaseExecutionNode):
     Creates a bar plot showing group means with error bars and optional significance-bracket overlay.
 
     Columns:
-    - **x_col** — categorical group column
-    - **y_col** — numeric value column
-    - **order** — comma-separated group order for the X axis
+    - **x_col** -- categorical group column
+    - **y_col** -- numeric value column
+    - **order** -- comma-separated group order for the X axis
 
     Options:
-    - *error_type* — error bar measure: `se`, `sd`, `ci`, or `pi`
-    - *show_bar_values* — annotate each bar with its numeric value
-    - *palette* — colour palette for groups
+    - *error_type* -- error bar measure: `se`, `sd`, `ci`, or `pi`
+    - *show_bar_values* -- annotate each bar with its numeric value
+    - *palette* -- colour palette for groups
 
     Keywords: bar chart, mean error bars, confidence interval, grouped bars, significance overlay, 長條圖, 誤差棒, 信賴區間, 分組, 繪圖
     """
@@ -3980,13 +3980,13 @@ class ScatterPlotNode(BaseExecutionNode):
     Creates a scatter plot (X vs Y) with optional regression line and hue grouping.
 
     Columns:
-    - **x_col** — numeric column for the X axis
-    - **y_col** — numeric column for the Y axis
-    - **hue_col** — optional column for colour-coding by group
+    - **x_col** -- numeric column for the X axis
+    - **y_col** -- numeric column for the Y axis
+    - **hue_col** -- optional column for colour-coding by group
 
     Options:
-    - *regression* — overlay a linear regression line
-    - *palette* — colour palette for hue groups
+    - *regression* -- overlay a linear regression line
+    - *palette* -- colour palette for hue groups
 
     Keywords: scatter, regression, correlation plot, x y chart, hue groups, 散點圖, 迴歸, 相關性, 繪圖, 分組
     """
@@ -4071,14 +4071,14 @@ class HistogramNode(BaseExecutionNode):
     Creates a histogram with optional grouping and KDE overlay.
 
     Columns:
-    - **value_col** — numeric column to bin
-    - **group_col** — optional categorical column for grouped histograms
+    - **value_col** -- numeric column to bin
+    - **group_col** -- optional categorical column for grouped histograms
 
     Options:
-    - *bins* — number of bins (integer or `"auto"`)
-    - *binwidth* — explicit bin width (overrides bins when set)
-    - *kde* — overlay a kernel density estimate curve
-    - *palette* — colour palette for groups
+    - *bins* -- number of bins (integer or `"auto"`)
+    - *binwidth* -- explicit bin width (overrides bins when set)
+    - *kde* -- overlay a kernel density estimate curve
+    - *palette* -- colour palette for groups
 
     Keywords: histogram, distribution, bins, frequency, grouped histogram, 直方圖, 分佈, 頻率, 分組, 繪圖
     """
@@ -4163,17 +4163,17 @@ class HistogramNode(BaseExecutionNode):
 
 class JointPlotNode(BaseExecutionNode):
     """
-    Creates a joint plot — scatter with marginal distributions on each axis.
+    Creates a joint plot -- scatter with marginal distributions on each axis.
 
     Columns:
-    - **x_col** — numeric column for the X axis
-    - **y_col** — numeric column for the Y axis
-    - **hue_col** — optional column for colour-coding by group
+    - **x_col** -- numeric column for the X axis
+    - **y_col** -- numeric column for the Y axis
+    - **hue_col** -- optional column for colour-coding by group
 
     Options:
-    - *kind* — scatter, kde, hex, hist, or reg (scatter + regression)
-    - *marginal* — histogram, kde, or both for the marginal distributions
-    - *palette* — colour palette for hue groups
+    - *kind* -- scatter, kde, hex, hist, or reg (scatter + regression)
+    - *marginal* -- histogram, kde, or both for the marginal distributions
+    - *palette* -- colour palette for hue groups
 
     Keywords: joint plot, scatter, marginal distribution, histogram, kde, regression, 聯合圖, 散點, 邊際分佈, 繪圖
     """
@@ -4292,12 +4292,12 @@ class KdePlotNode(BaseExecutionNode):
     on the same axes.
 
     Columns:
-    - **value_col** — numeric column to estimate density for
-    - **group_col** — optional categorical column for overlaid group curves
+    - **value_col** -- numeric column to estimate density for
+    - **group_col** -- optional categorical column for overlaid group curves
 
     Options:
-    - *fill* — fill the area under the density curve
-    - *palette* — colour palette for groups
+    - *fill* -- fill the area under the density curve
+    - *palette* -- colour palette for groups
 
     Keywords: kde, density curve, smooth distribution, probability density, group comparison, 核密度, 密度曲線, 分佈, 機率, 繪圖
     """
@@ -4360,7 +4360,7 @@ class KdePlotNode(BaseExecutionNode):
 
 
 # ===========================================================================
-# XYLinePlotNode  — classic Prism XY graph with error bars
+# XYLinePlotNode  -- classic Prism XY graph with error bars
 # ===========================================================================
 
 class XYLinePlotNode(BaseExecutionNode):
@@ -4373,15 +4373,15 @@ class XYLinePlotNode(BaseExecutionNode):
     PairwiseComparisonNode for significance-bracket overlays.
 
     Columns:
-    - **x_col** — numeric or categorical column for the X axis
-    - **y_col** — numeric column for the Y axis
-    - **group_col** — optional column to split data into separate lines
+    - **x_col** -- numeric or categorical column for the X axis
+    - **y_col** -- numeric column for the Y axis
+    - **group_col** -- optional column to split data into separate lines
 
     Options:
-    - *error_type* — error bar measure: `SEM`, `SD`, `95% CI`, or `None`
-    - *show_points* — overlay individual data points
-    - *x_order* — comma-separated order for X axis categories
-    - *palette* — colour palette for groups
+    - *error_type* -- error bar measure: `SEM`, `SD`, `95% CI`, or `None`
+    - *show_points* -- overlay individual data points
+    - *x_order* -- comma-separated order for X axis categories
+    - *palette* -- colour palette for groups
 
     Keywords: XY plot, line graph, error bar, mean SEM SD CI, dose-response, time course, grouped line, connected means, 折線圖, 誤差棒, 均值, 標準誤, 劑量反應, 時間序列
     """
@@ -4585,14 +4585,14 @@ class HeatmapNode(BaseExecutionNode):
     any numeric table.
 
     Columns:
-    - **row_label_col** — optional column to use as row labels
-    - **value_cols** — comma-separated numeric columns (blank = all numeric)
+    - **row_label_col** -- optional column to use as row labels
+    - **value_cols** -- comma-separated numeric columns (blank = all numeric)
 
     Options:
-    - *cluster_rows* — apply hierarchical clustering to rows
-    - *cluster_cols* — apply hierarchical clustering to columns
-    - *annotate* — show numeric values inside cells
-    - *cmap* — colour map (e.g. `viridis`, `coolwarm`, `RdYlGn`)
+    - *cluster_rows* -- apply hierarchical clustering to rows
+    - *cluster_cols* -- apply hierarchical clustering to columns
+    - *annotate* -- show numeric values inside cells
+    - *cmap* -- colour map (e.g. `viridis`, `coolwarm`, `RdYlGn`)
 
     Keywords: heatmap, clustermap, clustering, expression matrix, correlation, colour map, annotation, hierarchical, dendrogram, 熱圖, 聚類分析, 相關矩陣, 表達矩陣, 樹狀圖
     """
@@ -4717,15 +4717,15 @@ class VolcanoPlotNode(BaseExecutionNode):
     the significant-hit rows as a table for downstream filtering.
 
     Columns:
-    - **fc_col** — column containing log2 fold-change values
-    - **p_col** — column containing p-values
-    - **label_col** — optional column for feature labels
+    - **fc_col** -- column containing log2 fold-change values
+    - **p_col** -- column containing p-values
+    - **label_col** -- optional column for feature labels
 
     Parameters:
-    - **fc_thresh** — fold-change threshold (`|log2FC|`)
-    - **p_thresh** — p-value significance cutoff
-    - **n_labels** — number of top significant features to label (0 = none)
-    - **point_size** — scatter point size
+    - **fc_thresh** -- fold-change threshold (`|log2FC|`)
+    - **p_thresh** -- p-value significance cutoff
+    - **n_labels** -- number of top significant features to label (0 = none)
+    - **point_size** -- scatter point size
 
     Keywords: volcano plot, fold change, log2FC, p-value, adjusted p-value, differential expression, omics, significance, up-regulated, down-regulated, 火山圖, 差異表達, 統計顯著性, 倍數變化
     """
@@ -4869,15 +4869,15 @@ class RegressionPlotNode(BaseExecutionNode):
     overlay predicted data points as red × markers on the plot.
 
     Columns:
-    - **x_col** — numeric column for the X axis
-    - **y_col** — numeric column for the Y axis
-    - **group_col** — optional column for per-group fits
+    - **x_col** -- numeric column for the X axis
+    - **y_col** -- numeric column for the Y axis
+    - **group_col** -- optional column for per-group fits
 
     Options:
-    - *fit_type* — auto-fit when no curve input: `Linear`, `Polynomial deg 2`, `Polynomial deg 3`, or `None`
-    - *show_ci* — show 95% confidence band around the fit
-    - *show_equation* — annotate with equation and R-squared
-    - *palette* — colour palette for groups
+    - *fit_type* -- auto-fit when no curve input: `Linear`, `Polynomial deg 2`, `Polynomial deg 3`, or `None`
+    - *show_ci* -- show 95% confidence band around the fit
+    - *show_equation* -- annotate with equation and R-squared
+    - *palette* -- colour palette for groups
 
     Keywords: regression plot, scatter fit, confidence interval, linear fit, nonlinear fit, R-squared, fitted line, correlation scatter, 回歸圖, 散點擬合, 置信區間, 相關圖, R平方
     """
@@ -4975,7 +4975,7 @@ class RegressionPlotNode(BaseExecutionNode):
                            label=label, zorder=2)
 
                 if curve_df is not None and gi == 0:
-                    # External curve provided — draw line and CI if available
+                    # External curve provided -- draw line and CI if available
                     cx = curve_df.iloc[:, 0].values
                     cy = curve_df.iloc[:, 1].values
                     ax.plot(cx, cy, color=color, linewidth=2.2, zorder=3)
@@ -5111,15 +5111,15 @@ class SurvivalPlotNode(BaseExecutionNode):
     log-rank p-value annotation from the `log_rank` port.
 
     Inputs:
-    - `km_table` — Kaplan-Meier table with time, survival, and group columns
-    - `log_rank` — StatData with overall log-rank test result
-    - `pairwise_stat` — optional pairwise comparison table
+    - `km_table` -- Kaplan-Meier table with time, survival, and group columns
+    - `log_rank` -- StatData with overall log-rank test result
+    - `pairwise_stat` -- optional pairwise comparison table
 
     Options:
-    - *show_ci* — shade the 95% confidence interval around each curve
-    - *show_censored* — draw tick marks at censoring events
-    - *show_pairwise* — display pairwise log-rank comparisons on the plot
-    - *palette* — colour palette for groups
+    - *show_ci* -- shade the 95% confidence interval around each curve
+    - *show_censored* -- draw tick marks at censoring events
+    - *show_pairwise* -- display pairwise log-rank comparisons on the plot
+    - *palette* -- colour palette for groups
 
     Keywords: kaplan meier, survival curve, KM plot, censored data, time-to-event, step function, log-rank, hazard, 生存曲線, 存活分析, 卡普蘭-邁耶, 截尾, 對數秩檢定
     """
@@ -5287,17 +5287,17 @@ class AnglePlotNode(PlotToolboxMixin, BaseExecutionNode):
     Creates a polar angle distribution plot for angular data.
 
     Display modes:
-    - *Bin Arrows* — each angular bin is drawn as a proportional arrow from the origin (length = normalised bin frequency)
-    - *KDE* — smooth kernel-density fill across the defined angular range
-    - *Both* — overlay KDE on top of bin arrows
+    - *Bin Arrows* -- each angular bin is drawn as a proportional arrow from the origin (length = normalised bin frequency)
+    - *KDE* -- smooth kernel-density fill across the defined angular range
+    - *Both* -- overlay KDE on top of bin arrows
 
     The angular range is fully user-defined via **theta_min** / **theta_max**
     (degrees). Common presets: 0--90 (fibre orientation), 0--180, 0--360
     (full circle).
 
     Columns:
-    - **angle_col** — column containing angle values
-    - **group_col** — optional column for per-group curves in distinct colours
+    - **angle_col** -- column containing angle values
+    - **group_col** -- optional column for per-group curves in distinct colours
 
     Input angles may be in *Degrees* or *Radians* (set via **input_unit**).
 
@@ -5566,13 +5566,13 @@ class RadarChartNode(BaseExecutionNode):
     The input table should have a **group column** (one row per group) and
     multiple **metric columns** (numeric) that become the radar axes.
 
-    - **group_col** — column identifying each group / sample.
-    - **metric_cols** — numeric columns to plot (leave blank = all numeric).
-    - **normalize** — scale each axis to [0, 1] so different units are comparable.
-    - **fill_alpha** — transparency of filled polygon area.
+    - **group_col** -- column identifying each group / sample.
+    - **metric_cols** -- numeric columns to plot (leave blank = all numeric).
+    - **normalize** -- scale each axis to [0, 1] so different units are comparable.
+    - **fill_alpha** -- transparency of filled polygon area.
 
     Outputs:
-    - **plot** — radar chart figure.
+    - **plot** -- radar chart figure.
 
     Keywords: radar, spider, star chart, multi-metric, phenotype, profile, comparison, 雷達圖, 蜘蛛圖, 多指標比較
     """
@@ -5704,11 +5704,11 @@ class BlandAltmanNode(BaseExecutionNode):
     methods are interchangeable.
 
     Inputs:
-    - **table** — DataFrame with two numeric columns to compare.
+    - **table** -- DataFrame with two numeric columns to compare.
 
     Outputs:
-    - **plot** — Bland-Altman figure with bias and LoA lines.
-    - **stats** — bias (mean difference), SD of differences, upper/lower LoA,
+    - **plot** -- Bland-Altman figure with bias and LoA lines.
+    - **stats** -- bias (mean difference), SD of differences, upper/lower LoA,
       95% CI of bias.
 
     Keywords: Bland-Altman, agreement, method comparison, bias, limits of agreement, measurement, reproducibility, 布蘭德-奧特曼, 方法比較, 一致性分析
@@ -5858,7 +5858,7 @@ class SaveFigureNode(BaseExecutionNode):
     Saves a matplotlib figure to disk. Click Browse to choose file location and format.
 
     Inputs:
-    - **figure** — FigureData to save
+    - **figure** -- FigureData to save
 
     Supported formats: PNG, SVG, TIFF, JPEG.
     Users can also type any path with a custom extension directly.
@@ -5959,16 +5959,16 @@ class MultiPanelFigureNode(BaseExecutionNode):
     """
     Composes multiple figures into a single multi-panel publication figure.
 
-    Each input port corresponds to a panel (A, B, C, …). Figures are
+    Each input port corresponds to a panel (A, B, C, ...). Figures are
     rendered to SVG and combined into a single vector SVG document with
     panel labels and configurable grid layout.
 
-    - **n_panels** — number of input ports / panels (2–9).
-    - **layout** — grid arrangement: Auto, 1×2, 2×1, 2×2, etc.
-    - **panel_labels** — labelling style for panels.
-    - **label_fontsize** — font size for A/B/C labels.
-    - **fig_width** / **fig_height** — overall figure size in inches.
-    - **spacing** — gap between panels (fraction of panel size).
+    - **n_panels** -- number of input ports / panels (2-9).
+    - **layout** -- grid arrangement: Auto, 1×2, 2×1, 2×2, etc.
+    - **panel_labels** -- labelling style for panels.
+    - **label_fontsize** -- font size for A/B/C labels.
+    - **fig_width** / **fig_height** -- overall figure size in inches.
+    - **spacing** -- gap between panels (fraction of panel size).
 
     The output is a FigureData with vector SVG. Save as SVG for vector
     output, or PNG/TIFF for raster at any DPI.
@@ -5988,7 +5988,7 @@ class MultiPanelFigureNode(BaseExecutionNode):
         '_grid_row', '_label_row', '_fig_size_row',
     })
 
-    _LABEL_STYLES = ['A, B, C…', 'a, b, c…', '(A), (B)…', '(a), (b)…', 'None']
+    _LABEL_STYLES = ['A, B, C...', 'a, b, c...', '(A), (B)...', '(a), (b)...', 'None']
 
     def __init__(self):
         super().__init__()
@@ -6092,10 +6092,10 @@ class MultiPanelFigureNode(BaseExecutionNode):
             return ''
         up = chr(ord('A') + index)
         lo = chr(ord('a') + index)
-        if style == 'A, B, C…': return up
-        if style == 'a, b, c…': return lo
-        if style == '(A), (B)…': return f'({up})'
-        if style == '(a), (b)…': return f'({lo})'
+        if style == 'A, B, C...': return up
+        if style == 'a, b, c...': return lo
+        if style == '(A), (B)...': return f'({up})'
+        if style == '(a), (b)...': return f'({lo})'
         return up
 
     # ── Evaluate ──────────────────────────────────────────────────────────
@@ -6128,7 +6128,7 @@ class MultiPanelFigureNode(BaseExecutionNode):
         # Read properties
         l_rows = int(self.get_property('layout_rows') or 0)
         l_cols = int(self.get_property('layout_cols') or 0)
-        label_style = str(self.get_property('panel_labels') or 'A, B, C…')
+        label_style = str(self.get_property('panel_labels') or 'A, B, C...')
         label_fs = float(self.get_property('label_fontsize') or 16)
         label_fw = str(self.get_property('label_fontweight') or 'bold')
         label_px = float(self.get_property('label_pad_x') or 4)
@@ -6165,7 +6165,7 @@ class MultiPanelFigureNode(BaseExecutionNode):
                 r'(xlink:)?href="#([^"]+)"',
                 lambda m, _p=prefix: f'href="#{_p}{m.group(2)}"',
                 svg_str)
-            # Remove xlink namespace usage — Qt SVG doesn't like it
+            # Remove xlink namespace usage -- Qt SVG doesn't like it
             svg_str = svg_str.replace('xlink:href=', 'href=')
             svg_str = re.sub(r'\s*xmlns:xlink="[^"]*"', '', svg_str)
 

@@ -1,5 +1,5 @@
 """
-viewer.py — QGraphicsView for SAM2 click-to-segment interaction.
+viewer.py -- QGraphicsView for SAM2 click-to-segment interaction.
 
 Supports multiple objects, each with its own set of points and mask.
 Left-click places a point (foreground or background depending on mode).

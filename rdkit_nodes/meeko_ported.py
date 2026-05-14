@@ -1,7 +1,7 @@
 """
 Ported Meeko PDBQT-writing classes (MoleculePreparation, PDBQTWriterLegacy).
 
-Originally from MolDocker's meeko_functions.py — a self-contained reimplementation
+Originally from MolDocker's meeko_functions.py -- a self-contained reimplementation
 of the Meeko ligand preparation pipeline.  Only the classes needed for
 RDKit Mol → PDBQT string conversion are included here.
 """

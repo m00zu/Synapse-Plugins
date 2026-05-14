@@ -6,14 +6,14 @@ texture analysis, and intensity profiling.
 
 Nodes
 -----
-WhiteTopHatNode     — morphological white top-hat (removes broad background)
-BandpassFilterNode  — FFT bandpass filter (keeps objects between size_min–size_max)
-WatershedNode       — marker-watershed to separate touching objects
-BlobDetectNode      — Laplacian-of-Gaussian blob/spot detection → table + overlay
-FrangiNode          — Frangi multi-scale vesselness (tubular structure enhancement)
-ColocalizationNode  — Pearson PCC + Manders M1/M2/MOC + Li ICQ (masked & unmasked)
-GLCMTextureNode     — GLCM texture features (contrast, homogeneity, energy, …)
-IntensityProfileNode — pixel intensity along a line segment → line plot figure
+WhiteTopHatNode     -- morphological white top-hat (removes broad background)
+BandpassFilterNode  -- FFT bandpass filter (keeps objects between size_min-size_max)
+WatershedNode       -- marker-watershed to separate touching objects
+BlobDetectNode      -- Laplacian-of-Gaussian blob/spot detection → table + overlay
+FrangiNode          -- Frangi multi-scale vesselness (tubular structure enhancement)
+ColocalizationNode  -- Pearson PCC + Manders M1/M2/MOC + Li ICQ (masked & unmasked)
+GLCMTextureNode     -- GLCM texture features (contrast, homogeneity, energy, ...)
+IntensityProfileNode -- pixel intensity along a line segment → line plot figure
 """
 from __future__ import annotations
 
@@ -100,8 +100,8 @@ def _stamp_overlay(original: np.ndarray, draw_fn) -> np.ndarray:
     """Draw annotations on a transparent RGBA overlay, then composite
     only the drawn pixels onto the original float32 image.
 
-    *original* — float32 [0,1] array (H,W) or (H,W,3).
-    *draw_fn*  — callable(draw, w, h) that draws on a PIL ImageDraw
+    *original* -- float32 [0,1] array (H,W) or (H,W,3).
+    *draw_fn*  -- callable(draw, w, h) that draws on a PIL ImageDraw
                  handle (RGBA overlay, size w×h).
     Returns float32 [0,1] array with annotations stamped on.
     """
@@ -127,7 +127,7 @@ def _stamp_overlay(original: np.ndarray, draw_fn) -> np.ndarray:
 
 
 # ===========================================================================
-# 1 — WhiteTopHatNode
+# 1 -- WhiteTopHatNode
 # ===========================================================================
 
 class WhiteTopHatNode(BaseImageProcessNode):
@@ -139,7 +139,7 @@ class WhiteTopHatNode(BaseImageProcessNode):
     for equalising uneven illumination or removing broad bright background before
     thresholding. Works on grayscale and each channel of RGB independently.
 
-    **Disk Radius** — radius of the structuring element in pixels.
+    **Disk Radius** -- radius of the structuring element in pixels.
 
     Keywords: white top-hat, morphology, background removal, uneven illumination, bright spots, 頂帽濾波, 去背景, 形態學, 亮點, 均勻化
     """
@@ -197,7 +197,7 @@ class WhiteTopHatNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# 1b — BlackTopHatNode
+# 1b -- BlackTopHatNode
 # ===========================================================================
 
 class BlackTopHatNode(BaseImageProcessNode):
@@ -209,7 +209,7 @@ class BlackTopHatNode(BaseImageProcessNode):
     White Top-Hat -- use White Top-Hat for bright features on dark backgrounds. Works
     on grayscale and each channel of RGB independently.
 
-    **Disk Radius** — radius of the structuring element in pixels.
+    **Disk Radius** -- radius of the structuring element in pixels.
 
     Keywords: black top-hat, bottom-hat, morphology, dark spots, backgrounds, 頂帽濾波, 去背景, 形態學, 暗點, 均勻化
     """
@@ -267,7 +267,7 @@ class BlackTopHatNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# 2 — BandpassFilterNode
+# 2 -- BandpassFilterNode
 # ===========================================================================
 
 class BandpassFilterNode(BaseImageProcessNode):
@@ -277,8 +277,8 @@ class BandpassFilterNode(BaseImageProcessNode):
     Keeps spatial frequencies corresponding to object sizes between the two cutoffs,
     analogous to ImageJ's Process > FFT > Bandpass Filter.
 
-    **Remove < (px)** — suppress structures smaller than this value (high-pass cutoff).
-    **Remove > (px)** — suppress structures larger than this value (low-pass cutoff). Set to `0` to disable low-pass (keep all large features).
+    **Remove < (px)** -- suppress structures smaller than this value (high-pass cutoff).
+    **Remove > (px)** -- suppress structures larger than this value (low-pass cutoff). Set to `0` to disable low-pass (keep all large features).
 
     Keywords: bandpass, fft filter, frequency filter, remove noise, remove background, 帶通, 頻率濾波, 去噪, 去背景, 影像處理
     """
@@ -334,7 +334,7 @@ class BandpassFilterNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# 3 — WatershedNode
+# 3 -- WatershedNode
 # ===========================================================================
 
 class WatershedNode(BaseImageProcessNode):
@@ -347,19 +347,19 @@ class WatershedNode(BaseImageProcessNode):
     - Run watershed on the inverted distance map to delineate each object.
 
     Table columns:
-    - `label` — integer region ID (matches label_image pixel values)
-    - `area` — number of pixels in the region
-    - `equivalent_diameter` — diameter of a circle with the same area (`sqrt(4*area/pi)`)
-    - `centroid_y`, `centroid_x` — pixel coordinates of the region centre
-    - `perimeter` — outer boundary length in pixels
-    - `circularity` — `4*pi*area/perimeter^2`; 1.0 = perfect circle, lower = more irregular
-    - `eccentricity` — 0 = circle, 1 = line; measures elongation
-    - `orientation` — angle of major axis in degrees; 0 = right, +90 = up, -90 = down
-    - `major_axis` — length of longest axis of the fitted ellipse
-    - `minor_axis` — length of shortest axis of the fitted ellipse
-    - `solidity` — area / convex_hull_area; 1 = perfectly convex, <1 = concave
-    - `extent` — area / bounding_box_area; fraction of bounding box filled
-    - `euler_number` — 1 = no holes; decreases by 1 for each enclosed hole
+    - `label` -- integer region ID (matches label_image pixel values)
+    - `area` -- number of pixels in the region
+    - `equivalent_diameter` -- diameter of a circle with the same area (`sqrt(4*area/pi)`)
+    - `centroid_y`, `centroid_x` -- pixel coordinates of the region centre
+    - `perimeter` -- outer boundary length in pixels
+    - `circularity` -- `4*pi*area/perimeter^2`; 1.0 = perfect circle, lower = more irregular
+    - `eccentricity` -- 0 = circle, 1 = line; measures elongation
+    - `orientation` -- angle of major axis in degrees; 0 = right, +90 = up, -90 = down
+    - `major_axis` -- length of longest axis of the fitted ellipse
+    - `minor_axis` -- length of shortest axis of the fitted ellipse
+    - `solidity` -- area / convex_hull_area; 1 = perfectly convex, <1 = concave
+    - `extent` -- area / bounding_box_area; fraction of bounding box filled
+    - `euler_number` -- 1 = no holes; decreases by 1 for each enclosed hole
 
     Keywords: watershed, split touching objects, segmentation, distance transform, marker-based, 分水嶺, 分割, 距離轉換, 分離, 影像處理
     """
@@ -518,7 +518,7 @@ def _label_palette(n: int) -> list[tuple[int, int, int]]:
 
 
 # ===========================================================================
-# 4 — BlobDetectNode
+# 4 -- BlobDetectNode
 # ===========================================================================
 
 class BlobDetectNode(BaseImageProcessNode):
@@ -529,12 +529,12 @@ class BlobDetectNode(BaseImageProcessNode):
     using `skimage.feature.blob_log`.
 
     Outputs:
-    - *table* — one row per blob with columns `y`, `x`, `radius_px`
-    - *overlay* — original image with detected blobs circled in red
+    - *table* -- one row per blob with columns `y`, `x`, `radius_px`
+    - *overlay* -- original image with detected blobs circled in red
 
-    **Min Radius** — smallest blob radius to detect (pixels).
-    **Max Radius** — largest blob radius to detect (pixels).
-    **Threshold** — detection sensitivity; lower values find more blobs.
+    **Min Radius** -- smallest blob radius to detect (pixels).
+    **Max Radius** -- largest blob radius to detect (pixels).
+    **Threshold** -- detection sensitivity; lower values find more blobs.
 
     Keywords: blob detect, log, spot detection, puncta, nuclei, 斑點偵測, 亮點, 分割, 強度, 影像處理
     """
@@ -598,7 +598,7 @@ class BlobDetectNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# 5 — FrangiNode
+# 5 -- FrangiNode
 # ===========================================================================
 
 class FrangiNode(BaseImageProcessNode):
@@ -609,8 +609,8 @@ class FrangiNode(BaseImageProcessNode):
     range of scales using `skimage.filters.frangi`. Output is a response map normalised
     to 0-255 uint8 for downstream thresholding.
 
-    **Sigma Min** — smallest vessel width scale to detect.
-    **Sigma Max** — largest vessel width scale to detect.
+    **Sigma Min** -- smallest vessel width scale to detect.
+    **Sigma Max** -- largest vessel width scale to detect.
 
     Keywords: frangi, vesselness, tubeness, ridge enhancement, fibers, 紋理, 邊緣增強, 影像處理, 管狀, 輪廓
     """
@@ -656,7 +656,7 @@ class FrangiNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# 6 — ColocalizationNode
+# 6 -- ColocalizationNode
 # ===========================================================================
 
 class ColocalizationNode(BaseExecutionNode):
@@ -667,15 +667,15 @@ class ColocalizationNode(BaseExecutionNode):
 
     Metrics:
 
-    - *Pearson r* — linear correlation (-1 to 1)
-    - *Spearman r* — rank correlation, robust to non-linear relationships
-    - *Kendall tau* — rank correlation, more robust for small samples
-    - *MOC* — Manders' Overlap Coefficient (0 to 1)
-    - *M1* — fraction of ch1 intensity where ch2 is above its Otsu threshold
-    - *M2* — fraction of ch2 intensity where ch1 is above its Otsu threshold
-    - *ICQ* — Li's Intensity Correlation Quotient (-0.5 to 0.5)
+    - *Pearson r* -- linear correlation (-1 to 1)
+    - *Spearman r* -- rank correlation, robust to non-linear relationships
+    - *Kendall tau* -- rank correlation, more robust for small samples
+    - *MOC* -- Manders' Overlap Coefficient (0 to 1)
+    - *M1* -- fraction of ch1 intensity where ch2 is above its Otsu threshold
+    - *M2* -- fraction of ch2 intensity where ch1 is above its Otsu threshold
+    - *ICQ* -- Li's Intensity Correlation Quotient (-0.5 to 0.5)
 
-    Accepts an optional label image — when connected, metrics are computed
+    Accepts an optional label image -- when connected, metrics are computed
     per-label (one row per region) instead of for the whole image.
 
     Plot options: Scatter, Regression (with fit line per label), or Bar Chart
@@ -917,7 +917,7 @@ class ColocalizationNode(BaseExecutionNode):
 
 
 # ===========================================================================
-# 7 — GLCMTextureNode
+# 7 -- GLCMTextureNode
 # ===========================================================================
 
 class GLCMTextureNode(BaseImageProcessNode):
@@ -928,8 +928,8 @@ class GLCMTextureNode(BaseImageProcessNode):
     given pixel distance. Outputs a single-row table with columns: `contrast`,
     `dissimilarity`, `homogeneity`, `energy`, `correlation`, `ASM`.
 
-    **Distance** — pixel offset for co-occurrence pairs.
-    **Grey Levels** — number of quantisation levels (fewer = faster, coarser).
+    **Distance** -- pixel offset for co-occurrence pairs.
+    **Grey Levels** -- number of quantisation levels (fewer = faster, coarser).
 
     Keywords: glcm, haralick, texture analysis, co-occurrence, contrast, 紋理, 對比, 共現矩陣, 影像分析, 強度
     """
@@ -963,7 +963,7 @@ class GLCMTextureNode(BaseImageProcessNode):
         self.set_progress(20)
 
         # Quantise to [0, levels-1]
-        # gray is float [0,1] — quantize directly to [0, levels-1]
+        # gray is float [0,1] -- quantize directly to [0, levels-1]
         arr_q  = (np.clip(gray.astype(np.float64), 0, 1) * (levels - 1)).astype(np.uint8)
         angles = [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4]
         glcm   = graycomatrix(arr_q, distances=[dist], angles=angles,
@@ -991,25 +991,25 @@ class ImageStatsNode(BaseImageProcessNode):
     Connect an image, a mask, or both -- at least one must be connected.
 
     Mask columns (present when mask is connected):
-    - `image_size_px` — total pixels in the image (H x W); denominator for area_fraction
-    - `area_px` — number of foreground pixels
-    - `area_fraction` — area_px / image_size_px (0-1); multiply by 100 for %
-    - `perimeter_px` — boundary length in pixels
-    - `solidity` — area / convex_hull_area (1 = convex)
-    - `eccentricity` — shape elongation (0 = circle, 1 = line)
-    - `major_axis_px` — major axis of the fitted ellipse
-    - `minor_axis_px` — minor axis of the fitted ellipse
-    - `extent` — area / bounding_box_area
-    - `euler_number` — 1 = no holes; decreases by 1 per enclosed hole
-    - `centroid_y`, `centroid_x` — pixel coordinates of the mask centroid
+    - `image_size_px` -- total pixels in the image (H x W); denominator for area_fraction
+    - `area_px` -- number of foreground pixels
+    - `area_fraction` -- area_px / image_size_px (0-1); multiply by 100 for %
+    - `perimeter_px` -- boundary length in pixels
+    - `solidity` -- area / convex_hull_area (1 = convex)
+    - `eccentricity` -- shape elongation (0 = circle, 1 = line)
+    - `major_axis_px` -- major axis of the fitted ellipse
+    - `minor_axis_px` -- minor axis of the fitted ellipse
+    - `extent` -- area / bounding_box_area
+    - `euler_number` -- 1 = no holes; decreases by 1 per enclosed hole
+    - `centroid_y`, `centroid_x` -- pixel coordinates of the mask centroid
 
     Intensity columns (present when image is connected, pixel values 0-255):
-    - `mean`, `std`, `min`, `max`, `median` — overall grayscale or luminance; restricted to masked region when mask is also connected
+    - `mean`, `std`, `min`, `max`, `median` -- overall grayscale or luminance; restricted to masked region when mask is also connected
 
     Per-channel columns (RGB image with *Per Channel* checked):
     - `mean_r/g/b`, `std_r/g/b`, `min_r/g/b`, `max_r/g/b`
 
-    **Column Prefix** — optional string prepended to all column names.
+    **Column Prefix** -- optional string prepended to all column names.
 
     Keywords: mean intensity, area fraction, image size, statistics, coverage, perimeter, solidity, eccentricity, DAB, stain quantification, 平均強度, 面積比, 影像大小, 統計, 周長, 溶實度, 離心率, 影像分析
     """
@@ -1098,7 +1098,7 @@ class ImageStatsNode(BaseImageProcessNode):
 
             if mask is not None and mask.shape == gray.shape:
                 if not mask.any():
-                    return False, "Mask is empty — no pixels to measure"
+                    return False, "Mask is empty -- no pixels to measure"
                 overall_px = gray[mask]
             else:
                 overall_px = gray
@@ -1129,7 +1129,7 @@ class ImageStatsNode(BaseImageProcessNode):
 
 
 # ===========================================================================
-# 8 — IntensityProfileNode  (interactive line-drawing widget)
+# 8 -- IntensityProfileNode  (interactive line-drawing widget)
 # ===========================================================================
 
 class _LineGraphicsView(QGraphicsView):
@@ -1137,11 +1137,11 @@ class _LineGraphicsView(QGraphicsView):
     Embedded view that lets the user draw and adjust a single line segment on the loaded image.
 
     Interactions:
-    - Click + drag on empty area — draw a new line
-    - Click + drag near endpoint — move that endpoint
-    - Click + drag on line body — move the whole line
-    - Delete key — clear the line
-    - Middle-drag / scroll wheel — pan / zoom
+    - Click + drag on empty area -- draw a new line
+    - Click + drag near endpoint -- move that endpoint
+    - Click + drag on line body -- move the whole line
+    - Delete key -- clear the line
+    - Middle-drag / scroll wheel -- pan / zoom
     """
     line_committed = Signal(float, float, float, float)   # x1, y1, x2, y2
 
@@ -1430,7 +1430,7 @@ class _NodeLineViewWidget(NodeBaseWidget):
     def get_line(self) -> tuple | None:
         return self._view.get_line()
 
-    # required by NodeBaseWidget — unused but must return something
+    # required by NodeBaseWidget -- unused but must return something
     def get_value(self):  return self._view.get_line()
     def set_value(self, v): pass
 
@@ -1572,9 +1572,9 @@ class CannyEdgeNode(BaseImageProcessNode):
     algorithm with hysteresis thresholding. Leave both thresholds at `0` to use
     automatic Otsu-based values.
 
-    **Sigma** — scale of detected edges; larger values produce coarser edges.
-    **Low Threshold** — lower bound for hysteresis thresholding.
-    **High Threshold** — upper bound for hysteresis thresholding.
+    **Sigma** -- scale of detected edges; larger values produce coarser edges.
+    **Low Threshold** -- lower bound for hysteresis thresholding.
+    **High Threshold** -- upper bound for hysteresis thresholding.
 
     Keywords: canny, edge detection, binary edges, hysteresis threshold, contour prep, 邊緣, 輪廓, 二值化, 影像處理, 閾值
     """
@@ -1710,7 +1710,7 @@ class LaplacianEdgeNode(BaseImageProcessNode):
     Output is a signed response normalised to 0-255 where `128` represents the
     zero-crossing. Connect to BinaryThresholdNode for a binary mask.
 
-    **Sigma** — spatial scale of the Gaussian smoothing before the Laplacian.
+    **Sigma** -- spatial scale of the Gaussian smoothing before the Laplacian.
 
     Keywords: laplacian, log edge, zero-crossing, second derivative, blob response, 邊緣, 斑點偵測, 影像處理, 輪廓, 二階導數
     """
@@ -1763,16 +1763,16 @@ class FindContoursNode(BaseImageProcessNode):
     Finds all contours in a binary mask or edge image at a given intensity level.
 
     Outputs:
-    - *mask* — binary image with all selected contours drawn as lines
-    - *table* — coordinate table with columns `contour_id`, `x`, `y`
+    - *mask* -- binary image with all selected contours drawn as lines
+    - *table* -- coordinate table with columns `contour_id`, `x`, `y`
 
     Modes:
-    - *All contours* — return every contour found, sorted largest first
-    - *Largest only* — return only the contour with the greatest enclosed area
-    - *Filter by min area* — discard contours with enclosed area below **Min Area**
+    - *All contours* -- return every contour found, sorted largest first
+    - *Largest only* -- return only the contour with the greatest enclosed area
+    - *Filter by min area* -- discard contours with enclosed area below **Min Area**
 
-    **Contour Level** — intensity threshold for contour detection (normalised 0-1).
-    **Line Width** — stroke width in pixels for the output mask drawing.
+    **Contour Level** -- intensity threshold for contour detection (normalised 0-1).
+    **Line Width** -- stroke width in pixels for the output mask drawing.
 
     Keywords: find contours, outline, boundary tracing, polygon points, outer contour, 輪廓, 邊界, 多邊形, 影像處理, 分割
     """
@@ -1787,7 +1787,7 @@ class FindContoursNode(BaseImageProcessNode):
         self.add_input('image/mask',  color=PORT_COLORS['image'])
         self.add_output('mask',       color=PORT_COLORS['mask'],  multi_output=True)
         self.add_output('table',      color=PORT_COLORS['table'], multi_output=True)
-        self._add_float_spinbox('level',      'Contour Level (0–1)', value=0.5, min_val=0.0, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('level',      'Contour Level (0-1)', value=0.5, min_val=0.0, max_val=1.0, step=0.05, decimals=2)
         self._add_int_spinbox('line_width',   'Line Width (px)',      value=2,   min_val=1,   max_val=50)
         self.add_combo_menu('mode', 'Mode',
                             items=['All contours', 'Largest only',
@@ -1806,7 +1806,7 @@ class FindContoursNode(BaseImageProcessNode):
 
         self.set_progress(20)
 
-        # Normalise to 0–1 float for find_contours
+        # Normalise to 0-1 float for find_contours
         gray = arr.astype(np.float32) if arr.ndim == 2 else arr.mean(axis=2).astype(np.float32)
         if gray.max() > 1.0:
             gray = gray / 255.0
@@ -1835,7 +1835,7 @@ class FindContoursNode(BaseImageProcessNode):
             # Sort largest first
             contours.sort(key=_area, reverse=True)
         else:
-            # All contours — sort largest first
+            # All contours -- sort largest first
             contours.sort(key=_area, reverse=True)
 
         self.set_progress(65)
@@ -1899,12 +1899,12 @@ class HoughCirclesNode(BaseImageProcessNode):
     become detections. Connect a CannyEdgeNode output to the input.
 
     Outputs:
-    - *overlay* — RGB image with detected circles drawn in green
-    - *table* — columns `cx`, `cy`, `radius` for every detected circle
+    - *overlay* -- RGB image with detected circles drawn in green
+    - *table* -- columns `cx`, `cy`, `radius` for every detected circle
 
-    **Min Radius** — smallest circle radius to search for (pixels).
-    **Max Radius** — largest circle radius to search for (pixels).
-    **Threshold** — fraction of the peak accumulator value required for a detection.
+    **Min Radius** -- smallest circle radius to search for (pixels).
+    **Max Radius** -- largest circle radius to search for (pixels).
+    **Threshold** -- fraction of the peak accumulator value required for a detection.
 
     Keywords: hough circle, circle detection, round objects, radius fit, edge voting, 霍夫, 圓形偵測, 邊緣, 影像處理, 輪廓
     """
@@ -1922,7 +1922,7 @@ class HoughCirclesNode(BaseImageProcessNode):
         self._add_int_spinbox('min_radius',  'Min Radius (px)',  value=10,  min_val=1,    max_val=1000)
         self._add_int_spinbox('max_radius',  'Max Radius (px)',  value=60,  min_val=1,    max_val=1000)
         self._add_int_spinbox('num_peaks',   'Max Circles',      value=10,  min_val=1,    max_val=1000)
-        self._add_float_spinbox('threshold', 'Threshold (0–1)',  value=0.5, min_val=0.01, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('threshold', 'Threshold (0-1)',  value=0.5, min_val=0.01, max_val=1.0, step=0.05, decimals=2)
         self.create_preview_widgets()
 
     def evaluate(self):
@@ -1975,12 +1975,12 @@ class HoughLinesNode(BaseImageProcessNode):
     the overlay. Connect a CannyEdgeNode output to the input.
 
     Outputs:
-    - *overlay* — RGB image with detected lines drawn in red
-    - *table* — columns `theta` (rad), `rho` (px), and endpoint coordinates `x0`, `y0`, `x1`, `y1`
+    - *overlay* -- RGB image with detected lines drawn in red
+    - *table* -- columns `theta` (rad), `rho` (px), and endpoint coordinates `x0`, `y0`, `x1`, `y1`
 
-    **Threshold** — fraction of the peak accumulator value required for a detection.
-    **Min Distance** — minimum pixel separation between detected lines.
-    **Min Angle** — minimum angular separation in degrees between detected lines.
+    **Threshold** -- fraction of the peak accumulator value required for a detection.
+    **Min Distance** -- minimum pixel separation between detected lines.
+    **Min Angle** -- minimum angular separation in degrees between detected lines.
 
     Keywords: hough line, line detection, straight edges, rho theta, line fit, 霍夫, 直線偵測, 邊緣, 影像處理, 輪廓
     """
@@ -1996,7 +1996,7 @@ class HoughLinesNode(BaseImageProcessNode):
         self.add_output('overlay', color=PORT_COLORS['image'], multi_output=True)
         self.add_output('table',   color=PORT_COLORS['table'], multi_output=True)
         self._add_int_spinbox('num_peaks',    'Max Lines',           value=10,  min_val=1, max_val=500)
-        self._add_float_spinbox('threshold',  'Threshold (0–1)',     value=0.5, min_val=0.01, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('threshold',  'Threshold (0-1)',     value=0.5, min_val=0.01, max_val=1.0, step=0.05, decimals=2)
         self._add_int_spinbox('min_distance', 'Min Distance (px)',   value=9,   min_val=1, max_val=500)
         self._add_int_spinbox('min_angle',    'Min Angle (deg)',     value=10,  min_val=1, max_val=90)
         self.create_preview_widgets()
@@ -2065,13 +2065,13 @@ class HoughEllipseNode(BaseImageProcessNode):
     `skimage.transform.hough_ellipse`.
 
     Outputs:
-    - *overlay* — RGB image with detected ellipses drawn in cyan
-    - *table* — columns `cx`, `cy`, `a` (semi-major), `b` (semi-minor), `orientation` (rad)
+    - *overlay* -- RGB image with detected ellipses drawn in cyan
+    - *table* -- columns `cx`, `cy`, `a` (semi-major), `b` (semi-minor), `orientation` (rad)
 
-    **Min Semi-Major** — smallest semi-major axis to search for (pixels).
-    **Max Semi-Major** — largest semi-major axis to search for (pixels).
-    **Accuracy** — step size in pixels for the accumulator; larger = faster but coarser.
-    **Threshold** — fraction of the peak accumulator value required for a detection.
+    **Min Semi-Major** -- smallest semi-major axis to search for (pixels).
+    **Max Semi-Major** -- largest semi-major axis to search for (pixels).
+    **Accuracy** -- step size in pixels for the accumulator; larger = faster but coarser.
+    **Threshold** -- fraction of the peak accumulator value required for a detection.
 
     Keywords: hough ellipse, ellipse detection, oval fit, orientation, semi-major, 霍夫, 橢圓偵測, 輪廓, 影像處理, 方向
     """
@@ -2090,7 +2090,7 @@ class HoughEllipseNode(BaseImageProcessNode):
         self._add_int_spinbox('max_size',    'Max Semi-Major (px)', value=60,  min_val=1, max_val=500)
         self._add_int_spinbox('accuracy',    'Accuracy (px step)',  value=10,  min_val=1, max_val=50)
         self._add_int_spinbox('num_peaks',   'Max Ellipses',        value=5,   min_val=1, max_val=50)
-        self._add_float_spinbox('threshold', 'Threshold (0–1)',     value=0.5, min_val=0.01, max_val=1.0, step=0.05, decimals=2)
+        self._add_float_spinbox('threshold', 'Threshold (0-1)',     value=0.5, min_val=0.01, max_val=1.0, step=0.05, decimals=2)
         self.create_preview_widgets()
 
     def evaluate(self):
@@ -2160,9 +2160,9 @@ class ImageHistogramNode(BaseExecutionNode):
     histogram to the masked region only. Also outputs a table with columns `Pixel_Value`
     and one column per channel.
 
-    **Bins** — number of histogram bins (default 256; auto-capped at max pixel value + 1).
-    **Log Y-axis** — show frequency on a log scale.
-    **Fill Alpha** — line / fill opacity (0.0-1.0).
+    **Bins** -- number of histogram bins (default 256; auto-capped at max pixel value + 1).
+    **Log Y-axis** -- show frequency on a log scale.
+    **Fill Alpha** -- line / fill opacity (0.0-1.0).
 
     Keywords: histogram, intensity distribution, pixel histogram, channel plot, 直方圖, 強度分佈, 像素, 通道, 影像
     """
@@ -2310,7 +2310,7 @@ class SaveImageNode(BaseExecutionNode):
     Saves an image to disk. Click Browse to choose file location and format.
 
     Inputs:
-    - **image** — ImageData to save
+    - **image** -- ImageData to save
 
     Supported formats: PNG, TIFF (16-bit preserved), JPEG.
     Users can also type any path with a custom extension directly.

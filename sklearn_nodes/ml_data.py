@@ -24,7 +24,7 @@ class SklearnModelData(NodeData):
         feature_names: list of EXPANDED feature names (one per matrix column).
                        For scalar source columns this matches the column name;
                        for 1-D ndarray columns (e.g. fingerprints) entries are
-                       like ``'fp_0', 'fp_1', …, 'fp_2047'``.
+                       like ``'fp_0', 'fp_1', ..., 'fp_2047'``.
         feature_columns: list of ORIGINAL source column names from the input
                          DataFrame.  Used by PredictNode to rebuild X with the
                          same scalar-or-ndarray expansion.  Empty means
@@ -65,7 +65,7 @@ def build_xy(
         except ``target`` are used (legacy behavior).
       - Otherwise each listed column is used as-is.  If a column's first row
         holds a 1-D ``np.ndarray``, the column expands into multiple feature
-        columns (``'col[0]', 'col[1]', …``); a scalar column contributes one.
+        columns (``'col[0]', 'col[1]', ...``); a scalar column contributes one.
       - ``y`` is ``None`` when ``require_target`` is False or when the target
         column is missing.
 

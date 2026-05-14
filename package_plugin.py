@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-package_plugin.py — Package any Synapse plugin as a .synpkg archive.
+package_plugin.py -- Package any Synapse plugin as a .synpkg archive.
 
 A .synpkg file is a zstandard-compressed tar archive containing a plugin
 directory ready to be dropped into Synapse's plugins/ folder.
@@ -50,7 +50,7 @@ def should_exclude(
     parts = rel_path.split('/')
     basename = parts[-1]
 
-    # Hidden files/dirs (but keep .dylibs — needed for macOS RDKit shared libs)
+    # Hidden files/dirs (but keep .dylibs -- needed for macOS RDKit shared libs)
     if EXCLUDE_HIDDEN and basename.startswith('.') and basename not in ('.', '.dylibs'):
         return True
 
@@ -95,7 +95,7 @@ def pack(
     plugin_name = os.path.basename(plugin_dir)
     parent_dir = os.path.dirname(plugin_dir)
 
-    # Build output filename (no date — same name on every build so releases replace cleanly)
+    # Build output filename (no date -- same name on every build so releases replace cleanly)
     if slim:
         tag = f'{plugin_name}-slim'
     elif no_vendor:

@@ -1,5 +1,5 @@
 """
-widget.py — SAM2SegmentWidget (NodeBaseWidget) for interactive click-to-segment.
+widget.py -- SAM2SegmentWidget (NodeBaseWidget) for interactive click-to-segment.
 
 Supports multiple objects via a list below the canvas (like DrawShapeNode).
 Toolbar: Include/Exclude toggle, Add Object, Undo, Clear, Fit.
@@ -377,7 +377,7 @@ class SAM2SegmentWidget(NodeBaseWidget):
 
     def _deferred_setup(self, rgb_arr: np.ndarray,
                         session: SAM2ImageSession, saved: str):
-        """Runs on main thread — safe for all Qt widget operations."""
+        """Runs on main thread -- safe for all Qt widget operations."""
         self._session = session
         self._apply_image(rgb_arr)
         if saved:

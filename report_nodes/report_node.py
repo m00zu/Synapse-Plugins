@@ -1,5 +1,5 @@
 """
-report_node.py — ReportNode plugin for Synapse.
+report_node.py -- ReportNode plugin for Synapse.
 
 Generates an HTML scientific report from upstream tables and figures,
 using an LLM to write narrative text (Methods, Results, Conclusion).
@@ -180,24 +180,24 @@ def _build_llm_prompt(pipeline_desc: list[dict], table_summaries: list[str],
     parts.append(
         "\n## Instructions\n"
         "Write a report with these sections:\n"
-        "1. **Methods** — Describe the analysis pipeline in scientific language. "
+        "1. **Methods** -- Describe the analysis pipeline in scientific language. "
         "Be specific about parameters used. ONLY mention parameters that are "
-        "relevant to the chosen method — for example, if the method is "
+        "relevant to the chosen method -- for example, if the method is "
         "Student's T-test, do NOT mention permutation count; if p-value "
         "adjustment is 'none', do NOT say any correction was applied.\n"
-        "2. **Results** — Summarize key findings from the data tables. "
+        "2. **Results** -- Summarize key findings from the data tables. "
         "Reference specific numbers.\n"
-        "3. **Conclusion** — Brief interpretation of the results.\n"
+        "3. **Conclusion** -- Brief interpretation of the results.\n"
     )
     headings = "'## Methods', '## Results', '## Conclusion'"
     if n_tables:
         section_num += 1
         parts.append(
-            f"{section_num}. **Table Legends** — Write a publication-style caption "
+            f"{section_num}. **Table Legends** -- Write a publication-style caption "
             f"for each of the {n_tables} table(s). Format as 'Table 1. Description...' "
             "for each. Describe the PURPOSE of the table and what each column "
             "represents. Do NOT describe summary statistics (count, mean, std, "
-            "quartiles) — those are provided to you only as context for writing "
+            "quartiles) -- those are provided to you only as context for writing "
             "the Results section. The table legend should describe the table's "
             "content and role in the analysis.\n"
         )
@@ -205,11 +205,11 @@ def _build_llm_prompt(pipeline_desc: list[dict], table_summaries: list[str],
     if n_figures:
         section_num += 1
         parts.append(
-            f"{section_num}. **Figure Legends** — Write a publication-style caption "
+            f"{section_num}. **Figure Legends** -- Write a publication-style caption "
             f"for each of the {n_figures} figure(s). Format as 'Figure 1. Description...' "
             "for each. Describe what the figure shows, axes, any statistical "
             "annotations visible (e.g. significance brackets, R² values), and key "
-            "trends. Be definitive — do NOT use hedging words like 'likely', "
+            "trends. Be definitive -- do NOT use hedging words like 'likely', "
             "'possibly', 'may'. If significance brackets are present, state it as "
             "fact. Describe exactly what is shown based on the pipeline and data.\n"
         )
@@ -242,7 +242,7 @@ def _render_html(title: str, report_text: str, tables: list[pd.DataFrame],
         extra = f"<p class='table-note'>{len(df)} rows</p>"
         table_html_parts.append(
             f"<div class='table-container'>"
-            f"<h3>Table {i} — {label}</h3>{tbl}{extra}</div>"
+            f"<h3>Table {i} -- {label}</h3>{tbl}{extra}</div>"
         )
 
     # Build figure HTML
@@ -253,7 +253,7 @@ def _render_html(title: str, report_text: str, tables: list[pd.DataFrame],
         figure_html_parts.append(
             f"<div class='figure-container'>"
             f"<img src='data:image/png;base64,{b64}' alt='{label}'/>"
-            f"<p class='figure-caption'>Figure {i} — {label}</p></div>"
+            f"<p class='figure-caption'>Figure {i} -- {label}</p></div>"
         )
 
     # Convert report markdown-ish text to simple HTML paragraphs
@@ -442,9 +442,9 @@ class ReportNode(BaseExecutionNode):
     - Click **Generate with API** to use the configured LLM, or click **Copy for Web AI** to paste into ChatGPT / Claude.ai / Gemini.
     - If using web AI, paste the response into the **AI Response** box, then click **Build Report** to render the HTML.
 
-    **title** — report title (default: "Analysis Report").
+    **title** -- report title (default: "Analysis Report").
 
-    **context** — optional text giving the LLM additional context (e.g. "This is a cell viability assay comparing drug A vs control").
+    **context** -- optional text giving the LLM additional context (e.g. "This is a cell viability assay comparing drug A vs control").
 
     Keywords: report, export, html, pdf, summary, write, document, 報告, 匯出, 摘要, 文件
     """
@@ -627,7 +627,7 @@ class ReportNode(BaseExecutionNode):
         self.set_progress(100)
         self.mark_clean()
         return True, (
-            f"Ready — {n_tables} table(s), {n_figs} figure(s) collected.\n"
+            f"Ready -- {n_tables} table(s), {n_figs} figure(s) collected.\n"
             "Use 'Generate with API' or 'Copy for Web AI' to create the report."
         )
 
@@ -749,7 +749,7 @@ class ReportNode(BaseExecutionNode):
         for w_name, w_obj in self.widgets().items():
             if w_name == '_gen_btn' and hasattr(w_obj, 'btn'):
                 w_obj.btn.setEnabled(False)
-                w_obj.btn.setText("Generating…")
+                w_obj.btn.setText("Generating...")
 
         self._gen_thread.start()
 

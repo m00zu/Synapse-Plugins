@@ -1,7 +1,7 @@
 """
 script_node.py
 ==============
-PythonScriptNode — run custom Python code with dynamic input/output ports.
+PythonScriptNode -- run custom Python code with dynamic input/output ports.
 """
 import pandas as pd
 import numpy as np
@@ -38,15 +38,15 @@ class _CodeEditorDialog(QtWidgets.QDialog):
 
         # Help label
         help_text = (
-            '<b>Available variables:</b> <code>in_1</code>, <code>in_2</code>, … '
+            '<b>Available variables:</b> <code>in_1</code>, <code>in_2</code>, ... '
             '(DataFrame / ndarray / value from each input port)<br>'
-            '<b>Set outputs:</b> <code>out_1 = …</code>, <code>out_2 = …</code><br>'
+            '<b>Set outputs:</b> <code>out_1 = ...</code>, <code>out_2 = ...</code><br>'
             '<b>Pre-imported:</b> <code>pd</code>, <code>np</code>, '
             '<code>scipy</code>, <code>skimage</code>, '
             '<code>cv2</code>, <code>PIL</code>, <code>plt</code><br>'
             '<b>Type wrappers:</b> <code>TableData</code>, <code>ImageData</code>, '
             '<code>MaskData</code>, <code>FigureData</code>, <code>StatData</code> '
-            '— use to control output type (e.g. <code>out_1 = MaskData(payload=arr)</code>)'
+            '-- use to control output type (e.g. <code>out_1 = MaskData(payload=arr)</code>)'
         )
         help_label = QtWidgets.QLabel(help_text)
         help_label.setWordWrap(True)
@@ -86,7 +86,7 @@ class _CodePreviewWidget(NodeBaseWidget):
             'QPlainTextEdit { background: #2a2a2a; color: #aaa; border: 1px solid #444; }'
         )
 
-        self._edit_btn = QtWidgets.QPushButton('Edit Script…')
+        self._edit_btn = QtWidgets.QPushButton('Edit Script...')
         self._edit_btn.setFixedHeight(24)
         self._edit_btn.clicked.connect(self._open_editor)
 
@@ -116,7 +116,7 @@ def _show_script_output(node_name: str, text: str):
     """Thread-safe: emit signal to show popup on main thread."""
     global _output_helper
     if _output_helper is None:
-        # Lazy init — only created when first print() output occurs
+        # Lazy init -- only created when first print() output occurs
         class _Helper(QtCore.QObject):
             _show = QtCore.Signal(str, str)
             def __init__(self):
@@ -126,21 +126,21 @@ def _show_script_output(node_name: str, text: str):
                 QtWidgets.QMessageBox.information(
                     QtWidgets.QApplication.activeWindow(), title, text)
         _output_helper = _Helper()
-    _output_helper._show.emit(f'Python Script — {node_name}', text)
+    _output_helper._show.emit(f'Python Script -- {node_name}', text)
 
 
 class PythonScriptNode(BaseExecutionNode):
     """
     Run custom Python code with dynamic input and output ports.
 
-    Use this node for operations that no dedicated node covers — custom
+    Use this node for operations that no dedicated node covers -- custom
     formulas, advanced scipy/skimage functions, string parsing, conditional
     logic, or any one-off data transformation.
 
     ### Setup
 
     - **Inputs / Outputs** spinboxes control how many ports the node has.
-    - Click **Edit Script…** to open the full code editor (dark theme).
+    - Click **Edit Script...** to open the full code editor (dark theme).
     - The inline preview on the node card shows the current script.
     - `print()` output is shown as a popup after execution.
 
@@ -148,8 +148,8 @@ class PythonScriptNode(BaseExecutionNode):
 
     | Variable | Description |
     |----------|-------------|
-    | `in_1`, `in_2`, … | Data from each input port (DataFrame, ndarray, or raw value). Unconnected = `None`. |
-    | `out_1`, `out_2`, … | Assign results here to send downstream. |
+    | `in_1`, `in_2`, ... | Data from each input port (DataFrame, ndarray, or raw value). Unconnected = `None`. |
+    | `out_1`, `out_2`, ... | Assign results here to send downstream. |
     | `pd` | pandas |
     | `np` | numpy |
     | `scipy` | scipy (use `scipy.stats`, `scipy.ndimage`, etc.) |
@@ -169,13 +169,13 @@ class PythonScriptNode(BaseExecutionNode):
 
     ### Examples
 
-    **Fold-change** (qPCR) — `df['fold_change'] = 2 ** (-df['ddCt'])`:
+    **Fold-change** (qPCR) -- `df['fold_change'] = 2 ** (-df['ddCt'])`:
 
     - `df = in_1.copy()`
     - `df['fold_change'] = 2 ** (-df['ddCt'])`
     - `out_1 = df`
 
-    **Column ratio** — `df['ratio'] = df['intensity'] / df['area']`:
+    **Column ratio** -- `df['ratio'] = df['intensity'] / df['area']`:
 
     - `df = in_1.copy()`
     - `df['ratio'] = df['intensity'] / df['area']`
@@ -307,8 +307,8 @@ class PythonScriptNode(BaseExecutionNode):
             self.mark_error()
             return False, 'No script code provided.'
 
-        # Pre-import common libraries (lazy — skip if not installed)
-        # Data type wrappers — users can explicitly set output types:
+        # Pre-import common libraries (lazy -- skip if not installed)
+        # Data type wrappers -- users can explicitly set output types:
         #   out_1 = TableData(payload=df)
         #   out_1 = ImageData(payload=arr)
         #   out_1 = MaskData(payload=bool_arr)
@@ -346,7 +346,7 @@ class PythonScriptNode(BaseExecutionNode):
         for port_name in self.outputs():
             env[port_name] = None
 
-        # Execute — capture print() output via StringIO
+        # Execute -- capture print() output via StringIO
         import io, contextlib
         _stdout_capture = io.StringIO()
         try:

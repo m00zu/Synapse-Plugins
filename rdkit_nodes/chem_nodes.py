@@ -1,5 +1,5 @@
 """
-chem_nodes.py — RDKit node definitions for the Synapse rdkit_nodes plugin.
+chem_nodes.py -- RDKit node definitions for the Synapse rdkit_nodes plugin.
 
 All node classes live here; __init__.py handles vendor injection and
 re-exports everything via ``from .chem_nodes import *``.
@@ -1110,7 +1110,7 @@ class IUPACToSMILESNode(BaseExecutionNode):
     standard MolTable (with ``name`` / ``smiles`` / ``ROMol`` columns and any
     user-selected property columns carried through).
 
-    PubChem allows up to 5 requests/second per IP — keep ``Workers`` ≤ 5.
+    PubChem allows up to 5 requests/second per IP -- keep ``Workers`` ≤ 5.
 
     **Network access required.**  Names that fail to resolve (HTTP 404,
     timeout, or invalid SMILES) are dropped.
@@ -1266,7 +1266,7 @@ class SMILESToIUPACNode(BaseExecutionNode):
     Accepts either a ``mol_table`` (uses its ``smiles`` column) or any
     ``table`` with a SMILES column you select.
 
-    PubChem allows up to 5 requests/second per IP — keep ``Workers`` ≤ 5.
+    PubChem allows up to 5 requests/second per IP -- keep ``Workers`` ≤ 5.
 
     **Network access required.**  Rows whose lookup fails get ``None`` in
     the IUPAC column; the original row is preserved.
@@ -1770,7 +1770,7 @@ class SubstructureFilterBatchNode(BaseExecutionNode):
     """Filter a MolTable by SMARTS substructure pattern.
 
     Splits into two outputs: matches (has substructure) and rejects.
-    Operates directly on the Mol objects — no SMILES re-parsing.
+    Operates directly on the Mol objects -- no SMILES re-parsing.
     """
 
     __identifier__ = 'nodes.Cheminformatics.Batch'
@@ -1867,7 +1867,7 @@ class SanitizeStereoNode(BaseExecutionNode):
                 new_mols.append(None)
                 continue
             try:
-                m2 = Chem.Mol(m)  # clone — don't mutate upstream
+                m2 = Chem.Mol(m)  # clone -- don't mutate upstream
                 if also_sanitize:
                     Chem.SanitizeMol(m2)
                 Chem.AssignStereochemistry(m2, cleanIt=True, force=True)
@@ -1991,7 +1991,7 @@ class LargestFragmentNode(BaseExecutionNode):
         if n_failed:
             msg += f" ({n_failed} failed, dropped)"
         if not n_modified and not n_failed:
-            msg = f"{n} molecule(s) — all single-fragment, no changes"
+            msg = f"{n} molecule(s) -- all single-fragment, no changes"
         return True, msg
 
 
@@ -2048,7 +2048,7 @@ def _apply_hydrogen_op(node, op_name: str, op_fn) -> tuple[bool, str]:
 class AddHydrogensNode(BaseExecutionNode):
     """Add explicit hydrogen atoms to every molecule in a MolTable.
 
-    Uses ``Chem.AddHs(mol, addCoords=True)`` — when 3D conformers are present,
+    Uses ``Chem.AddHs(mol, addCoords=True)`` -- when 3D conformers are present,
     the new H atoms get reasonable positions; for 2D / no-conformer mols the
     flag is a no-op and Hs are added without coordinates.
 
@@ -2212,7 +2212,7 @@ class BatchMolDrawerNode(BaseExecutionNode):
                 paths.append(None)
                 continue
 
-            # Filename — sanitise + dedupe with _1, _2, ...
+            # Filename -- sanitise + dedupe with _1, _2, ...
             raw = (getattr(row, filename_col, '') if filename_col else '')
             base = _sanitize_filename(str(raw) if raw is not None else '',
                                       fallback=f'mol_{i}')
@@ -2278,12 +2278,12 @@ class MurckoScaffoldNode(BaseExecutionNode):
     """Add a Murcko scaffold SMILES column to every row of a MolTable.
 
     The Murcko scaffold of a molecule is its ring system together with the
-    linker atoms that connect those rings — substituents are stripped.
+    linker atoms that connect those rings -- substituents are stripped.
     Useful for scaffold-based diversity analysis or for non-leaky
     scaffold-aware train/test splits.
 
     The optional **Generic** flag additionally strips atom identities
-    (every atom becomes carbon, every bond becomes single) — coarser
+    (every atom becomes carbon, every bond becomes single) -- coarser
     grouping that captures topology only.
 
     Output: input MolTable + a new ``scaffold`` column (SMILES string).
@@ -2349,7 +2349,7 @@ class MurckoScaffoldNode(BaseExecutionNode):
         n_unique = len({s for s in scaffolds if s})
         msg = f"{n_unique} unique scaffold(s) over {n} molecule(s)"
         if n_failed:
-            msg += f" — {n_failed} failed"
+            msg += f" -- {n_failed} failed"
         return True, msg
 
 
@@ -2567,7 +2567,7 @@ class PropertyFilterNode(BaseExecutionNode):
             col_name = desc_name
 
         if col_name and col_name in df.columns:
-            # Reuse precomputed values — vectorised, very fast
+            # Reuse precomputed values -- vectorised, very fast
             vals = pd.to_numeric(df[col_name], errors='coerce').values
             pass_mask = np.array([cmp_fn(v, threshold) if np.isfinite(v) else False
                                   for v in vals], dtype=bool)
@@ -2737,10 +2737,10 @@ class DrugLikenessFilterNode(BaseExecutionNode):
 class MolTableMergeNode(BaseExecutionNode):
     """Combine two MolTables with AND or OR logic.
 
-    **AND** — keep only molecules whose *name* appears in **both** inputs
+    **AND** -- keep only molecules whose *name* appears in **both** inputs
     (intersection).  Rows are taken from input A.
 
-    **OR** — keep molecules from **either** input (union, duplicates by
+    **OR** -- keep molecules from **either** input (union, duplicates by
     name removed, first occurrence kept).
 
     Pair with PropertyFilterNode / DrugLikenessFilterNode to build
@@ -2785,7 +2785,7 @@ class MolTableMergeNode(BaseExecutionNode):
                 payload=sole, mol_col=mol_col)
             self.mark_clean()
             self.set_progress(100)
-            return True, f"Only one input — {len(sole)} rows passed through."
+            return True, f"Only one input -- {len(sole)} rows passed through."
 
         self.set_progress(10)
         df_a, df_b = a.payload, b.payload
@@ -2896,7 +2896,7 @@ class BatchCatalogFilterNode(BaseExecutionNode):
                 payload=df.iloc[:0].copy(), mol_col=mol_col)
             self.mark_clean()
             self.set_progress(100)
-            return True, "No catalogs enabled — all rows pass."
+            return True, "No catalogs enabled -- all rows pass."
 
         self.set_progress(10)
 
@@ -3106,7 +3106,7 @@ class FingerprintColumnNode(BaseExecutionNode):
         mols = df[mol_col].tolist()
 
         def _on_progress(done: int, total: int) -> None:
-            # Map FP loop into the 5–90% band.
+            # Map FP loop into the 5-90% band.
             self.set_progress(5 + int(85 * done / max(total, 1)))
 
         failed_idx: list[int] = []
@@ -3122,7 +3122,7 @@ class FingerprintColumnNode(BaseExecutionNode):
             df = df.loc[keep].reset_index(drop=True)
             fp_matrix = fp_matrix[keep]
 
-        # Store one 1-D ndarray per row — object dtype column.
+        # Store one 1-D ndarray per row -- object dtype column.
         df[col_name] = list(fp_matrix)
 
         self.output_values['mol_table'] = MolTableData(payload=df, mol_col=mol_col)
@@ -3132,7 +3132,7 @@ class FingerprintColumnNode(BaseExecutionNode):
         msg = (f"Added '{col_name}' column "
                f"({len(df)} × {fp_matrix.shape[1]} {d_str}, {method})")
         if failed_idx:
-            msg += f" — {len(failed_idx)} mol(s) failed and were dropped"
+            msg += f" -- {len(failed_idx)} mol(s) failed and were dropped"
         return True, msg
 
 
@@ -3177,7 +3177,7 @@ class PairwiseSimilarityNode(BaseExecutionNode):
         if n == 0:
             return False, "Empty table."
         if n > 10000:
-            return False, f"Table has {n:,} rows — limit is 10 000 for pairwise similarity."
+            return False, f"Table has {n:,} rows -- limit is 10 000 for pairwise similarity."
 
         fp_settings = self.get_property('fp_settings') or _default_fp_settings('Morgan')
         method = fp_settings.get('method', 'Morgan')
@@ -3270,7 +3270,7 @@ class SimilaritySearchNode(BaseExecutionNode):
         fp_matrix = _compute_fp_matrix(all_mols, settings=fp_settings)
         self.set_progress(50)
 
-        # Pairwise of query (row 0) vs all — only need first row
+        # Pairwise of query (row 0) vs all -- only need first row
         sim_full = _pairwise_similarity(fp_matrix, metric)
         sims = sim_full[0, 1:]  # exclude self-similarity
         self.set_progress(80)
@@ -3291,7 +3291,7 @@ class SimilaritySearchNode(BaseExecutionNode):
 # ── Butina clustering node ───────────────────────────────────────────────────
 
 class ButinaClusterNode(BaseExecutionNode):
-    """Cluster molecules using Taylor–Butina algorithm.
+    """Cluster molecules using Taylor-Butina algorithm.
 
     Computes fingerprints, pairwise similarity (Rust), then clusters.
     Adds ``cluster_id`` and ``is_centroid`` columns to the output.
@@ -3351,11 +3351,11 @@ class ButinaClusterNode(BaseExecutionNode):
         # Enforce size limits
         if use_fps:
             if n > self._LOW_MEM_LIMIT:
-                return False, (f"Table has {n:,} rows — limit is "
+                return False, (f"Table has {n:,} rows -- limit is "
                                f"{self._LOW_MEM_LIMIT:,} for Low Memory mode.")
         else:
             if n > self._MATRIX_LIMIT:
-                return False, (f"Table has {n:,} rows — limit is "
+                return False, (f"Table has {n:,} rows -- limit is "
                                f"{self._MATRIX_LIMIT:,} for Matrix mode. "
                                f"Try 'Low Memory' or 'Auto'.")
 
@@ -3372,7 +3372,7 @@ class ButinaClusterNode(BaseExecutionNode):
             use_fps = False
 
         if use_fps:
-            # Cluster directly from fingerprints — no NxN matrix
+            # Cluster directly from fingerprints -- no NxN matrix
             labels = sdfrust.butina_cluster_fps(fp_matrix, threshold, metric=metric_low)
             path_label = "low-mem"
         else:

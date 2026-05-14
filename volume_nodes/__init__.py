@@ -1,5 +1,5 @@
 """
-volume_nodes — 3D volume processing plugin for Synapse
+volume_nodes -- 3D volume processing plugin for Synapse
 ======================================================
 Provides nodes for loading, processing, segmenting, and visualizing
 3D volumetric data (Z-stack TIFFs).

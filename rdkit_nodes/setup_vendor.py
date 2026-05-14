@@ -1,5 +1,5 @@
 """
-setup_vendor.py — Populate plugins/rdkit_nodes/vendor/ from an RDKit wheel
+setup_vendor.py -- Populate plugins/rdkit_nodes/vendor/ from an RDKit wheel
 ===========================================================================
 
 Usage (provide the wheel you already downloaded):
@@ -91,7 +91,7 @@ def main():
         sys.exit(1)
 
     # Fix dylib paths: .so files reference @loader_path/.dylibs/ but the wheel
-    # extracts shared libs to rdkit.libs/ — symlink so both paths resolve.
+    # extracts shared libs to rdkit.libs/ -- symlink so both paths resolve.
     rdkit_libs = vendor_dir / 'rdkit.libs'
     dylibs_link = rdkit_pkg / '.dylibs'
     if rdkit_libs.is_dir() and not dylibs_link.exists():

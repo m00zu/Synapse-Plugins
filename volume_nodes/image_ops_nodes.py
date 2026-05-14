@@ -1,5 +1,5 @@
 """
-image_ops_nodes.py — 3D volume image operations (color, filter, projection).
+image_ops_nodes.py -- 3D volume image operations (color, filter, projection).
 """
 from __future__ import annotations
 
@@ -492,11 +492,11 @@ class MeanProjectionNode(BaseImageProcessNode):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MaskVolume3DNode  — apply mask to volume (zero outside)
+#  MaskVolume3DNode  -- apply mask to volume (zero outside)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MaskVolume3DNode(BaseImageProcessNode):
-    """Apply a 3D mask to a volume — zero out voxels outside the mask.
+    """Apply a 3D mask to a volume -- zero out voxels outside the mask.
 
     Keywords: mask, apply, crop, extract, 3D, 遮罩, 套用, 體積
     """
