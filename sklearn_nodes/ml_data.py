@@ -9,6 +9,13 @@ from data_models import NodeData, TableData
 import pandas as pd
 
 from nodes.base import PORT_COLORS
+try:
+    # Available in Synapse with the port-type registry.  Older
+    # Synapse versions get a no-op fallback so this plugin still loads.
+    from nodes.base import register_port_type
+except ImportError:
+    def register_port_type(name, cls):  # noqa: ARG001
+        pass
 
 # Port color for sklearn model connections (gold)
 SKLEARN_PORT_COLOR = (241, 196, 15)
@@ -40,6 +47,10 @@ class SklearnModelData(NodeData):
     target_name: str = ""
     score: Optional[float] = None
     task: str = "classification"
+
+
+# Register port-type -> data class for connection-time type checking.
+register_port_type('sklearn_model', SklearnModelData)
 
 
 # ── Helper: build (X, y, names) from a DataFrame ─────────────────────────────

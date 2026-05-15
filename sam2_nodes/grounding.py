@@ -273,7 +273,7 @@ class GroundingDINONode(BaseImageProcessNode):
     Keywords: GroundingDINO, text, detect, grounding, open vocabulary, 文字, 偵測, 開放詞彙
     """
 
-    __identifier__ = 'plugins.Plugins.Segmentation'
+    __identifier__ = 'plugins.Segmentation'
     NODE_NAME      = 'Grounding DINO'
     PORT_SPEC      = {'inputs': ['image'],
                       'outputs': ['mask', 'label_image', 'overlay']}
@@ -414,7 +414,7 @@ class SAM2TextSegmentNode(BaseImageProcessNode):
     Keywords: SAM2, text, segment, grounding, GroundingDINO, open vocabulary, 文字, 分割, 語意
     """
 
-    __identifier__ = 'plugins.Plugins.Segmentation'
+    __identifier__ = 'plugins.Segmentation'
     NODE_NAME      = 'SAM2 Text Segment'
     PORT_SPEC      = {'inputs': ['image'],
                       'outputs': ['mask', 'label_image', 'overlay']}

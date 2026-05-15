@@ -43,7 +43,7 @@ class SAM2SegmentNode(BaseImageProcessNode):
     Keywords: SAM, SAM2, segment anything, click, interactive, segmentation, 分割, 點擊
     """
 
-    __identifier__ = 'plugins.Plugins.Segmentation'
+    __identifier__ = 'plugins.Segmentation'
     NODE_NAME      = 'SAM2 Segment'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['mask', 'label_image', 'overlay']}
 

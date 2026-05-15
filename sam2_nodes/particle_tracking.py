@@ -246,7 +246,7 @@ class ParticleLinkerNode(BaseImageProcessNode):
 
     Keywords: track, link, particle, trajectory, 粒子, 追蹤, 連結
     """
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'Particle Linker'
     PORT_SPEC      = {'inputs': ['table'], 'outputs': ['table']}
 
@@ -395,7 +395,7 @@ class TrackPropertiesNode(BaseImageProcessNode):
 
     Keywords: track, MSD, diffusion, velocity, trajectory, 軌跡, 擴散
     """
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'Track Properties'
     PORT_SPEC      = {'inputs': ['table'], 'outputs': ['table']}
 
@@ -501,7 +501,7 @@ class TrajectoryPlotNode(BaseImageProcessNode):
 
     Keywords: trajectory, track, visualize, path, overlay, 軌跡, 視覺化
     """
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'Trajectory Plot'
     PORT_SPEC      = {'inputs': ['image', 'table'], 'outputs': ['image']}
 
@@ -571,7 +571,7 @@ class TrackFilterNode(BaseImageProcessNode):
 
     Keywords: filter, track, trajectory, 篩選, 軌跡, 粒子
     """
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'Track Filter'
     PORT_SPEC      = {'inputs': ['table'], 'outputs': ['table']}
 
@@ -669,7 +669,7 @@ class MSDAnalysisNode(BaseImageProcessNode):
 
     Keywords: MSD, diffusion, trajectory, Brownian, 均方位移, 擴散
     """
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'MSD Analysis'
     PORT_SPEC      = {'inputs': ['table'], 'outputs': ['table', 'plot']}
 

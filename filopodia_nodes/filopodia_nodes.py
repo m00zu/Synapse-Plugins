@@ -241,7 +241,7 @@ class CellEdgeMaskNode(BaseImageProcessNode):
 
     Keywords: cell edge, cell mask, filopodia prep, segmentation, threshold cell body, 細胞邊緣, 遮罩, 分割, 絲足, 閾值
     """
-    __identifier__ = 'plugins.Plugins.filopodia'
+    __identifier__ = 'plugins.Filopodia'
     NODE_NAME      = 'Cell Edge Mask'
     PORT_SPEC      = {'inputs': ['image'], 'outputs': ['mask']}
 
@@ -336,7 +336,7 @@ class FilopodiaDetectNode(BaseImageProcessNode):
 
     Keywords: filopodia detect, protrusion mask, clahe, sharpen, median filter, 絲足, 細胞邊緣, 偵測, 遮罩, 分析
     """
-    __identifier__ = 'plugins.Plugins.filopodia'
+    __identifier__ = 'plugins.Filopodia'
     NODE_NAME      = 'Filopodia Detect'
     PORT_SPEC      = {'inputs': ['image', 'mask'], 'outputs': ['mask']}
 
@@ -444,7 +444,7 @@ class FilopodiaAnalyzeNode(BaseImageProcessNode):
 
     Keywords: filopodia analysis, skeleton length, branch measurement, protrusion quantification, edge length, micrometers, 絲足, 分析, 骨架, 細胞邊緣, 量測
     """
-    __identifier__ = 'plugins.Plugins.filopodia'
+    __identifier__ = 'plugins.Filopodia'
     NODE_NAME      = 'Filopodia Analyze'
     PORT_SPEC      = {'inputs': ['mask', 'mask'], 'outputs': ['table', 'image']}
     OUTPUT_COLUMNS = {

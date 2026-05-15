@@ -36,7 +36,7 @@ class VideoToFramesNode(BaseExecutionNode):
     Keywords: video, frames, extract, split, export, mp4, avi, 影片, 幀, 拆分, 轉換
     """
 
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'Video to Frames'
     PORT_SPEC      = {'inputs': [], 'outputs': ['path']}
 

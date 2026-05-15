@@ -7,12 +7,28 @@ Provides nodes for loading, processing, segmenting, and visualizing
 from __future__ import annotations
 
 from nodes.base import PORT_COLORS
+try:
+    # Available in Synapse with the port-type registry.  Older
+    # Synapse versions get a no-op fallback so this plugin still loads.
+    from nodes.base import register_port_type
+except ImportError:
+    def register_port_type(name, cls):  # noqa: ARG001
+        pass
+from .data_model import (
+    VolumeData, VolumeMaskData, VolumeLabelData, VolumeColorData,
+)
 
 # Register custom port colours for volume data types
 PORT_COLORS['volume']       = (220, 120,  50)  # Orange-amber
 PORT_COLORS['volume_mask']  = (180,  90,  30)  # Darker amber
 PORT_COLORS['volume_label'] = (240, 180,  60)  # Gold
 PORT_COLORS['volume_color'] = (200,  80, 150)  # Pink-magenta
+
+# Register port-type -> data class for connection-time type checking.
+register_port_type('volume',       VolumeData)
+register_port_type('volume_mask',  VolumeMaskData)
+register_port_type('volume_label', VolumeLabelData)
+register_port_type('volume_color', VolumeColorData)
 
 # ── Export node classes (plugin loader discovers them here) ──────────────────
 from .io_nodes import *        # noqa: F401,F403

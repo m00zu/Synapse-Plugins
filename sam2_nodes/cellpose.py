@@ -639,7 +639,7 @@ class CellposeSegmentNode(BaseImageProcessNode):
               microscopy, fluorescence, batch
     """
 
-    __identifier__ = 'plugins.Plugins.Segmentation'
+    __identifier__ = 'plugins.Segmentation'
     NODE_NAME = 'Cellpose Segment'
     PORT_SPEC = {'inputs': ['image'], 'outputs': ['mask', 'label_image', 'overlay']}
 
@@ -1175,7 +1175,7 @@ class CellposeBatchNode(BaseImageProcessNode):
               microscopy, fluorescence, batch, folder
     """
 
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME = 'Cellpose Batch'
     PORT_SPEC = {'inputs': [], 'outputs': ['table']}
 

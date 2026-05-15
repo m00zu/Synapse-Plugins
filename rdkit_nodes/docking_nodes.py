@@ -29,6 +29,13 @@ from rdkit import Chem
 
 from nodes.base import (BaseExecutionNode, PORT_COLORS,
                          NodeFileSelector, NodeFileSaver, NodeVec3Widget)
+try:
+    # Available in Synapse with the port-type registry.  Older
+    # Synapse versions get a no-op fallback so this plugin still loads.
+    from nodes.base import register_port_type
+except ImportError:
+    def register_port_type(name, cls):  # noqa: ARG001
+        pass
 from data_models import NodeData, TableData
 from NodeGraphQt.widgets.node_widgets import NodeBaseWidget
 
@@ -55,6 +62,14 @@ PORT_COLORS.setdefault('protein',        (34, 139, 34))    # Forest green
 PORT_COLORS.setdefault('receptor',       (0, 128, 128))    # Teal
 PORT_COLORS.setdefault('docking_result', (255, 140, 0))    # Dark orange
 PORT_COLORS.setdefault('box_config',     (210, 180, 140))  # Tan
+
+# ── Port-type -> data class (for connection-time type checking) ─────────────
+register_port_type('protein',        ProteinData)
+register_port_type('receptor',       ReceptorData)
+register_port_type('docking_result', DockingResultData)
+# 'box_config' is a plain TableData; leaving unregistered means it matches
+# itself by name (and falls through to 'table' nowhere -- intentional, since
+# only DockingBoxNode produces it and only docking nodes consume it).
 
 # Re-use existing chem_nodes types when they're imported
 try:

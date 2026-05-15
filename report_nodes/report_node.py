@@ -449,7 +449,7 @@ class ReportNode(BaseExecutionNode):
     Keywords: report, export, html, pdf, summary, write, document, 報告, 匯出, 摘要, 文件
     """
 
-    __identifier__ = 'plugins.Plugins.Report'
+    __identifier__ = 'plugins.Report'
     NODE_NAME = 'Report'
     PORT_SPEC = {'inputs': ['table', 'figure'], 'outputs': ['html']}
 
@@ -1085,7 +1085,7 @@ class SaveHtmlNode(BaseExecutionNode):
 
     Keywords: save, html, report, export, write, 儲存, 匯出, 報告, HTML
     """
-    __identifier__ = 'plugins.Plugins.Report'
+    __identifier__ = 'plugins.Report'
     NODE_NAME = 'Save HTML'
     PORT_SPEC = {'inputs': ['html'], 'outputs': []}
 
@@ -1187,7 +1187,7 @@ class DisplayHtmlNode(BaseExecutionNode):
 
     Keywords: display, html, report, preview, viewer, 顯示, 預覽, 報告, HTML
     """
-    __identifier__ = 'plugins.Plugins.Report'
+    __identifier__ = 'plugins.Report'
     NODE_NAME = 'Display HTML'
     PORT_SPEC = {'inputs': ['html'], 'outputs': []}
 

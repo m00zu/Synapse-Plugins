@@ -30,6 +30,15 @@ from .meeko_ported import MoleculePreparation, PDBQTWriterLegacy
 
 from nodes.base import (BaseExecutionNode, PORT_COLORS,
                          NodeFileSelector, NodeFileSaver, NodeDirSelector)
+try:
+    # Available in Synapse with the port-type registry (Rust-style
+    # connection type-checking).  Older Synapse versions don't have
+    # this symbol -- the no-op fallback keeps this plugin loadable
+    # on those, just without subtype polymorphism.
+    from nodes.base import register_port_type
+except ImportError:
+    def register_port_type(name, cls):  # noqa: ARG001
+        pass
 from data_models import NodeData, ImageData, TableData
 
 
@@ -65,6 +74,12 @@ class MolTableData(TableData):
         dfs = [i.payload for i in items]
         return cls(payload=pd.concat(dfs, ignore_index=True),
                    mol_col=items[0].mol_col)
+
+
+# Register port-type -> data class so a mol_table output can connect
+# to a table input automatically (issubclass(MolTableData, TableData)).
+register_port_type('molecule',  MoleculeData)
+register_port_type('mol_table', MolTableData)
 
 # ── Placeholder / error SVG constants ─────────────────────────────────────────
 _PLACEHOLDER_SVG: bytes = b"""

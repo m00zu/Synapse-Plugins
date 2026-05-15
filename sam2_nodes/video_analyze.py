@@ -1800,7 +1800,7 @@ class SAM2VideoAnalyzeNode(BaseImageProcessNode):
               影片, 分析, 追蹤, 量測, 時間序列
     """
 
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'SAM2 Video Analyze'
     PORT_SPEC      = {'inputs': [], 'outputs': ['table', 'image', 'image']}
 

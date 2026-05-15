@@ -373,7 +373,7 @@ class SAM2TrackNode(BaseImageProcessNode):
     Keywords: SAM2, track, timelapse, video, object tracking, 追蹤, 影片, 時間序列
     """
 
-    __identifier__ = 'plugins.Plugins.VideoAnalysis'
+    __identifier__ = 'plugins.VideoAnalysis'
     NODE_NAME      = 'SAM2 Track'
     PORT_SPEC      = {'inputs': ['image', 'label_image'],
                       'outputs': ['mask', 'label_image', 'overlay']}

@@ -758,8 +758,11 @@ class ImageMathNode(BaseImageProcessNode):
 
     def __init__(self):
         super(ImageMathNode, self).__init__()
+        # Both inputs accept image OR mask -- typed as 'image' so MaskData
+        # connects via Liskov upcast (MaskData <: ImageData).  The actual
+        # operations downstream handle both ndarray shapes correctly.
         self.add_input('A (image/mask)', color=PORT_COLORS['image'])
-        self.add_input('B (mask)', color=PORT_COLORS['mask'])
+        self.add_input('B (image/mask)', color=PORT_COLORS['image'])
         self.add_output('image', color=PORT_COLORS['image'])
         self.add_output('mask',  color=PORT_COLORS['mask'])
 
@@ -817,7 +820,7 @@ class ImageMathNode(BaseImageProcessNode):
         # ── input B (only for two-input operations) ───────────────────────
         b_arr = None
         if op in self._TWO_INPUT_OPS:
-            b_arr, err = self._get_arr(self.inputs().get('B (mask)'))
+            b_arr, err = self._get_arr(self.inputs().get('B (image/mask)'))
             if err:
                 return False, f"Operation '{op}' needs B -- {err}"
             if a_arr.shape[:2] != b_arr.shape[:2]:
