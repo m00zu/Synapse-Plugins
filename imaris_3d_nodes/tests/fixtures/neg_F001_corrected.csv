@@ -1,0 +1,5 @@
+cell,bbox_min_x_px,bbox_max_x_px,bbox_min_y_px,bbox_max_y_px,centroid_x_px,centroid_y_px,pct_above_12_at_3um,pct_above_12_at_6um,pct_above_24_at_3um
+1,10,30,10,30,20,20,0.42,0.50,0.20
+2,50,70,50,70,60,60,0.18,0.22,0.05
+3,100,120,100,120,110,110,0.55,0.60,0.30
+BG,0,0,0,0,0,0,0.05,0.08,0.02
