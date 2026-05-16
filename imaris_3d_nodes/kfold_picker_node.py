@@ -12,6 +12,7 @@ from data_models import TableData
 
 from . import screen_core
 from .data import PORT_TYPE_NAME, IMARIS_DATASET_COLOR
+from .kfold_picker_widget import KFoldPickerWidget
 
 PCT_RE = re.compile(r'^pct_above_(\d+)_at_(\d+)um$')
 
@@ -55,6 +56,10 @@ class KFoldComboPickerNode(BaseExecutionNode):
                               value=-1, min_val=-1, max_val=255, step=1, tab='Override')
         self._add_int_spinbox('override_step_um', 'Override step_um',
                               value=-1, min_val=-1, max_val=100, step=1, tab='Override')
+
+        # Inline heatmap widget
+        self._picker_widget = KFoldPickerWidget(self.view, name='kfold_picker')
+        self.add_custom_widget(self._picker_widget, tab='Heatmap')
 
     def _get_input(self, name: str):
         """Helper: fetch upstream output_values for a connected input port."""
@@ -105,6 +110,13 @@ class KFoldComboPickerNode(BaseExecutionNode):
             top = ranking.iloc[0]
             chosen = pd.DataFrame([{'threshold': int(top['threshold']),
                                     'step_um': int(top['step_um'])}])
+
+        # Push ranking + chosen combo to the inline widget
+        chosen_tuple = (int(chosen.iloc[0]['threshold']), int(chosen.iloc[0]['step_um']))
+        try:
+            self._picker_widget.set_ranking(ranking, chosen_tuple)
+        except Exception:
+            pass
 
         self.output_values['ranking_table'] = TableData(payload=ranking)
         self.output_values['chosen_combo'] = TableData(payload=chosen)
