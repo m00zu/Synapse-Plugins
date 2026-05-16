@@ -216,9 +216,10 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # macos-14 runner is arm64 with libomp from Homebrew.
+          # macos-14 runner is arm64; libomp is not preinstalled on recent images.
+          brew list libomp >/dev/null 2>&1 || brew install libomp
           src=$(brew --prefix libomp)/lib/libomp.dylib
-          test -f "$src" || { echo "libomp not found at $src"; exit 1; }
+          test -f "$src" || { echo "libomp not found at $src after brew install"; exit 1; }
           cp "$src" sklearn_nodes/vendor/libomp.dylib
 
       - name: Install shap into vendor
