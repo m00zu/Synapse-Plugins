@@ -24,9 +24,12 @@ class KFoldComboPickerNode(BaseExecutionNode):
     __identifier__ = 'plugins.Imaris3D.screen'
     NODE_NAME = 'K-Fold Combo Picker'
 
+    # Use TYPE names in PORT_SPEC (matches PORT_COLORS keys) so the
+    # Node Explorer tree icon renders the correct colors. Both outputs are
+    # TableData, hence two 'table' entries.
     PORT_SPEC = {
         'inputs':  ['imaris_dataset'],
-        'outputs': ['ranking_table', 'chosen_combo'],
+        'outputs': ['table', 'table'],
     }
 
     _UI_PROPS = frozenset({

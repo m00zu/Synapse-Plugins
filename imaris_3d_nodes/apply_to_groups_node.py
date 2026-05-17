@@ -22,11 +22,14 @@ class ApplyToGroupsNode(BaseExecutionNode):
     __identifier__ = 'plugins.Imaris3D.apply'
     NODE_NAME = 'Apply to Groups'
 
-    PORT_SPEC = {'inputs': ['chosen_combo'], 'outputs': ['imaris_dataset']}
+    # Use TYPE names in PORT_SPEC (matches PORT_COLORS keys) so the
+    # Node Explorer tree icon shows the correct colors.
+    PORT_SPEC = {'inputs': ['table'], 'outputs': ['imaris_dataset']}
 
     _UI_PROPS = frozenset({
         'parent_folder', 'output_dir', 'force_rerun',
         *_SEG_PARAM_PROPS.keys(),
+        'local_thresh_offset_u16',
     })
 
     def __init__(self):
@@ -68,9 +71,34 @@ class ApplyToGroupsNode(BaseExecutionNode):
             tab='Seg',
         )
 
-        # ── Seg: nucleus channel ─────────────────────────────────────────
+        # ── Seg: void + local-threshold offset (one row) ─────────────────
+        self._add_row(
+            'seg_void_row', 'Void / threshold offset',
+            fields=[
+                {'name': 'local_thresh_offset_u16', 'label': 'local thresh +u16',
+                 'type': 'int', 'value': 3, 'min_val': 0, 'max_val': 5000, 'step': 1},
+                {'name': 'green_void_fraction', 'label': 'green void fraction',
+                 'type': 'float', 'value': 0.5, 'min_val': 0.0, 'max_val': 1.0,
+                 'step': 0.05, 'decimals': 2},
+            ],
+            tab='Seg',
+        )
+
+        # ── Seg: nucleus channel + size limits + local thresh ────────────
         self._add_int_spinbox('nucleus_channel_idx', 'Nucleus channel idx',
                               value=2, min_val=0, max_val=8, step=1, tab='Seg')
+        self._add_row(
+            'nucleus_row', 'Nucleus (2D px)',
+            fields=[
+                {'name': 'nucleus_min_px', 'label': 'min px', 'type': 'int',
+                 'value': 80, 'min_val': 0, 'max_val': 100000, 'step': 10},
+                {'name': 'nucleus_max_px', 'label': 'max px', 'type': 'int',
+                 'value': 2000, 'min_val': 0, 'max_val': 100000, 'step': 100},
+                {'name': 'nucleus_local_thresh_offset_u16', 'label': 'local thresh +u16',
+                 'type': 'int', 'value': 30, 'min_val': 0, 'max_val': 5000, 'step': 1},
+            ],
+            tab='Seg',
+        )
 
         # ── Artifact / void detection (one row) ──────────────────────────
         self._add_row(

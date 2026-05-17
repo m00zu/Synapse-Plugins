@@ -18,19 +18,30 @@ PORT_COLORS.setdefault(PORT_TYPE_NAME, IMARIS_DATASET_COLOR)
 
 
 # Mapping: node-property name -> _segment_3d_rs_v2 module constant.
+# Direct mappings (no value conversion). Special-cased conversions handled in
+# _collect_seg_params below: LOCAL_THRESH_OFFSET_U16 -> LOCAL_THRESH_OFFSET (/ 65535).
 _SEG_PARAM_PROPS = {
-    'sigma_um':                   'SIGMA_UM',
-    'min_size_voxels':            'MIN_SIZE_VOXELS',
-    'max_size_voxels':            'MAX_SIZE_VOXELS',
-    'min_distance_um':            'MIN_DISTANCE_UM',
-    'top_percentile':             'TOP_PERCENTILE',
-    'local_bg_radius_px':         'LOCAL_BG_RADIUS_PX',
-    'artifact_blur_px':           'ARTIFACT_BLUR_PX',
-    'artifact_abs_uint16':        'ARTIFACT_ABS_UINT16',
-    'bright_image_median_uint16': 'BRIGHT_IMAGE_MEDIAN_UINT16',
-    'well_min_uint16':            'WELL_MIN_UINT16',
-    'nucleus_channel_idx':        'NUCLEUS_CH_IDX',
+    'sigma_um':                       'SIGMA_UM',
+    'min_size_voxels':                'MIN_SIZE_VOXELS',
+    'max_size_voxels':                'MAX_SIZE_VOXELS',
+    'min_distance_um':                'MIN_DISTANCE_UM',
+    'top_percentile':                 'TOP_PERCENTILE',
+    'local_bg_radius_px':             'LOCAL_BG_RADIUS_PX',
+    'green_void_fraction':            'GREEN_VOID_FRACTION',
+    'artifact_blur_px':               'ARTIFACT_BLUR_PX',
+    'artifact_abs_uint16':            'ARTIFACT_ABS_UINT16',
+    'bright_image_median_uint16':     'BRIGHT_IMAGE_MEDIAN_UINT16',
+    'well_min_uint16':                'WELL_MIN_UINT16',
+    'nucleus_channel_idx':            'NUCLEUS_CH_IDX',
+    'nucleus_min_px':                 'NUCLEUS_MIN_PX',
+    'nucleus_max_px':                 'NUCLEUS_MAX_PX',
+    'nucleus_local_thresh_offset_u16': 'NUCLEUS_LOCAL_THRESH_OFFSET_U16',
 }
+
+# Property names that hold float values (everything else is cast to int).
+_FLOAT_PROPS = frozenset({
+    'sigma_um', 'min_distance_um', 'top_percentile', 'green_void_fraction',
+})
 
 
 def _collect_seg_params(get_prop) -> dict:
@@ -38,11 +49,10 @@ def _collect_seg_params(get_prop) -> dict:
     out = {}
     for prop, const in _SEG_PARAM_PROPS.items():
         v = get_prop(prop)
-        # Cast properly based on type
-        if prop in ('sigma_um', 'min_distance_um', 'top_percentile'):
-            out[const] = float(v)
-        else:
-            out[const] = int(v)
+        out[const] = float(v) if prop in _FLOAT_PROPS else int(v)
+    # Special case: LOCAL_THRESH_OFFSET_U16 (int u16) -> LOCAL_THRESH_OFFSET (float fraction)
+    # Mirrors `Imaris_process/app/components/param_panel.py::build_full_params`.
+    out['LOCAL_THRESH_OFFSET'] = int(get_prop('local_thresh_offset_u16')) / 65535.0
     return out
 
 
@@ -70,6 +80,7 @@ class ControlScreeningNode(BaseExecutionNode):
         'neg_folder', 'pos_folder', 'neg_label', 'pos_label',
         'output_dir', 'force_rerun',
         *_SEG_PARAM_PROPS.keys(),
+        'local_thresh_offset_u16',
         'threshold_min', 'threshold_max', 'threshold_step',
         'expand_min_um', 'expand_max_um', 'expand_step_um',
     })
@@ -117,9 +128,34 @@ class ControlScreeningNode(BaseExecutionNode):
             tab='Seg',
         )
 
-        # ── Seg: nucleus channel (single field) ──────────────────────────
+        # ── Seg: void + local-threshold offset (one row) ─────────────────
+        self._add_row(
+            'seg_void_row', 'Void / threshold offset',
+            fields=[
+                {'name': 'local_thresh_offset_u16', 'label': 'local thresh +u16',
+                 'type': 'int', 'value': 3, 'min_val': 0, 'max_val': 5000, 'step': 1},
+                {'name': 'green_void_fraction', 'label': 'green void fraction',
+                 'type': 'float', 'value': 0.5, 'min_val': 0.0, 'max_val': 1.0,
+                 'step': 0.05, 'decimals': 2},
+            ],
+            tab='Seg',
+        )
+
+        # ── Seg: nucleus channel + size limits + local thresh ────────────
         self._add_int_spinbox('nucleus_channel_idx', 'Nucleus channel idx',
                               value=2, min_val=0, max_val=8, step=1, tab='Seg')
+        self._add_row(
+            'nucleus_row', 'Nucleus (2D px)',
+            fields=[
+                {'name': 'nucleus_min_px', 'label': 'min px', 'type': 'int',
+                 'value': 80, 'min_val': 0, 'max_val': 100000, 'step': 10},
+                {'name': 'nucleus_max_px', 'label': 'max px', 'type': 'int',
+                 'value': 2000, 'min_val': 0, 'max_val': 100000, 'step': 100},
+                {'name': 'nucleus_local_thresh_offset_u16', 'label': 'local thresh +u16',
+                 'type': 'int', 'value': 30, 'min_val': 0, 'max_val': 5000, 'step': 1},
+            ],
+            tab='Seg',
+        )
 
         # ── Artifact / void detection (one row) ──────────────────────────
         self._add_row(

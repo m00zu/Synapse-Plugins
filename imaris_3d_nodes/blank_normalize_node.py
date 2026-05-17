@@ -14,9 +14,11 @@ class BlankNormalizeNode(BaseExecutionNode):
     __identifier__ = 'plugins.Imaris3D.apply'
     NODE_NAME = 'Blank + Normalize'
 
+    # Use TYPE names in PORT_SPEC (matches PORT_COLORS keys) so the
+    # Node Explorer tree icon renders the correct colors.
     PORT_SPEC = {
-        'inputs':  ['imaris_dataset', 'chosen_combo'],
-        'outputs': ['wide_table'],
+        'inputs':  ['imaris_dataset', 'table'],
+        'outputs': ['table'],
     }
 
     _UI_PROPS = frozenset({'reference_group', 'normalize'})
