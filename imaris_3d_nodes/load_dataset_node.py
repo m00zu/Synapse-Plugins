@@ -7,6 +7,7 @@ from nodes.base import BaseExecutionNode, PORT_COLORS
 
 from . import io as imaris_io
 from .data import ImarisDatasetData, PORT_TYPE_NAME, IMARIS_DATASET_COLOR
+from ._widgets import add_dir_picker
 
 
 # Ensure the port colour is registered even if data.py hasn't been imported yet.
@@ -32,13 +33,14 @@ class LoadImarisDatasetNode(BaseExecutionNode):
         super().__init__()
         self.add_output('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
 
-        # Properties using actual Synapse API
-        self.add_text_input('dataset_dir', 'Dataset directory', text='', tab='Settings')
+        # Dataset directory uses a folder-picker
+        add_dir_picker(self, 'dataset_dir', 'Dataset directory', tab='Settings')
         self.add_combo_menu(
             'layout', 'Layout',
             items=['auto', 'subfolders_per_group', 'flat_single_group'],
             tab='Settings',
         )
+        # default_group is a label, not a path
         self.add_text_input(
             'default_group', 'Default group (flat layout only)',
             text='', tab='Settings',

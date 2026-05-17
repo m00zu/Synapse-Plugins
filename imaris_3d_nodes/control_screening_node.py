@@ -11,6 +11,7 @@ from pathlib import Path
 from nodes.base import BaseExecutionNode, PORT_COLORS
 
 from . import io as imaris_io
+from ._widgets import add_dir_picker
 from . import segmentation_core
 from .data import ImarisDatasetData, PORT_TYPE_NAME, IMARIS_DATASET_COLOR
 
@@ -90,11 +91,11 @@ class ControlScreeningNode(BaseExecutionNode):
         self.add_output('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
 
         # ── I/O ──────────────────────────────────────────────────────────
-        # Folder paths: each on its own row (path strings can be long)
-        self.add_text_input('neg_folder', 'Neg folder', text='', tab='I/O')
-        self.add_text_input('pos_folder', 'Pos folder', text='', tab='I/O')
-        self.add_text_input('output_dir', 'Output dir', text='', tab='I/O')
-        # Group labels stay as separate text inputs (_add_row is numeric-only)
+        # Folder paths use NodeDirSelector (QLineEdit + browse button)
+        add_dir_picker(self, 'neg_folder', 'Neg folder', tab='I/O')
+        add_dir_picker(self, 'pos_folder', 'Pos folder', tab='I/O')
+        add_dir_picker(self, 'output_dir', 'Output dir', tab='I/O')
+        # Group labels are plain text (not paths)
         self.add_text_input('neg_label', 'Neg label', text='neg', tab='I/O')
         self.add_text_input('pos_label', 'Pos label', text='pos', tab='I/O')
         self.add_checkbox('force_rerun', 'Force rerun',

@@ -12,6 +12,7 @@ from .control_screening_node import (
     _SEG_PARAM_PROPS, _collect_seg_params,
 )
 from .data import ImarisDatasetData, PORT_TYPE_NAME, IMARIS_DATASET_COLOR
+from ._widgets import add_dir_picker
 
 PORT_COLORS.setdefault(PORT_TYPE_NAME, IMARIS_DATASET_COLOR)
 
@@ -38,8 +39,8 @@ class ApplyToGroupsNode(BaseExecutionNode):
         self.add_output('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
 
         # ── I/O ──────────────────────────────────────────────────────────
-        self.add_text_input('parent_folder', 'Parent folder', text='', tab='I/O')
-        self.add_text_input('output_dir', 'Output dir', text='', tab='I/O')
+        add_dir_picker(self, 'parent_folder', 'Parent folder', tab='I/O')
+        add_dir_picker(self, 'output_dir', 'Output dir', tab='I/O')
         self.add_checkbox('force_rerun', 'Force rerun',
                           text='Re-run even if CSV exists', state=False, tab='I/O')
 
