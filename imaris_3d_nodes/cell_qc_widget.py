@@ -202,13 +202,21 @@ class CellQCWidget(NodeBaseWidget):
         self._clear_current_btn = QtWidgets.QPushButton('Clear current')
         self._clear_all_btn = QtWidgets.QPushButton('Clear all')
         self._auto_thr_spin = QtWidgets.QDoubleSpinBox()
-        self._auto_thr_spin.setRange(-100.0, 100.0)
-        self._auto_thr_spin.setValue(0.95)
-        self._auto_apply_btn = QtWidgets.QPushButton('Auto-exclude > value')
+        self._auto_thr_spin.setRange(0.0, 100.0)   # pct_above_* values are 0..100 (percent)
+        self._auto_thr_spin.setDecimals(2)
+        self._auto_thr_spin.setValue(95.0)
+        self._auto_thr_spin.setSuffix(' %')
+        self._auto_apply_btn = QtWidgets.QPushButton('Auto-exclude (max %) >')
+        self._auto_apply_btn.setToolTip(
+            'Exclude every cell where the MAXIMUM value across all\n'
+            'pct_above_<thr>_at_<step>um columns exceeds the threshold.\n'
+            'A cell that\'s abnormally bright in ANY (threshold, step) combo\n'
+            'gets flagged — typical for saturated/blob artifacts.'
+        )
         controls.addWidget(self._clear_current_btn)
         controls.addWidget(self._clear_all_btn)
         controls.addStretch(1)
-        controls.addWidget(QtWidgets.QLabel('threshold:'))
+        controls.addWidget(QtWidgets.QLabel('max %:'))
         controls.addWidget(self._auto_thr_spin)
         controls.addWidget(self._auto_apply_btn)
         main_layout.addLayout(controls)
@@ -353,6 +361,12 @@ class CellQCWidget(NodeBaseWidget):
         self._refresh_totals()
 
     def _auto_exclude(self):
+        """Exclude cells whose MAX value across all pct_above_* columns exceeds the threshold.
+
+        Rationale: a cell that is abnormally bright at ANY (threshold, step_um)
+        combo is suspicious (saturated, blob artifact, edge artifact). Taking
+        the max is the most outlier-sensitive aggregation.
+        """
         if self._current_entry is None:
             return
         thr = float(self._auto_thr_spin.value())
@@ -360,8 +374,10 @@ class CellQCWidget(NodeBaseWidget):
         pct_cols = [c for c in df.columns if c.startswith('pct_above_')]
         if not pct_cols:
             return
-        col = pct_cols[0]
-        new_ids = set(int(c) for c in df[df[col] > thr]['cell'])
+        # Row-wise max across all sweep columns
+        max_per_cell = df[pct_cols].max(axis=1)
+        mask = max_per_cell > thr
+        new_ids = set(int(c) for c in df.loc[mask, 'cell'])
         excl = self._excluded_map.setdefault(self._current_entry.file_stem, set())
         excl |= new_ids
         self._notify_node()
