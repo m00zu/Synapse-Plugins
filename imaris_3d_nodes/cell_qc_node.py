@@ -21,14 +21,14 @@ class CellQCFilterNode(BaseExecutionNode):
     __identifier__ = 'plugins.Imaris3D.qc'
     NODE_NAME = 'Cell QC Filter'
 
-    PORT_SPEC = {'inputs': ['dataset'], 'outputs': ['dataset']}
+    PORT_SPEC = {'inputs': ['imaris_dataset'], 'outputs': ['imaris_dataset']}
 
     _UI_PROPS = frozenset({'excluded_cells_json'})
 
     def __init__(self):
         super().__init__()
-        self.add_input('dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
-        self.add_output('dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
+        self.add_input('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
+        self.add_output('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
 
         # Persistent state: JSON-encoded {file_stem: [cell_ids]}
         self.add_text_input('excluded_cells_json', 'Excluded cells (JSON)',
@@ -46,7 +46,7 @@ class CellQCFilterNode(BaseExecutionNode):
         return upstream.node().output_values.get(upstream.name())
 
     def evaluate(self) -> tuple[bool, str | None]:
-        ds = self._get_input('dataset')
+        ds = self._get_input('imaris_dataset')
         if ds is None or not ds.entries:
             return False, 'No dataset on input'
 
@@ -73,6 +73,6 @@ class CellQCFilterNode(BaseExecutionNode):
         except Exception:
             pass
 
-        self.output_values['dataset'] = ds
+        self.output_values['imaris_dataset'] = ds
         self.mark_clean()
         return True, f'Excluded {ds.total_excluded()} / {ds.total_cells()} cells'

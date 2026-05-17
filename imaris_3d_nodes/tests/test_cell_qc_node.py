@@ -41,7 +41,7 @@ def test_qc_node_applies_excluded_cells_json(tmp_path, qapp):
     ok, msg = qc.evaluate()
     assert ok, msg
 
-    out_ds = qc.output_values.get('dataset')
+    out_ds = qc.output_values.get('imaris_dataset')
     assert out_ds is not None
     assert out_ds.entries[0].excluded_cells == {2}
     assert out_ds.total_excluded() == 1
@@ -70,7 +70,7 @@ def test_qc_node_passes_through_when_no_exclusions(tmp_path, qapp):
 
     ok, _ = qc.evaluate()
     assert ok
-    out_ds = qc.output_values.get('dataset')
+    out_ds = qc.output_values.get('imaris_dataset')
     assert out_ds.total_excluded() == 0
 
 
@@ -97,5 +97,5 @@ def test_qc_node_handles_invalid_json(tmp_path, qapp):
 
     ok, _ = qc.evaluate()
     assert ok
-    out_ds = qc.output_values.get('dataset')
+    out_ds = qc.output_values.get('imaris_dataset')
     assert out_ds.total_excluded() == 0

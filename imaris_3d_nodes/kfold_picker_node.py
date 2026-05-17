@@ -25,7 +25,7 @@ class KFoldComboPickerNode(BaseExecutionNode):
     NODE_NAME = 'K-Fold Combo Picker'
 
     PORT_SPEC = {
-        'inputs':  ['dataset'],
+        'inputs':  ['imaris_dataset'],
         'outputs': ['ranking_table', 'chosen_combo'],
     }
 
@@ -37,7 +37,7 @@ class KFoldComboPickerNode(BaseExecutionNode):
 
     def __init__(self):
         super().__init__()
-        self.add_input('dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
+        self.add_input('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
         self.add_output('ranking_table', color=PORT_COLORS.get('table'))
         self.add_output('chosen_combo', color=PORT_COLORS.get('table'))
 
@@ -70,7 +70,7 @@ class KFoldComboPickerNode(BaseExecutionNode):
         return upstream.node().output_values.get(upstream.name())
 
     def evaluate(self) -> tuple[bool, str | None]:
-        ds = self._get_input('dataset')
+        ds = self._get_input('imaris_dataset')
         if ds is None or not ds.entries:
             return False, 'No dataset on input'
 

@@ -32,7 +32,7 @@ def test_load_dataset_node_subfolder_layout(tmp_path, qapp):
 
     ok, msg = node.evaluate()
     assert ok, msg
-    ds = node.output_values.get('dataset')
+    ds = node.output_values.get('imaris_dataset')
     assert ds is not None
     assert len(ds.entries) == 3
     assert {e.group for e in ds.entries} == {'neg', 'pos'}

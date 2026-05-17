@@ -22,7 +22,7 @@ class ApplyToGroupsNode(BaseExecutionNode):
     __identifier__ = 'plugins.Imaris3D.apply'
     NODE_NAME = 'Apply to Groups'
 
-    PORT_SPEC = {'inputs': ['chosen_combo'], 'outputs': ['dataset']}
+    PORT_SPEC = {'inputs': ['chosen_combo'], 'outputs': ['imaris_dataset']}
 
     _UI_PROPS = frozenset({
         'parent_folder', 'output_dir', 'force_rerun',
@@ -32,42 +32,61 @@ class ApplyToGroupsNode(BaseExecutionNode):
     def __init__(self):
         super().__init__()
         self.add_input('chosen_combo', color=PORT_COLORS.get('table'))
-        self.add_output('dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
+        self.add_output('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
 
-        # I/O
+        # ── I/O ──────────────────────────────────────────────────────────
         self.add_text_input('parent_folder', 'Parent folder', text='', tab='I/O')
         self.add_text_input('output_dir', 'Output dir', text='', tab='I/O')
         self.add_checkbox('force_rerun', 'Force rerun',
                           text='Re-run even if CSV exists', state=False, tab='I/O')
 
-        # Segmentation (duplicate of ControlScreeningNode)
-        self._add_float_spinbox('sigma_um', 'Sigma (um)',
-                                value=1.0, min_val=0.1, max_val=10.0,
-                                step=0.1, decimals=2, tab='Seg')
-        self._add_int_spinbox('min_size_voxels', 'Min size (voxels)',
-                              value=3000, min_val=1, max_val=1_000_000, step=100, tab='Seg')
-        self._add_int_spinbox('max_size_voxels', 'Max size (voxels)',
-                              value=50000, min_val=1, max_val=1_000_000, step=1000, tab='Seg')
-        self._add_float_spinbox('min_distance_um', 'Min distance (um)',
-                                value=20.0, min_val=0.5, max_val=100.0,
-                                step=0.5, decimals=2, tab='Seg')
-        self._add_float_spinbox('top_percentile', 'Top percentile',
-                                value=99.5, min_val=0.0, max_val=100.0,
-                                step=0.1, decimals=2, tab='Seg')
-        self._add_int_spinbox('local_bg_radius_px', 'Local BG radius (px)',
-                              value=75, min_val=1, max_val=1000, step=5, tab='Seg')
+        # ── Seg: object size limits (one row) ────────────────────────────
+        self._add_row(
+            'seg_sizes_row', 'Object size (voxels)',
+            fields=[
+                {'name': 'min_size_voxels', 'label': 'min', 'type': 'int',
+                 'value': 3000, 'min_val': 1, 'max_val': 1_000_000, 'step': 100},
+                {'name': 'max_size_voxels', 'label': 'max', 'type': 'int',
+                 'value': 50000, 'min_val': 1, 'max_val': 1_000_000, 'step': 1000},
+            ],
+            tab='Seg',
+        )
+
+        # ── Seg: detection params (one row, mixed int/float) ─────────────
+        self._add_row(
+            'seg_detection_row', 'Detection',
+            fields=[
+                {'name': 'sigma_um', 'label': 'sigma (um)', 'type': 'float',
+                 'value': 1.0, 'min_val': 0.1, 'max_val': 10.0, 'step': 0.1, 'decimals': 2},
+                {'name': 'min_distance_um', 'label': 'min dist (um)', 'type': 'float',
+                 'value': 20.0, 'min_val': 0.5, 'max_val': 100.0, 'step': 0.5, 'decimals': 2},
+                {'name': 'top_percentile', 'label': 'top %', 'type': 'float',
+                 'value': 99.5, 'min_val': 0.0, 'max_val': 100.0, 'step': 0.1, 'decimals': 2},
+                {'name': 'local_bg_radius_px', 'label': 'BG radius (px)', 'type': 'int',
+                 'value': 75, 'min_val': 1, 'max_val': 1000, 'step': 5},
+            ],
+            tab='Seg',
+        )
+
+        # ── Seg: nucleus channel ─────────────────────────────────────────
         self._add_int_spinbox('nucleus_channel_idx', 'Nucleus channel idx',
                               value=2, min_val=0, max_val=8, step=1, tab='Seg')
 
-        # Artifact / void
-        self._add_int_spinbox('artifact_blur_px', 'Artifact blur (px)',
-                              value=50, min_val=1, max_val=500, step=5, tab='Artifacts')
-        self._add_int_spinbox('artifact_abs_uint16', 'Artifact abs (u16)',
-                              value=4000, min_val=1, max_val=65535, step=100, tab='Artifacts')
-        self._add_int_spinbox('bright_image_median_uint16', 'Bright image median (u16)',
-                              value=1500, min_val=1, max_val=65535, step=100, tab='Artifacts')
-        self._add_int_spinbox('well_min_uint16', 'Well min (u16)',
-                              value=250, min_val=1, max_val=65535, step=50, tab='Artifacts')
+        # ── Artifact / void detection (one row) ──────────────────────────
+        self._add_row(
+            'artifact_row', 'Artifact / void thresholds',
+            fields=[
+                {'name': 'artifact_blur_px', 'label': 'blur (px)', 'type': 'int',
+                 'value': 50, 'min_val': 1, 'max_val': 500, 'step': 5},
+                {'name': 'artifact_abs_uint16', 'label': 'abs (u16)', 'type': 'int',
+                 'value': 4000, 'min_val': 1, 'max_val': 65535, 'step': 100},
+                {'name': 'bright_image_median_uint16', 'label': 'bright median', 'type': 'int',
+                 'value': 1500, 'min_val': 1, 'max_val': 65535, 'step': 100},
+                {'name': 'well_min_uint16', 'label': 'well min', 'type': 'int',
+                 'value': 250, 'min_val': 1, 'max_val': 65535, 'step': 50},
+            ],
+            tab='Artifacts',
+        )
 
     def _get_input(self, name: str):
         in_port = self.inputs().get(name)
@@ -138,6 +157,6 @@ class ApplyToGroupsNode(BaseExecutionNode):
                 'chosen_step_um':   step,
             },
         )
-        self.output_values['dataset'] = ds
+        self.output_values['imaris_dataset'] = ds
         self.mark_clean()
         return True, f'Segmented {len(entries)} files across {len(groups)} groups'

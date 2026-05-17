@@ -56,7 +56,7 @@ def test_blank_normalize_node_outputs_wide_table(tmp_path, qapp):
     # a SECOND loader and overwrite its output_values with our chosen TableData
     # then connect to blank.input(1).
     fake = g.create_node('plugins.Imaris3D.io.LoadImarisDatasetNode')
-    fake.output_values['dataset'] = chosen  # cheat: store TableData here
+    fake.output_values['imaris_dataset'] = chosen  # cheat: store TableData here
     # Wire fake.dataset -> blank.chosen_combo  (port 1)
     fake.set_output(0, blank.input(1))
 
@@ -98,7 +98,7 @@ def test_blank_normalize_no_normalize_keeps_blanked(tmp_path, qapp):
     blank.set_property('normalize', False)
     loader.set_output(0, blank.input(0))
     fake = g.create_node('plugins.Imaris3D.io.LoadImarisDatasetNode')
-    fake.output_values['dataset'] = chosen
+    fake.output_values['imaris_dataset'] = chosen
     fake.set_output(0, blank.input(1))
 
     ok, _ = blank.evaluate()

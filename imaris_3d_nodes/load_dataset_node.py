@@ -24,13 +24,13 @@ class LoadImarisDatasetNode(BaseExecutionNode):
     __identifier__ = 'plugins.Imaris3D.io'
     NODE_NAME = 'Load Imaris Dataset'
 
-    PORT_SPEC = {'inputs': [], 'outputs': ['dataset']}
+    PORT_SPEC = {'inputs': [], 'outputs': ['imaris_dataset']}
 
     _UI_PROPS = frozenset({'dataset_dir', 'layout', 'default_group'})
 
     def __init__(self):
         super().__init__()
-        self.add_output('dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
+        self.add_output('imaris_dataset', color=PORT_COLORS.get(PORT_TYPE_NAME))
 
         # Properties using actual Synapse API
         self.add_text_input('dataset_dir', 'Dataset directory', text='', tab='Settings')
@@ -81,6 +81,6 @@ class LoadImarisDatasetNode(BaseExecutionNode):
             output_dir=root,
             metadata={'loaded_from': str(root)},
         )
-        self.output_values['dataset'] = ds
+        self.output_values['imaris_dataset'] = ds
         self.mark_clean()
         return True, f'Loaded {len(entries)} files in {len(ds.groups)} groups'
