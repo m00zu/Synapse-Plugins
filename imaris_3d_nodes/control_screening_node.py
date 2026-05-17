@@ -94,9 +94,9 @@ class ControlScreeningNode(BaseExecutionNode):
             'seg_sizes_row', 'Object size (voxels)',
             fields=[
                 {'name': 'min_size_voxels', 'label': 'min', 'type': 'int',
-                 'value': 3000, 'min_val': 1, 'max_val': 1_000_000, 'step': 100},
+                 'value': 3000, 'min_val': 0, 'max_val': 1_000_000, 'step': 500},
                 {'name': 'max_size_voxels', 'label': 'max', 'type': 'int',
-                 'value': 50000, 'min_val': 1, 'max_val': 1_000_000, 'step': 1000},
+                 'value': 50000, 'min_val': 0, 'max_val': 10_000_000, 'step': 1000},
             ],
             tab='Seg',
         )
@@ -137,30 +137,32 @@ class ControlScreeningNode(BaseExecutionNode):
             tab='Artifacts',
         )
 
-        # ── Sweep grid: threshold (one row: min/max/step) ────────────────
+        # ── Sweep grid: green threshold in raw uint16 (one row: min/max/step) ──
+        # Defaults match Imaris_process/app/components/param_panel.py DEFAULT_THRESH
         self._add_row(
-            'threshold_grid_row', 'Threshold grid',
+            'threshold_grid_row', 'Threshold grid (u16)',
             fields=[
                 {'name': 'threshold_min', 'label': 'min', 'type': 'int',
-                 'value': 8, 'min_val': 0, 'max_val': 100, 'step': 1},
+                 'value': 600, 'min_val': 0, 'max_val': 65535, 'step': 50},
                 {'name': 'threshold_max', 'label': 'max', 'type': 'int',
-                 'value': 32, 'min_val': 0, 'max_val': 100, 'step': 1},
+                 'value': 2500, 'min_val': 0, 'max_val': 65535, 'step': 50},
                 {'name': 'threshold_step', 'label': 'step', 'type': 'int',
-                 'value': 4, 'min_val': 1, 'max_val': 50, 'step': 1},
+                 'value': 50, 'min_val': 1, 'max_val': 10000, 'step': 50},
             ],
             tab='Grid',
         )
 
         # ── Sweep grid: expand (one row: min/max/step) ───────────────────
+        # Defaults match Imaris_process/app/components/param_panel.py DEFAULT_EXPAND
         self._add_row(
             'expand_grid_row', 'Expand grid (um)',
             fields=[
                 {'name': 'expand_min_um', 'label': 'min', 'type': 'int',
-                 'value': 0, 'min_val': 0, 'max_val': 50, 'step': 1},
+                 'value': 0, 'min_val': 0, 'max_val': 100, 'step': 1},
                 {'name': 'expand_max_um', 'label': 'max', 'type': 'int',
-                 'value': 9, 'min_val': 0, 'max_val': 50, 'step': 1},
+                 'value': 80, 'min_val': 0, 'max_val': 100, 'step': 1},
                 {'name': 'expand_step_um', 'label': 'step', 'type': 'int',
-                 'value': 3, 'min_val': 1, 'max_val': 25, 'step': 1},
+                 'value': 5, 'min_val': 1, 'max_val': 100, 'step': 1},
             ],
             tab='Grid',
         )

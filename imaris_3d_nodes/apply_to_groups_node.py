@@ -45,9 +45,9 @@ class ApplyToGroupsNode(BaseExecutionNode):
             'seg_sizes_row', 'Object size (voxels)',
             fields=[
                 {'name': 'min_size_voxels', 'label': 'min', 'type': 'int',
-                 'value': 3000, 'min_val': 1, 'max_val': 1_000_000, 'step': 100},
+                 'value': 3000, 'min_val': 0, 'max_val': 1_000_000, 'step': 500},
                 {'name': 'max_size_voxels', 'label': 'max', 'type': 'int',
-                 'value': 50000, 'min_val': 1, 'max_val': 1_000_000, 'step': 1000},
+                 'value': 50000, 'min_val': 0, 'max_val': 10_000_000, 'step': 1000},
             ],
             tab='Seg',
         )
