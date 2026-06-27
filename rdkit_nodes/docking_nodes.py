@@ -205,7 +205,7 @@ class PDBLoaderNode(BaseExecutionNode):
         super().__init__()
         file_selector = NodeFileSelector(
             self.view, name='file_path', label='PDB/CIF File',
-            ext_filter='Structure Files (*.pdb *.cif *.ent *.pdb.gz);;All Files (*)')
+            ext_filter='Structure Files (*.pdb *.cif *.ent *.pdb.gz *.pdbqt);;All Files (*)')
         self.add_custom_widget(
             file_selector,
             widget_type=NodeGraphQt.constants.NodePropWidgetEnum.QLINE_EDIT.value,

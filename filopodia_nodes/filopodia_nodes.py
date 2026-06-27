@@ -213,10 +213,14 @@ def _mask_to_bool(mask_data: MaskData) -> np.ndarray:
     return arr > (0.5 if arr.dtype in (np.float32, np.float64) else 127)
 
 
-def _bool_to_mask(arr: np.ndarray) -> MaskData:
+def _bool_to_mask(arr: np.ndarray, input_img: ImageData | None=None) -> MaskData:
     """Boolean numpy array → MaskData (white = foreground)."""
     u8 = arr.astype(np.uint8) * 255
-    return MaskData(payload=u8)
+    kwargs = {}
+    if input_img is not None:
+        kwargs = {f: getattr(input_img, f, None)
+                    for f in type(input_img).model_fields if f != 'payload'}
+    return MaskData(payload=u8, **kwargs)
 
 
 def _skeleton_branch_stats(skel_binary: np.ndarray) -> list[dict]:
@@ -368,7 +372,7 @@ class CellEdgeMaskNode(BaseImageProcessNode):
                                   structure=_SQUARE_3x3, **_PAD_DILATE)
         self.set_progress(85)
 
-        mask_data = _bool_to_mask(binary)
+        mask_data = _bool_to_mask(binary, data)
         self.output_values['mask'] = mask_data
 
         # Preview: full brightness inside mask, dimmed outside
@@ -521,7 +525,7 @@ class FilopodiaDetectNode(BaseImageProcessNode):
             binary = binary & zone
         self.set_progress(90)
 
-        mask_data = _bool_to_mask(binary)
+        mask_data = _bool_to_mask(binary, data)
         self.output_values['mask'] = mask_data
 
         # Preview: dim the filopodia candidates that fall inside the cell body
