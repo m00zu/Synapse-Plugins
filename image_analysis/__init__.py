@@ -6,3 +6,4 @@ from .image_process_nodes import *
 from .roi_nodes import *
 from .mask_nodes import *
 from .vision_nodes import *
+from .cell_mask_editor import *
