@@ -33,10 +33,9 @@ except ImportError:  # pragma: no cover
 
 
 def _to_display_u8(arr: np.ndarray) -> np.ndarray:
-    """Normalise a grayscale/RGB image array to uint8 for on-canvas display."""
+    """Normalise an image array to uint8 for on-canvas display, PRESERVING
+    colour channels (RGB stays RGB, grayscale stays 2-D)."""
     a = arr.astype(np.float32)
-    if a.ndim == 3:
-        a = a[..., :3].mean(axis=2)
     mx = float(a.max()) if a.size else 1.0
     if mx <= 1.0:
         a = a * 255.0
@@ -86,7 +85,7 @@ class CellMaskEditorWidget(NodeBaseWidget):
         root.addLayout(br)
 
         # Canvas (reused from roi_nodes).
-        self._view = _LabelEditorView(); self._view.setMinimumSize(400, 300)
+        self._view = _LabelEditorView(); self._view.setMinimumSize(640, 512)
         root.addWidget(self._view)
 
         # Cell (layer) list + controls.
@@ -268,17 +267,25 @@ class CellMaskEditorWidget(NodeBaseWidget):
         pal = _label_palette(max(cid, 1))
         return np.array(pal[(cid - 1) % len(pal)], dtype=np.float32)
 
-    def _render(self):
-        if self._bg is None:
-            return
-        base = _to_display_u8(self._bg).astype(np.float32)
-        canvas = np.stack([base] * 3, axis=-1)
+    def _compose_canvas(self) -> np.ndarray:
+        """Build the (H, W, 3) uint8 RGB canvas: colour-preserving background
+        with each cell layer composited as a semi-transparent colour overlay."""
+        disp = _to_display_u8(self._bg)
+        if disp.ndim == 2:
+            canvas = np.stack([disp] * 3, axis=-1).astype(np.float32)
+        else:
+            canvas = disp[..., :3].astype(np.float32)
         a = self._opacity
         for cid, m in sorted(self._layers.items()):
             if not m.any():
                 continue
             canvas[m] = (1 - a) * canvas[m] + a * self._color(cid)
-        canvas = np.ascontiguousarray(np.clip(canvas, 0, 255).astype(np.uint8))
+        return np.ascontiguousarray(np.clip(canvas, 0, 255).astype(np.uint8))
+
+    def _render(self):
+        if self._bg is None:
+            return
+        canvas = self._compose_canvas()
         h, w = canvas.shape[:2]
         qimg = QImage(canvas.data, w, h, 3 * w, QImage.Format.Format_RGB888)
         self._view.set_pixmap(QPixmap.fromImage(qimg.copy()))
