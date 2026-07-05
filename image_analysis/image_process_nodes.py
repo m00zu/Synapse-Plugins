@@ -794,14 +794,16 @@ class ImageMathNode(BaseImageProcessNode):
 
     @staticmethod
     def _get_arr(port) -> tuple:
-        """Return (float32 ndarray, error_str | None) from a connected port."""
+        """Return (float32 ndarray, source ImageData/MaskData, error_str | None)
+        from a connected port. The source object is returned so the output type
+        (MaskData vs ImageData) and metadata can follow the inputs."""
         if not port or not port.connected_ports():
-            return None, f"Port '{port.name() if port else '?'}' not connected"
+            return None, None, f"Port '{port.name() if port else '?'}' not connected"
         cp = port.connected_ports()[0]
         data = cp.node().output_values.get(cp.name())
         if not isinstance(data, ImageData):
-            return None, f"Port '{port.name()}' must carry ImageData or MaskData"
-        return data.payload.astype(np.float32), None
+            return None, None, f"Port '{port.name()}' must carry ImageData or MaskData"
+        return data.payload.astype(np.float32), data, None
 
     # ── evaluate ──────────────────────────────────────────────────────────────
 
@@ -812,15 +814,16 @@ class ImageMathNode(BaseImageProcessNode):
         scalar = float(self.get_property('scalar'))
 
         # ── input A (always required) ─────────────────────────────────────
-        a_arr, err = self._get_arr(self.inputs().get('A (image/mask)'))
+        a_arr, a_data, err = self._get_arr(self.inputs().get('A (image/mask)'))
         if err:
             return False, err
         self.set_progress(15)
 
         # ── input B (only for two-input operations) ───────────────────────
         b_arr = None
+        b_data = None
         if op in self._TWO_INPUT_OPS:
-            b_arr, err = self._get_arr(self.inputs().get('B (image/mask)'))
+            b_arr, b_data, err = self._get_arr(self.inputs().get('B (image/mask)'))
             if err:
                 return False, f"Operation '{op}' needs B -- {err}"
             if a_arr.shape[:2] != b_arr.shape[:2]:
@@ -900,14 +903,22 @@ class ImageMathNode(BaseImageProcessNode):
         if mode is None:
             return False, f"Unexpected result shape {result.shape}"
 
-        is_binary  = op in self._BINARY_OPS
-        if is_binary:
-            wrapped = MaskData(payload=result)
-            self.output_values['image'] = wrapped
-            self.output_values['mask']  = wrapped
+        # Output type follows the inputs: the result stays MaskData when every
+        # contributing input is a mask (or the operation is inherently binary),
+        # and is ImageData otherwise. Metadata (scale_um, bit_depth, display
+        # window) is propagated from input A.
+        is_binary = op in self._BINARY_OPS
+        if op in self._TWO_INPUT_OPS:
+            inputs_all_masks = isinstance(a_data, MaskData) and isinstance(b_data, MaskData)
         else:
-            self._make_image_output(result)
-            self.output_values['mask'] = self.output_values['image']
+            inputs_all_masks = isinstance(a_data, MaskData)
+
+        out_cls = MaskData if (is_binary or inputs_all_masks) else ImageData
+        meta = {f: getattr(a_data, f, None)
+                for f in type(a_data).model_fields if f != 'payload'}
+        wrapped = out_cls(payload=result, **meta)
+        self.output_values['image'] = wrapped
+        self.output_values['mask']  = wrapped
         self.set_display(result)
         self.set_progress(100)
         return True, None
